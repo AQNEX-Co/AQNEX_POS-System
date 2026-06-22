@@ -1,0 +1,43 @@
+; -- CodeDownloadFiles.iss --
+;
+; SEE DOWNLOADFILES.ISS FIRST!
+;
+; This script shows how the CreateDownloadPage support function can be used to
+; download and verify files while showing the download progress to the user.
+
+[Setup]
+AppName=My Program
+AppVersion=1.5
+WizardStyle=modern dynamic
+DefaultDirName={autopf}\My Program
+DefaultGroupName=My Program
+UninstallDisplayIcon={app}\MyProg.exe
+OutputDir=userdocs:Inno Setup Examples Output
+ArchiveExtraction=auto
+
+[ISSigKeys]
+Name: mykey; RuntimeID: def02; \
+  KeyID:   "def020edee3c4835fd54d85eff8b66d4d899b22a777353ca4a114b652e5e7a28"; \
+  PublicX: "515dc7d6c16d4a46272ceb3d158c5630a96466ab4d948e72c2029d737c823097"; \
+  PublicY: "f3c21f6b5156c52a35f6f28016ee3e31a3ded60c325b81fb7b1f88c221081a61"
+
+[Files]
+; Place any regular files here
+Source: "MyProg.exe"; DestDir: "{app}"
+Source: "MyProg.chm"; DestDir: "{app}"
+Source: "Readme.txt"; DestDir: "{app}"; Flags: isreadme
+; These files will be downloaded
+Source: "{tmp}\innosetup-latest.exe"; DestDir: "{app}"; Flags: external ignoreversion
+Source: "{tmp}\MyProg-ExtraReadmes.7z"; DestDir: "{app}"; Flags: external extractarchive recursesubdirs ignoreversion
+Source: "{tmp}\ISCrypt.dll"; DestDir: "{app}"; Flags: external ignoreversion
+
+[Icons]
+Name: "{group}\My Program"; Filename: "{app}\MyProg.exe"
+
+[Code]
+var
+  DownloadPage: TDownloadWizardPage;
+  AllowedKeysRuntimeIDs: TStringList;
+
+procedure InitializeWizard;
+b
