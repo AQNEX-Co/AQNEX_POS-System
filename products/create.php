@@ -8,9 +8,11 @@ if (isset($_POST['btn_save'])) {
     $name = $conn->real_escape_string($_POST['name']);
     $barcode = $conn->real_escape_string(trim($_POST['barcode']));
     $qty = intval($_POST['quantity']);
+    $min_stock_alert = doubleval($_POST['min_stock_alert'] ?? 0);
     $buy_price = doubleval($_POST['buy_price']);
     $sale_price = doubleval($_POST['sale_price']);
     $catid = intval($_POST['catid']);
+    $sector_id = isset($_POST['sector_id']) && $_POST['sector_id'] !== '' ? intval($_POST['sector_id']) : null;
     
     // توليد باركود عشوائي فريد إذا كان فارغاً
     if (empty($barcode)) {
@@ -22,7 +24,7 @@ if (isset($_POST['btn_save'])) {
         // التحقق من تكرار الباركود المدخل يدوياً
         $chk_dup = $conn->query("SELECT id FROM products WHERE barcode = '$barcode' AND delete_status = 0");
         if ($chk_dup && $chk_dup->num_rows > 0) {
-            $error = "رمز الباركود هذا مسجل بالفعل لمنتج آخر!";
+            $error = "رمز الباركود this register already to another product!";
         }
     }
     
@@ -32,8 +34,8 @@ if (isset($_POST['btn_save'])) {
         $today = date("Y-m-d H:i:s");
         
         if (!empty($name) && $catid > 0) {
-            $sql = "INSERT INTO products(name, barcode, quantity, buy_price, sale_price, catid, total, date, delete_status) 
-                    VALUES ('$name', '$barcode', '$qty', '$buy_price', '$sale_price', '$catid', '$total_val', '$today', 0)";
+            $sql = "INSERT INTO products(name, barcode, quantity, min_stock_alert, buy_price, sale_price, catid, total, date, delete_status) 
+                    VALUES ('$name', '$barcode', '$qty', '$min_stock_alert', '$buy_price', '$sale_price', '$catid', '$total_val', '$today', 0)";
             if ($conn->query($sql)) {
                 echo "<script>window.location='index.php';</script>";
                 exit;
@@ -90,7 +92,7 @@ if (isset($_POST['btn_save'])) {
                         </div>
                         
                         <!-- الصنف -->
-                        <div class="col-md-12 mb-3">
+                        <div class="col-md-6 mb-3">
                             <label class="form-label font-weight-bold text-secondary">تصنيف المنتج *</label>
                             <select name="catid" class="form-control rounded-0" required>
                                 <option value="">-- اختر التصنيف --</option>
@@ -107,19 +109,25 @@ if (isset($_POST['btn_save'])) {
                         </div>
 
                         <!-- الكمية -->
-                        <div class="col-md-4 mb-3">
+                        <div class="col-md-3 mb-3">
                             <label class="form-label font-weight-bold text-secondary">الكمية المتوفرة</label>
                             <input type="number" name="quantity" id="quantity" class="form-control rounded-0 text-center" value="0" min="0" required>
                         </div>
 
+                        <!-- حد تنبيه المخزون -->
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label font-weight-bold text-secondary">حد التنبيه الأدنى</label>
+                            <input type="number" name="min_stock_alert" id="min_stock_alert" class="form-control rounded-0 text-center" value="5" min="0" required>
+                        </div>
+
                         <!-- سعر الشراء -->
-                        <div class="col-md-4 mb-3">
+                        <div class="col-md-3 mb-3">
                             <label class="form-label font-weight-bold text-secondary">سعر الشراء الفردي</label>
                             <input type="number" step="any" name="buy_price" id="buy_price" class="form-control rounded-0 text-center" value="0" required>
                         </div>
 
                         <!-- سعر البيع -->
-                        <div class="col-md-4 mb-3">
+                        <div class="col-md-3 mb-3">
                             <label class="form-label font-weight-bold text-secondary">سعر البيع الفردي</label>
                             <input type="number" step="any" name="sale_price" id="sale_price" class="form-control rounded-0 text-center" value="0" required>
                         </div>

@@ -5,6 +5,20 @@ require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'cashier']);
 
+// معالجة بيانات المساعد الذكي AI Prefill للمقبوضات
+$prefill_customer = '';
+$prefill_amount = '';
+$prefill_remark = '';
+if (isset($_GET['ai_prefill'])) {
+    $prefill_data = json_decode(base64_decode($_GET['ai_prefill']), true);
+    if ($prefill_data) {
+        $prefill_customer = $prefill_data['customer_name'] ?? '';
+        $prefill_amount = $prefill_data['amount'] ?? '';
+        $prefill_remark = $prefill_data['remark'] ?? $prefill_data['notes'] ?? '';
+    }
+}
+
+
 $active_user_id = intval($_SESSION['SESS_MEMBER_ID']);
 $active_user_role = trim($_SESSION['SESS_LAST_NAME']);
 $is_admin = ($active_user_role === 'admin' || empty($active_user_role));
@@ -18,29 +32,53 @@ if (isset($_POST['btn_save'])) {
     $box_name = get_box_name($conn, $selected_box_id);
 
     $count = count($customers);
-    for ($i = 0; $i < $count; $i++) {
-        $cust_name = $conn->real_escape_string($customers[$i]);
-        $price = doubleval($prices[$i]);
-        $row_remark = $conn->real_escape_string($remarks[$i]);
-        
-        if (!empty($cust_name) && $price > 0) {
-            // إدراج سند القبض مع ربطه بالصندوق المحدد
-            $sql_service = "INSERT INTO `receipts`(`q_date`, `cust_name`, `q_price`, `remark`, `total`, `s`, `box_id`) 
-                            VALUES ('$build_date', '$cust_name', '$price', '$row_remark', '$price', 0, $selected_box_id)";
-            if ($conn->query($sql_service)) {
+    
+    $conn->begin_transaction();
+    try {
+        for ($i = 0; $i < $count; $i++) {
+            $cust_name = $conn->real_escape_string($customers[$i]);
+            $price = doubleval($prices[$i]);
+            $row_remark = $conn->real_escape_string($remarks[$i]);
+            
+            if (!empty($cust_name) && $price > 0) {
+                // إدراج سند القبض مع ربطه بالصندوق المحدد
+                $sql_service = "INSERT INTO `receipts`(`q_date`, `cust_name`, `q_price`, `remark`, `total`, `s`, `box_id`) 
+                                VALUES ('$build_date', '$cust_name', '$price', '$row_remark', '$price', 0, $selected_box_id)";
+                if (!$conn->query($sql_service)) {
+                    throw new Exception("فشل إدراج سند القبض للعميل: " . $cust_name);
+                }
                 $qid = $conn->insert_id;
                 
                 // خصم المبلغ المقبوض من مديونية العميل (تصحيح الحساب)
                 $sql_update_cust = "UPDATE `customers` SET `cust_madeen` = `cust_madeen` - $price WHERE `cust_name` = '$cust_name'";
-                $conn->query($sql_update_cust);
+                if (!$conn->query($sql_update_cust)) {
+                    throw new Exception("فشل تحديث مديونية العميل: " . $cust_name);
+                }
                 
                 // إضافة المبلغ المقبوض إلى الصندوق المحدد
                 update_box_balance($conn, $selected_box_id, $price, 'addition', "سند قبض رقم #$qid - عميل: $cust_name", $build_date);
                 
                 // قيد يومية محاسبي مزدوج
-                post_journal_entry($conn, 'receipt', $qid, 'الصندوق - ' . $box_name, 'الذمم المدينة - ' . $cust_name, $price, "تحصيل دفعة بسند قبض رقم #$qid - $row_remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id);
+                if (!post_journal_entry($conn, 'receipt', $qid, 'الصندوق - ' . $box_name, 'الذمم المدينة - ' . $cust_name, $price, "تحصيل دفعة بسند قبض رقم #$qid - $row_remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id)) {
+                    throw new Exception("فشل قيد اليومية للسند رقم: " . $qid);
+                }
+
+                // إرسال إشعار واتساب تلقائي بسند القبض
+                $res_cust_phone = $conn->query("SELECT phone FROM customers WHERE cust_name = '$cust_name' LIMIT 1");
+                if ($res_cust_phone && $res_cust_phone->num_rows > 0) {
+                    $cust_phone = $res_cust_phone->fetch_assoc()['phone'];
+                    if (!empty($cust_phone)) {
+                        require_once($dir_prefix . 'app/Services/WhatsAppService.php');
+                        $msg = "شريكنا العزيز، تم استلام دفعة مالية منكم بمبلغ: " . number_format($price, 2) . " ر.ي. وتم تسجيل سند قبض رقم #{$qid}. شكراً لكم.";
+                        \AQNEX\Services\WhatsAppService::sendNotification($global_settings, $cust_phone, $msg);
+                    }
+                }
             }
         }
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        echo "<script>alert('خطأ أثناء الحفظ: " . addslashes($e->getMessage()) . "');</script>";
     }
 
     echo "<script>window.location='index.php';</script>";
@@ -72,7 +110,7 @@ if (isset($_POST['btn_save'])) {
                             $res_b = $conn->query("SELECT box_id, name, mony FROM treasury WHERE is_active = 1 ORDER BY box_id ASC");
                             if ($res_b) {
                                 while($b = $res_b->fetch_assoc()) {
-                                    echo "<option value='{$b['box_id']}' " . ($b['box_id'] == 1 ? 'selected' : '') . ">" . htmlspecialchars($b['name']) . " (" . number_format($b['mony'], 2) . " ر.ي)</option>";
+                                    echo "<option value='{$b['box_id']}' " . ($b['name'] === 'الصندوق الرئيسي' ? 'selected' : '') . ">" . htmlspecialchars($b['name']) . " (" . number_format($b['mony'], 2) . " ر.ي)</option>";
                                 }
                             }
                             ?>
@@ -202,6 +240,79 @@ document.addEventListener("DOMContentLoaded", function() {
     itemsContainer.addEventListener("input", function(e) {
         if (e.target.classList.contains("price-input")) {
             updateGrandTotals();
+        }
+    });
+
+    // تعبئة البيانات الممررة من المساعد الذكي تلقائياً
+    const targetCust = "<?php echo htmlspecialchars($prefill_customer); ?>";
+    const targetAmount = "<?php echo floatval($prefill_amount); ?>";
+    const targetRemark = "<?php echo htmlspecialchars($prefill_remark); ?>";
+    
+    if (targetCust || targetAmount > 0 || targetRemark) {
+        const custSelect = document.querySelector(".select-customer");
+        if (custSelect && targetCust) {
+            let found = false;
+            for (let i = 0; i < custSelect.options.length; i++) {
+                if (custSelect.options[i].value === targetCust || custSelect.options[i].text.includes(targetCust)) {
+                    custSelect.selectedIndex = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                const opt = document.createElement("option");
+                opt.value = targetCust;
+                opt.text = targetCust;
+                opt.selected = true;
+                custSelect.add(opt);
+            }
+        }
+        
+        if (targetAmount > 0) {
+            const priceInput = document.querySelector(".price-input");
+            if (priceInput) {
+                priceInput.value = targetAmount;
+            }
+        }
+        
+        if (targetRemark) {
+            const remarkInput = document.querySelector("input[name='t[]']");
+            if (remarkInput) {
+                remarkInput.value = targetRemark;
+            }
+        }
+        
+        updateGrandTotals();
+    }
+
+    // التحقق النهائي قبل إرسال النموذج (منع فقدان البيانات)
+    document.getElementById("receiptForm").addEventListener("submit", function(e) {
+        let isValid = true;
+        let hasItems = false;
+        
+        document.querySelectorAll(".item-row").forEach(row => {
+            const customer = row.querySelector("select").value;
+            const amount = parseFloat(row.querySelector(".price-input").value) || 0;
+            
+            if (customer && customer !== "") {
+                hasItems = true;
+                if (amount <= 0) {
+                    alert(`خطأ: يجب إدخال مبلغ صحيح أكبر من صفر للعميل: ${customer}`);
+                    isValid = false;
+                }
+            } else if (amount > 0) {
+                alert("خطأ: يرجى تحديد اسم العميل للمبلغ المدخل!");
+                isValid = false;
+            }
+        });
+        
+        if (!hasItems) {
+            alert("تحذير: يرجى إضافة دفعة واحدة على الأقل قبل الحفظ!");
+            isValid = false;
+        }
+        
+        if (!isValid) {
+            e.preventDefault();
         }
     });
 });

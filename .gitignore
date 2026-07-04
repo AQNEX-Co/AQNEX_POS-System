@@ -1,0 +1,5 @@
+installer/Output/
+installer/runtime/
+*.exe
+*.zip
+.continue/

@@ -5,6 +5,20 @@ require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'cashier']);
 
+// معالجة بيانات المساعد الذكي AI Prefill للمصروفات
+$prefill_service = '';
+$prefill_amount = '';
+$prefill_remark = '';
+if (isset($_GET['ai_prefill'])) {
+    $prefill_data = json_decode(base64_decode($_GET['ai_prefill']), true);
+    if ($prefill_data) {
+        $prefill_service = $prefill_data['expense_type'] ?? $prefill_data['service'] ?? '';
+        $prefill_amount = $prefill_data['amount'] ?? '';
+        $prefill_remark = $prefill_data['remark'] ?? $prefill_data['notes'] ?? '';
+    }
+}
+
+
 $active_user_id = intval($_SESSION['SESS_MEMBER_ID']);
 $active_user_role = trim($_SESSION['SESS_LAST_NAME']);
 $is_admin = ($active_user_role === 'admin' || empty($active_user_role));
@@ -205,6 +219,48 @@ document.addEventListener("DOMContentLoaded", function() {
             updateGrandTotals();
         }
     });
+
+    // تعبئة البيانات الممررة من المساعد الذكي تلقائياً
+    const targetService = "<?php echo htmlspecialchars($prefill_service); ?>";
+    const targetAmount = "<?php echo floatval($prefill_amount); ?>";
+    const targetRemark = "<?php echo htmlspecialchars($prefill_remark); ?>";
+    
+    if (targetService || targetAmount > 0 || targetRemark) {
+        const serviceSelect = document.querySelector("select[name='select_services[]']");
+        if (serviceSelect && targetService) {
+            let found = false;
+            for (let i = 0; i < serviceSelect.options.length; i++) {
+                if (serviceSelect.options[i].value === targetService || serviceSelect.options[i].text.includes(targetService)) {
+                    serviceSelect.selectedIndex = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                const opt = document.createElement("option");
+                opt.value = targetService;
+                opt.text = targetService;
+                opt.selected = true;
+                serviceSelect.add(opt);
+            }
+        }
+        
+        if (targetAmount > 0) {
+            const priceInput = document.querySelector(".price-input");
+            if (priceInput) {
+                priceInput.value = targetAmount;
+            }
+        }
+        
+        if (targetRemark) {
+            const remarkInput = document.querySelector("input[name='t[]']");
+            if (remarkInput) {
+                remarkInput.value = targetRemark;
+            }
+        }
+        
+        updateGrandTotals();
+    }
 });
 </script>
 

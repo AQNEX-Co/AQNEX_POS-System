@@ -29,36 +29,56 @@ if (isset($_POST['btn_save'])) {
         $new_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : $old_box_id;
         $new_box_name = get_box_name($conn, $new_box_id);
         
-        // 1. استعادة المديونية القديمة للعميل القديم
-        $conn->query("UPDATE customers SET cust_madeen = cust_madeen + $old_price WHERE cust_name = '$old_cust'");
-        
-        // 2. تطبيق المديونية الجديدة للعميل الجديد
-        $conn->query("UPDATE customers SET cust_madeen = cust_madeen - $new_price WHERE cust_name = '$new_cust'");
-        
-        // 3. تسوية الصناديق المالية
-        if ($old_box_id === $new_box_id) {
-            $diff = $new_price - $old_price;
-            if ($diff != 0) {
-                $type = ($diff > 0) ? 'addition' : 'discount';
-                $abs_diff = abs($diff);
-                update_box_balance($conn, $old_box_id, $abs_diff, $type, "تعديل سند قبض رقم #$qid للعميل $new_cust (فرق القيمة)", date('Y-m-d'));
+        $conn->begin_transaction();
+        try {
+            // 1. استعادة المديونية القديمة للعميل القديم
+            if (!$conn->query("UPDATE customers SET cust_madeen = cust_madeen + $old_price WHERE cust_name = '$old_cust'")) {
+                throw new Exception("فشل استعادة مديونية العميل القديم");
             }
-        } else {
-            // خصم القيمة القديمة من الصندوق القديم
-            update_box_balance($conn, $old_box_id, $old_price, 'discount', "تعديل سند قبض رقم #$qid (نقل الصندوق - خصم القيمة القديمة)", date('Y-m-d'));
-            // إضافة القيمة الجديدة إلى الصندوق الجديد
-            update_box_balance($conn, $new_box_id, $new_price, 'addition', "تعديل سند قبض رقم #$qid (نقل الصندوق - إضافة القيمة الجديدة)", date('Y-m-d'));
-        }
-        
-        // 4. تحديث السند
-        $sql_update = "UPDATE receipts SET cust_name='$new_cust', q_price='$new_price', remark='$new_remark', box_id=$new_box_id WHERE qid='$qid'";
-        if ($conn->query($sql_update)) {
-            // 5. تحديث القيد اليومي المحاسبي (حذف القديم وإدراج جديد)
-            $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'receipt' AND ref_id = $qid");
-            post_journal_entry($conn, 'receipt', $qid, 'الصندوق - ' . $new_box_name, 'الذمم المدينة - ' . $new_cust, $new_price, "تعديل تحصيل دفعة بسند قبض رقم #$qid - $new_remark", $_SESSION['SESS_FIRST_NAME'], $new_box_id);
             
+            // 2. تطبيق المديونية الجديدة للعميل الجديد
+            if (!$conn->query("UPDATE customers SET cust_madeen = cust_madeen - $new_price WHERE cust_name = '$new_cust'")) {
+                throw new Exception("فشل تطبيق مديونية العميل الجديد");
+            }
+            
+            // 3. تسوية الصناديق المالية
+            if ($old_box_id === $new_box_id) {
+                $diff = $new_price - $old_price;
+                if ($diff != 0) {
+                    $type = ($diff > 0) ? 'addition' : 'discount';
+                    $abs_diff = abs($diff);
+                    update_box_balance($conn, $old_box_id, $abs_diff, $type, "تعديل سند قبض رقم #$qid للعميل $new_cust (فرق القيمة)", date('Y-m-d'));
+                }
+            } else {
+                // خصم القيمة القديمة من الصندوق القديم
+                update_box_balance($conn, $old_box_id, $old_price, 'discount', "تعديل سند قبض رقم #$qid (نقل الصندوق - خصم القيمة القديمة)", date('Y-m-d'));
+                // إضافة القيمة الجديدة إلى الصندوق الجديد
+                update_box_balance($conn, $new_box_id, $new_price, 'addition', "تعديل سند قبض رقم #$qid (نقل الصندوق - إضافة القيمة الجديدة)", date('Y-m-d'));
+            }
+            
+            // 4. تحديث السند
+            $sql_update = "UPDATE receipts SET cust_name='$new_cust', q_price='$new_price', remark='$new_remark', box_id=$new_box_id WHERE qid='$qid'";
+            if (!$conn->query($sql_update)) {
+                throw new Exception("فشل تحديث السند");
+            }
+            
+            // 5. تحديث القيد اليومي المحاسبي (حذف القديم وإدراج جديد)
+            if (!$conn->query("DELETE FROM journal_entries WHERE ref_type = 'receipt' AND ref_id = $qid")) {
+                throw new Exception("فشل حذف القيود المحاسبية القديمة");
+            }
+            if (!$conn->query("DELETE FROM accounting_journal WHERE ref_type = 'receipt' AND ref_id = $qid")) {
+                throw new Exception("فشل حذف قيود اليومية القديمة");
+            }
+            if (!post_journal_entry($conn, 'receipt', $qid, 'الصندوق - ' . $new_box_name, 'الذمم المدينة - ' . $new_cust, $new_price, "تعديل تحصيل دفعة بسند قبض رقم #$qid - $new_remark", $_SESSION['SESS_FIRST_NAME'], $new_box_id)) {
+                throw new Exception("فشل تسجيل قيد المقبوضات الجديد");
+            }
+            
+            $conn->commit();
             echo "<script>window.location='index.php';</script>";
             exit;
+        } catch (Exception $e) {
+            $conn->rollback();
+            $error = $e->getMessage();
         }
     }
 }
@@ -74,7 +94,7 @@ if (isset($_POST['btn_save'])) {
     </div>
     <div class="card-body">
         <?php if ($details): ?>
-        <form method="POST">
+        <form method="POST" id="receiptForm">
             <div class="row">
                 <div class="col-md-3 mb-3">
                     <label class="form-label font-weight-bold">العميل</label>
@@ -126,6 +146,29 @@ if (isset($_POST['btn_save'])) {
         <?php endif; ?>
     </div>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const form = document.getElementById("receiptForm");
+    if (form) {
+        form.addEventListener("submit", function(e) {
+            const customer = form.querySelector("select[name='select2']").value;
+            const amount = parseFloat(form.querySelector("input[name='q_price']").value) || 0;
+            
+            if (!customer) {
+                alert("خطأ: يرجى تحديد العميل!");
+                e.preventDefault();
+                return false;
+            }
+            if (amount <= 0) {
+                alert("خطأ: يجب إدخال مبلغ قبض صحيح أكبر من صفر!");
+                e.preventDefault();
+                return false;
+            }
+        });
+    }
+});
+</script>
 
 <?php
 require_once($dir_prefix . 'includes/footer.php');

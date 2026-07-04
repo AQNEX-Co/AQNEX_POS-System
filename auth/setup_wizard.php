@@ -1,4 +1,5 @@
 <?php
+
 /**
  * معالج الإعداد الأول AQNEX Setup Wizard
  */
@@ -38,7 +39,7 @@ if (isset($_POST['btn_setup'])) {
     if (!empty($store_name) && !empty($admin_username) && !empty($admin_fullname) && !empty($admin_password)) {
         
         // معالجة رفع الشعار (Logo)
-        $logo_path = 'icon/tec.jpg'; // الشعار الافتراضي
+        $logo_path = 'assets/icon/tec.jpg'; // الشعار الافتراضي
         if (isset($_FILES['store_logo']) && $_FILES['store_logo']['error'] === UPLOAD_ERR_OK) {
             $uploadsDir = __DIR__ . '/../uploads';
             if (!is_dir($uploadsDir)) {
@@ -53,83 +54,49 @@ if (isset($_POST['btn_setup'])) {
             }
         }
 
-        // 1. تحديث إعدادات المنشأة وضبط علم التهيئة إلى 1
-        $stmt_settings = $conn->prepare("UPDATE settings SET 
-            store_name = ?, 
-            phone = ?, 
-            address = ?, 
-            commercial_register = ?, 
-            tax_number = ?, 
-            currency = ?, 
-            printer_type = ?, 
-            logo = ?, 
-            is_configured = 1 
-            WHERE id = 1");
-        
+        // 1. ضمان وجود صف الإعدادات الافتراضي (INSERT إذا كان الجدول فارغاً)
+        $conn->query("INSERT IGNORE INTO `settings` 
+            (`id`, `store_name`, `phone`, `address`, `currency`, `barcode_scanner`, 
+             `printer_type`, `tax_percent`, `low_stock_threshold`, `receipt_footer`, `is_configured`) 
+            VALUES (1, '', '', '', 'ريال يمني', 1, 'receipt_80mm', 0, 5, 'شكرًا لزيارتكم!', 0)");
+
+        // 2. حفظ إعدادات المنشأة باستخدام INSERT...ON DUPLICATE KEY UPDATE
+        //    يعمل سواء كان الصف موجوداً مسبقاً أم لا (إصلاح مشكلة التثبيت الأول)
+        $stmt_settings = $conn->prepare("INSERT INTO `settings` 
+            (`id`, `store_name`, `phone`, `address`, `commercial_register`, `tax_number`, 
+             `currency`, `printer_type`, `logo`, `is_configured`,
+             `barcode_scanner`, `tax_percent`, `low_stock_threshold`, `receipt_footer`)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0, 5, 'شكرًا لزيارتكم!')
+            ON DUPLICATE KEY UPDATE
+                store_name = VALUES(store_name),
+                phone = VALUES(phone),
+                address = VALUES(address),
+                commercial_register = VALUES(commercial_register),
+                tax_number = VALUES(tax_number),
+                currency = VALUES(currency),
+                printer_type = VALUES(printer_type),
+                logo = VALUES(logo),
+                is_configured = 1");
+
         if (!$stmt_settings) {
-            // محاولة إضافية سريعة لإصلاح الجدول أو إنشائه إن كان هناك نقص في بيئة العميل
-            $checkTable = $conn->query("SHOW TABLES LIKE 'settings'");
-            if ($checkTable && $checkTable->num_rows == 0) {
-                $conn->query("CREATE TABLE `settings` (
-                  `id` int(11) NOT NULL PRIMARY KEY,
-                  `store_name` varchar(100) NOT NULL,
-                  `phone` varchar(50) DEFAULT NULL,
-                  `address` text DEFAULT NULL,
-                  `commercial_register` varchar(100) DEFAULT NULL,
-                  `tax_number` varchar(100) DEFAULT NULL,
-                  `currency` varchar(20) DEFAULT 'ريال يمني',
-                  `barcode_scanner` tinyint(1) DEFAULT 1,
-                  `printer_type` varchar(50) DEFAULT 'receipt_80mm',
-                  `tax_percent` double DEFAULT 0,
-                  `low_stock_threshold` int(11) DEFAULT 5,
-                  `receipt_footer` text DEFAULT NULL,
-                  `logo` varchar(255) DEFAULT NULL,
-                  `is_configured` tinyint(1) NOT NULL DEFAULT 0
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-                
-                $conn->query("INSERT INTO `settings` (`id`, `store_name`, `phone`, `address`, `currency`, `barcode_scanner`, `printer_type`, `tax_percent`, `low_stock_threshold`, `receipt_footer`, `is_configured`) 
-                    VALUES (1, 'تكنولوجيا فون', '777777777', 'اليمن - عدن', 'ريال يمني', 1, 'receipt_80mm', 0, 5, 'شكرًا لزيارتكم!', 0)
-                    ON DUPLICATE KEY UPDATE id=id");
-            } else {
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `commercial_register` varchar(100) DEFAULT NULL AFTER `address`");
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `tax_number` varchar(100) DEFAULT NULL AFTER `commercial_register`");
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `logo` varchar(255) DEFAULT NULL AFTER `receipt_footer`");
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `is_configured` tinyint(1) NOT NULL DEFAULT 0");
-            }
-            
-            $stmt_settings = $conn->prepare("UPDATE settings SET 
-                store_name = ?, 
-                phone = ?, 
-                address = ?, 
-                commercial_register = ?, 
-                tax_number = ?, 
-                currency = ?, 
-                printer_type = ?, 
-                logo = ?, 
-                is_configured = 1 
-                WHERE id = 1");
-        }
-        
-        if (!$stmt_settings) {
-            $error_message = 'فشل تهيئة استعلام تحديث الإعدادات في قاعدة البيانات: ' . $conn->error;
+            $error_message = 'فشل تهيئة استعلام حفظ الإعدادات: ' . $conn->error;
         } else {
             $stmt_settings->bind_param(
-                "ssssssss", 
-                $store_name, 
-                $phone, 
-                $address, 
-                $commercial_register, 
-                $tax_number, 
-                $currency, 
-                $printer_type, 
+                "ssssssss",
+                $store_name,
+                $phone,
+                $address,
+                $commercial_register,
+                $tax_number,
+                $currency,
+                $printer_type,
                 $logo_path
             );
-            
+
             if ($stmt_settings->execute()) {
-                // 2. إنشاء أو تحديث حساب مدير النظام
-                // التحقق من وجود حساب مدير (admin) سابقاً
+                // 3. إنشاء أو تحديث حساب مدير النظام
                 $chk_admin = $conn->query("SELECT userid FROM users WHERE position = 'admin' LIMIT 1");
-                
+
                 if ($chk_admin && $chk_admin->num_rows > 0) {
                     // تحديث المدير الحالي
                     $admin_id = $chk_admin->fetch_assoc()['userid'];
@@ -153,19 +120,9 @@ if (isset($_POST['btn_setup'])) {
                     }
                 }
 
-                // 3. تسجيل دخول المستخدم تلقائياً وفتح الجلسة
-                if (session_status() === PHP_SESSION_NONE) {
-                    session_start();
-                }
-                $_SESSION['SESS_MEMBER_ID'] = $admin_id;
-                $_SESSION['SESS_FIRST_NAME'] = $admin_username;
-                $_SESSION['SESS_FULL_NAME'] = $admin_fullname;
-                $_SESSION['SESS_LAST_NAME'] = 'admin';
-                
-                session_write_close();
-                
-                // التوجيه إلى الصفحة الرئيسية بنجاح
-                header("Location: ../home.php");
+                // 4. توجيه المدير لصفحة تسجيل الدخول مع تعبئة اسم المستخدم مسبقاً
+                //    ملاحظة: لا يتم فتح جلسة هنا — يجب على المدير تسجيل الدخول يدوياً بكلمة المرور
+                header("Location: login.php?u=" . urlencode($admin_username));
                 exit();
             } else {
                 $error_message = 'حدث خطأ أثناء حفظ الإعدادات: ' . $stmt_settings->error;
@@ -185,7 +142,7 @@ if (isset($_POST['btn_setup'])) {
     <link rel="stylesheet" type="text/css" href="../files/bower_components/bootstrap/css/bootstrap.min.css">
     <link rel="stylesheet" type="text/css" href="../files/bower_components/font-awesome/css/font-awesome.min.css">
     <link rel="stylesheet" type="text/css" href="../files/bootstrap-icons/bootstrap-icons.min.css">
-    <link rel="stylesheet" type="text/css" href="../css/custom.css">
+    <link rel="stylesheet" type="text/css" href="../assets/css/custom.css">
     <style>
         body {
             background-color: var(--body-bg) !important;

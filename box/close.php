@@ -1,28 +1,52 @@
 <?php
 $dir_prefix = '../';
-$module = 'box';
+// نترك $module فارغاً لتجاوز فحص صلاحيات الموديول العام في الهيدر، وسنقوم بفحص مخصص أدناه
+$module = ''; 
 require_once($dir_prefix . 'includes/header.php');
-
-check_permission(['admin', 'cashier']);
 
 $active_user_id = intval($_SESSION['SESS_MEMBER_ID']);
 $active_user_role = trim($_SESSION['SESS_LAST_NAME']);
 $is_admin = ($active_user_role === 'admin' || empty($active_user_role));
 
+// فحص صلاحية الدور المسموح به: الأدمن والكاشير فقط
+if (!$is_admin && $active_user_role !== 'cashier') {
+    \AQNEX\Services\AuthService::denyAccess();
+}
+
 $success = '';
 $error = '';
 $today_date = date("Y-m-d");
+
+// جلب معرف الصندوق الرئيسي ديناميكياً لتفادي تعارض الـ ID
+$res_main = $conn->query("SELECT box_id FROM treasury WHERE name = 'الصندوق الرئيسي' LIMIT 1");
+$main_box_id = ($res_main && $res_main->num_rows > 0) ? intval($res_main->fetch_assoc()['box_id']) : 2;
+
+// الكشف عن الصندوق المخصص النشط للمستخدم
+$res_assigned = $conn->query("SELECT box_id FROM treasury WHERE user_id = $active_user_id AND is_active = 1 LIMIT 1");
+$has_assigned_box = ($res_assigned && $res_assigned->num_rows > 0);
+$user_box_id = $has_assigned_box ? intval($res_assigned->fetch_assoc()['box_id']) : 0;
+
+// إذا كان كاشيراً وليس لديه صندوق مخصص، نعرض خطأ واضحاً ونمنعه
+if (!$is_admin && !$has_assigned_box) {
+    echo "<!DOCTYPE html><html dir='rtl'><head><meta charset='UTF-8'></head><body>";
+    echo "<script>
+        alert('خطأ: ليس لديك صندوق نشط مخصص حالياً لإغلاقه. يرجى مراجعة المسؤول.');
+        window.location.href = '../home.php';
+    </script>";
+    echo "</body></html>";
+    exit();
+}
 
 // 1. تحديد الصندوق المطلوب إقفاله
 $box_id = isset($_GET['box_id']) ? intval($_GET['box_id']) : 0;
 if ($box_id <= 0) {
     // الكاشير يغلق صندوقه، المدير يغلق الصندوق الرئيسي افتراضياً
-    $box_id = get_user_box_id($conn, $active_user_id);
+    $box_id = $is_admin ? $main_box_id : ($user_box_id > 0 ? $user_box_id : $main_box_id);
 }
 
 // الكاشير لا يمكنه إقفال صندوق غير صندوقه
-if (!$is_admin && $box_id !== get_user_box_id($conn, $active_user_id)) {
-    echo "<script>alert('غير مصرح لك بإجراء إقفال لصناديق موظفين آخرين.'); window.location='index.php';</script>";
+if (!$is_admin && $box_id !== $user_box_id) {
+    echo "<script>alert('غير مصرح لك بإجراء إقفال لصناديق موظفين آخرين.'); window.location='../home.php';</script>";
     exit;
 }
 
@@ -30,7 +54,7 @@ if (!$is_admin && $box_id !== get_user_box_id($conn, $active_user_id)) {
 $res_box = $conn->query("SELECT * FROM treasury WHERE box_id = $box_id LIMIT 1");
 $box = $res_box ? $res_box->fetch_assoc() : null;
 if (!$box) {
-    echo "<script>alert('الصندوق المحدد غير موجود.'); window.location='index.php';</script>";
+    echo "<script>alert('خطأ: الصندوق المطلوب غير موجود.'); window.location='../home.php';</script>";
     exit;
 }
 
@@ -87,20 +111,50 @@ $total_today_subtractions = $cash_returns + $total_expenses + $cash_purchases + 
 $calculated_opening = $expected_balance - $total_today_additions + $total_today_subtractions;
 
 // ==========================================
-// 3. معالجة الإقفال عند إرسال النموذج
+// 3. معالجة الإقفال والترحيل عند إرسال النموذج
 // ==========================================
+// معالجة الترحيل اليدوي للمبيعات المعلقة
+if (isset($_POST['btn_trigger_transfer'])) {
+    $user_display = $_SESSION['SESS_FIRST_NAME'];
+    $transferred = transfer_sales_to_box($conn, $box_id, $user_display);
+    if ($transferred !== false && $transferred > 0) {
+        $success = "✓ تم ترحيل مبيعات اليوم النقدية المعلقة بمبلغ " . number_format($transferred, 2) . " ر.ي بنجاح إلى الصندوق!";
+        // إعادة تحميل قيم الصندوق المحدثة
+        $res_box = $conn->query("SELECT * FROM treasury WHERE box_id = $box_id LIMIT 1");
+        $box = $res_box ? $res_box->fetch_assoc() : null;
+        $expected_balance = $box ? doubleval($box['mony']) : 0.0;
+    } elseif ($transferred === 0.0) {
+        $error = "لا توجد مبيعات معلقة للترحيل.";
+    } else {
+        $error = "حدث خطأ أثناء محاولة ترحيل المبيعات.";
+    }
+}
+
 if (isset($_POST['btn_confirm_close'])) {
     $actual_cash = doubleval($_POST['actual_cash']);
     $transferred_amount = doubleval($_POST['transferred_amount']);
     $notes = $conn->real_escape_string(trim($_POST['notes']));
     $user_display = $_SESSION['SESS_FIRST_NAME'];
 
-    // 1. حساب الفرق
-    $difference = $actual_cash - $expected_balance;
-
     // البدء في المعاملة
     $conn->begin_transaction();
     try {
+        // ترحيل تلقائي للمبيعات المعلقة أولاً إن وجدت لرفع رصيد الصندوق الدفتري
+        $sql_pending_sales = "SELECT COALESCE(SUM(total), 0) as pending_sales FROM sales WHERE box_id = $box_id AND is_transferred_to_box = 0 AND delete_status = 0";
+        $pending_sales = floatval($conn->query($sql_pending_sales)->fetch_assoc()['pending_sales']);
+        
+        if ($pending_sales > 0) {
+            $trans_res = transfer_sales_to_box($conn, $box_id, $user_display);
+            if ($trans_res !== false) {
+                $expected_balance += $pending_sales;
+            } else {
+                throw new Exception('فشل ترحيل المبيعات المعلقة إلى الصندوق.');
+            }
+        }
+
+        // 1. حساب الفرق بناء على الرصيد الدفتري المحدث بعد الترحيل
+        $difference = $actual_cash - $expected_balance;
+
         // 2. تسجيل الفروقات وتسوية الصندوق إن وجدت
         if ($difference != 0) {
             if ($difference > 0) {
@@ -125,7 +179,7 @@ if (isset($_POST['btn_confirm_close'])) {
             // خصم من الصندوق الحالي
             update_box_balance($conn, $box_id, $transferred_amount, 'discount', "ترحيل صادر إلى الصندوق الرئيسي - إقفال $today_date", $today_date);
             // إضافة للصندوق الرئيسي
-            update_box_balance($conn, 1, $transferred_amount, 'addition', "ترحيل وارد من صندوق $box_name - إقفال $today_date", $today_date);
+            update_box_balance($conn, $main_box_id, $transferred_amount, 'addition', "ترحيل وارد من صندوق $box_name - إقفال $today_date", $today_date);
             // قيد يومية
             post_journal_entry($conn, 'adjustment', $box_id, 'الصندوق - الصندوق الرئيسي', 'الصندوق - ' . $box_name, $transferred_amount, "ترحيل نقدية من صندوق ($box_name) إلى الصندوق الرئيسي", $user_display);
         }
@@ -138,7 +192,7 @@ if (isset($_POST['btn_confirm_close'])) {
         $conn->query($sql_close_log);
 
         $conn->commit();
-        echo "<script>alert('✓ تم إقفال الصندوق وترحيل المبالغ بنجاح!'); window.location='index.php';</script>";
+        echo "<script>alert('✓ تم إقفال الصندوق وترحيل المبالغ بنجاح!'); window.location='" . ($is_admin ? 'index.php' : '../home.php') . "';</script>";
         exit;
     } catch (Exception $e) {
         $conn->rollback();
@@ -162,6 +216,30 @@ if (isset($_POST['btn_confirm_close'])) {
             <div class="card-body">
                 <?php if (!empty($error)): ?>
                     <div class="alert alert-danger rounded-0 mb-4"><?php echo $error; ?></div>
+                <?php endif; ?>
+                <?php if (!empty($success)): ?>
+                    <div class="alert alert-success rounded-0 mb-4"><?php echo $success; ?></div>
+                <?php endif; ?>
+
+                <?php
+                // حساب مجموع المبيعات النقدية المعلقة لهذا الصندوق
+                $sql_pending = "SELECT COALESCE(SUM(total), 0) as pending_sales FROM sales WHERE box_id = $box_id AND is_transferred_to_box = 0 AND delete_status = 0";
+                $pending_sales = floatval($conn->query($sql_pending)->fetch_assoc()['pending_sales']);
+                if ($pending_sales > 0):
+                ?>
+                    <div class="alert alert-warning rounded-0 mb-4 text-right p-3" style="border: 1px solid #fbbf24; border-right: 4px solid #d97706 !important; background-color: #fffbeb; color: #92400e;">
+                        <div class="d-flex align-items-center justify-content-between flex-wrap">
+                            <div>
+                                <i class="fa fa-info-circle ml-2" style="font-size: 1.2rem; vertical-align: middle;"></i>
+                                <span>توجد مبيعات نقدية معلقة بمبلغ <strong><?php echo number_format($pending_sales, 2); ?> ر.ي</strong> لم يتم ترحيلها إلى الصندوق حتى الآن.</span>
+                            </div>
+                            <form method="POST" class="m-0">
+                                <button type="submit" name="btn_trigger_transfer" class="btn-flat btn-flat-success btn-sm py-1 px-3" style="background-color: var(--accent-success); color: #fff;">
+                                    <i class="fa fa-share ml-1"></i> ترحيل المبيعات إلى الصندوق الآن
+                                </button>
+                            </form>
+                        </div>
+                    </div>
                 <?php endif; ?>
 
                 <div class="row">

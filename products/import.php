@@ -203,6 +203,11 @@ if (isset($_POST['upload_csv'])) {
                     <h5>الخطوة 1: اختيار ملف الاستيراد</h5>
                 </div>
                 <div class="card-body">
+                    <div class="mb-3">
+                        <a href="../files/products_template.csv" class="btn btn-outline-info rounded-0 btn-sm text-decoration-none" download>
+                            <i class="fa fa-download ml-1"></i> تحميل نموذج ملف استيراد المنتجات (CSV)
+                        </a>
+                    </div>
                     <form method="POST" enctype="multipart/form-data">
                         <div class="form-group mb-4">
                             <label class="font-weight-bold text-secondary mb-2">اختر ملف CSV *</label>

@@ -1,0 +1,17 @@
+name: Main Config
+version: 1.0.0
+schema: v1
+models:
+  - name: AQNEX
+    provider: openai
+    model: google/gemma-4-e4b
+    apiBase: http://localhost:1234/v1
+    apiKey: lm-studio
+    roles:
+      - chat
+      - edit
+  - name: Gemini 3.1 Pro
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    apiKey: AQ.Ab8RN6K_euBkFvyEyx9mgVxMvscfABEak5soVfhMYblWDzyTrA
+    contextLength: 2097152

@@ -15,6 +15,30 @@ if (!isset($_SESSION['SESS_MEMBER_ID'])) {
 
 require_once(__DIR__ . '/../includes/connect.php');
 
+// جلب قائمة الفواتير للبحث (Lookup)
+if (isset($_GET['action']) && $_GET['action'] === 'list') {
+    $search_term = $conn->real_escape_string($_GET['search'] ?? '');
+    $sql = "SELECT id, cust_name, total, build_date FROM sales WHERE delete_status = 0";
+    if (!empty($search_term)) {
+        $sql .= " AND (id LIKE '%$search_term%' OR cust_name LIKE '%$search_term%')";
+    }
+    $sql .= " ORDER BY id DESC LIMIT 50";
+    $res = $conn->query($sql);
+    $list = [];
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $list[] = [
+                'id' => intval($row['id']),
+                'cust_name' => $row['cust_name'] ?: 'عميل نقدي',
+                'total' => doubleval($row['total']),
+                'date' => $row['build_date']
+            ];
+        }
+    }
+    echo json_encode(['invoices' => $list], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 $invoice_id = intval($_GET['invoice_id'] ?? 0);
 if ($invoice_id <= 0) {
     echo json_encode(['error' => 'رقم فاتورة غير صالح']);

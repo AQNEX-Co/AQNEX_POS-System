@@ -3,129 +3,265 @@ $dir_prefix = '../';
 $module = 'purchases';
 require_once($dir_prefix . 'includes/header.php');
 
-check_permission(['admin', 'inventory']);
+check_permission(['admin', 'inventory', 'cashier']);
 
-// جلب الفواتير الإجمالية بدلاً من البنود المفردة - لعرض قائمة فواتير منظمة
-$sql = "SELECT p.*, 
-        (SELECT COUNT(*) FROM purchase_items pi WHERE pi.buys_date = p.date AND pi.supp_name = p.supp_name) as items_count
-        FROM purchases p ORDER BY p.id DESC";
-$result = $conn->query($sql);
+// ─── معاملات البحث والفلترة ────────────────────────────
+$search      = isset($_GET['search'])    ? trim($_GET['search'])    : '';
+$from_date   = isset($_GET['from_date']) ? trim($_GET['from_date']) : '';
+$to_date     = isset($_GET['to_date'])   ? trim($_GET['to_date'])   : '';
+$supp_filter = isset($_GET['supplier'])  ? trim($_GET['supplier'])  : '';
+$per_page    = 25;
+$page        = max(1, intval($_GET['page'] ?? 1));
+$offset      = ($page - 1) * $per_page;
 
-// إذا لم يكن جدول purchases يعمل أو فارغاً نعرض purchase_items
-if (!$result || $result->num_rows == 0) {
-    // Fallback: عرض بنود الشراء المباشرة
-    $sql = "SELECT * FROM purchase_items WHERE s = '0' ORDER BY buyid DESC";
-    $result = $conn->query($sql);
-    $fallback_mode = true;
-} else {
-    $fallback_mode = false;
-}
-?>
-<title>إدارة فواتير المشتريات - تكنولوجيا فون</title>
+// بناء شرط الاستعلام
+$where = "WHERE 1=1";
+if (!empty($search))      $where .= " AND (supp_name LIKE '%" . $conn->real_escape_string($search) . "%' OR id LIKE '%" . $conn->real_escape_string($search) . "%' OR remark LIKE '%" . $conn->real_escape_string($search) . "%')";
+if (!empty($from_date))   $where .= " AND date >= '" . $conn->real_escape_string($from_date) . "'";
+if (!empty($to_date))     $where .= " AND date <= '" . $conn->real_escape_string($to_date) . "'";
+if (!empty($supp_filter)) $where .= " AND supp_name = '" . $conn->real_escape_string($supp_filter) . "'";
 
-<?php
+// إجمالي السجلات للترقيم
+$total_rows  = (int)($conn->query("SELECT COUNT(*) as c FROM purchases $where")->fetch_assoc()['c'] ?? 0);
+$total_pages = max(1, ceil($total_rows / $per_page));
+
+// السجلات الحالية
+// إصلاح: كان عدّ الأصناف يعتمد على مطابقة buys_date + supp_name فقط، وهذا غير دقيق
+// (يفشل عند وجود أكثر من فاتورة لنفس المورد بنفس التاريخ، أو فروقات تنسيق التاريخ)
+// الآن نعتمد أولاً على purchase_id (المُستخدم في كل الفواتير الجديدة)، ونستخدم
+// المطابقة القديمة بالتاريخ+المورد فقط كـ fallback لبنود لا تحمل purchase_id (بيانات قديمة).
+$result = $conn->query("SELECT p.*, 
+    (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) 
+    + 
+    (SELECT COUNT(*) FROM purchase_items pi2 WHERE (pi2.purchase_id = 0 OR pi2.purchase_id IS NULL) AND pi2.buys_date = p.date AND pi2.supp_name = p.supp_name)
+    as items_count 
+    FROM purchases p $where ORDER BY p.id DESC LIMIT $per_page OFFSET $offset");
+
+// الإحصائيات الإجمالية للمجموعة المفلترة
+$stats = $conn->query("SELECT COALESCE(SUM(p.total),0) - COALESCE(SUM(r.refund_amount),0) as total_purchases, COUNT(*) as count FROM purchases p LEFT JOIN (SELECT purchase_id, SUM(refund_amount) as refund_amount FROM purchase_returns WHERE status='active' GROUP BY purchase_id) r ON r.purchase_id = p.id $where")->fetch_assoc();
+$stat_purchases = (float)$stats['total_purchases'];
+$stat_count     = (int)$stats['count'];
+
+// الذمم للموردين (المبالغ الآجلة غير مدفوعة)
+$supp_debt = (float)($conn->query("SELECT COALESCE(SUM(supp_daain),0) as v FROM suppliers WHERE d_s=0")->fetch_assoc()['v'] ?? 0);
+
+$currency = $global_settings['currency'] ?? 'ر.ي';
+
 // رسائل التغذية الراجعة
-$msg = isset($_GET['msg']) ? $_GET['msg'] : '';
+$msg = $_GET['msg'] ?? '';
 ?>
-<?php if ($msg === 'deleted'): ?>
-<div class="alert alert-success rounded-0 mb-3 no-print"><?php echo get_icon('check','ml-1'); ?> تم حذف فاتورة المشتريات بنجاح واسترجاع الكميات للمخزن.</div>
-<?php elseif ($msg === 'error'): ?>
-<div class="alert alert-danger rounded-0 mb-3 no-print"><?php echo get_icon('info-circle','ml-1'); ?> حدث خطأ أثناء الحذف. حاول مرة أخرى.</div>
-<?php endif; ?>
-<div class="card-flat">
-<div class="card-header no-print">
-    <h5><?php echo get_icon('purchases', 'ml-2 text-primary'); ?> إدارة فواتير المشتريات</h5>
-    <div>
-            <a href="create.php" class="btn-flat btn-flat-primary btn-sm ml-2 text-decoration-none">
-                <?php echo get_icon('plus', 'ml-1'); ?> إضافة فاتورة جديدة
-            </a>
-        <a href="import.php" class="btn-flat btn-flat-primary btn-sm ml-2 text-decoration-none" style="background-color: var(--accent-info); color: #fff;" title="استيراد من إكسل">
-            <i class="bi bi-file-earmark-arrow-up ml-1"></i> استيراد من إكسل
-        </a>
-        <a href="../includes/export.php?type=purchases" class="btn-flat btn-flat-success btn-sm ml-2 text-decoration-none" style="background-color: var(--accent-success); color: #fff;" title="تصدير إلى إكسل">
-            <i class="bi bi-file-earmark-excel ml-1"></i> تصدير إكسل
-        </a>
-        <button onclick="window.print()" class="btn-flat btn-flat-success btn-sm ml-2" title="طباعة">
-            <?php echo get_icon('print', 'ml-1'); ?> طباعة القائمة
-        </button>
-        <a href="../home.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none" title="العودة للرئيسية">
-            <?php echo get_icon('logout', 'ml-1'); ?> عودة
-        </a>
-    </div>
+<title>إدارة المشتريات - <?php echo htmlspecialchars($global_settings['store_name'] ?? 'AQNEX'); ?></title>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">جاري التحميل...</div>
+    <div class="loading-bar"><div class="loading-progress"></div></div>
 </div>
+
+<?php if ($msg === 'deleted'): ?>
+<div class="alert alert-success rounded-0 mb-3 no-print"><i class="bi bi-check-circle-fill me-2"></i> تم حذف فاتورة المشتريات بنجاح واسترجاع الكميات للمخزن، وتعديل مديونية المورد ورصيد الصندوق.</div>
+<?php elseif ($msg === 'error'): ?>
+<div class="alert alert-danger rounded-0 mb-3 no-print"><i class="bi bi-exclamation-triangle-fill me-2"></i> حدث خطأ أثناء الحذف. حاول مرة أخرى.</div>
+<?php elseif ($msg === 'notfound'): ?>
+<div class="alert alert-danger rounded-0 mb-3 no-print"><i class="bi bi-exclamation-triangle-fill me-2"></i> الفاتورة المطلوبة غير موجودة.</div>
+<?php elseif ($msg === 'invalid'): ?>
+<div class="alert alert-danger rounded-0 mb-3 no-print"><i class="bi bi-exclamation-triangle-fill me-2"></i> رقم فاتورة غير صالح.</div>
+<?php endif; ?>
+
+<div class="card-flat">
+    <!-- ═══ رأس الصفحة ═══ -->
+    <div class="card-header no-print d-flex flex-wrap gap-2 align-items-center justify-content-between">
+        <h5 class="mb-0"><?php echo get_icon('purchases', 'ml-2 text-primary'); ?> إدارة فواتير المشتريات</h5>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="create.php" class="btn-flat btn-flat-primary btn-sm text-decoration-none">
+                <?php echo get_icon('plus', 'ml-2'); ?> فاتورة جديدة
+            </a>
+            <a href="returns.php" class="btn-flat btn-sm text-decoration-none" style="background:#8e44ad;color:#fff;">
+                <i class="bi bi-arrow-counterclockwise ml-2"></i> مردودات
+            </a>
+            <a href="import.php" class="btn-flat btn-sm text-decoration-none" style="background:var(--accent-info);color:#fff;" title="استيراد من إكسل">
+                <i class="bi bi-file-earmark-arrow-up ml-2"></i> استيراد
+            </a>
+            <a href="../includes/export.php?type=purchases" class="btn-flat btn-sm text-decoration-none no-print" style="background:var(--accent-success);color:#fff;">
+                <i class="bi bi-file-earmark-excel ml-2"></i> تصدير إكسل
+            </a>
+            <button onclick="window.print()" class="btn-flat btn-flat-secondary btn-sm no-print">
+                <?php echo get_icon('print', 'ml-2'); ?> طباعة
+            </button>
+            <a href="../home.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none no-print">
+                <?php echo get_icon('logout', 'ml-2'); ?> رئيسية
+            </a>
+        </div>
+    </div>
+
     <div class="card-body">
+        <!-- ═══ بطاقات الإحصائيات ═══ -->
+        <div class="row g-3 mb-4 no-print">
+            <div class="col-md-4 col-6">
+                <div style="background:linear-gradient(135deg,#4facfe,#00f2fe);border-radius:12px;padding:16px 20px;color:#fff;">
+                    <div style="font-size:.8rem;opacity:.9;">إجمالي المشتريات</div>
+                    <div style="font-size:1.4rem;font-weight:700;"><?php echo number_format($stat_purchases, 0); ?></div>
+                    <div style="font-size:.75rem;opacity:.8;"><?php echo $currency; ?> &bull; <?php echo $stat_count; ?> فاتورة</div>
+                </div>
+            </div>
+            <div class="col-md-4 col-6">
+                <div style="background:linear-gradient(135deg,#f093fb,#f5576c);border-radius:12px;padding:16px 20px;color:#fff;">
+                    <div style="font-size:.8rem;opacity:.9;">ذمم الموردين (الآجل)</div>
+                    <div style="font-size:1.4rem;font-weight:700;"><?php echo number_format($supp_debt, 0); ?></div>
+                    <div style="font-size:.75rem;opacity:.8;"><?php echo $currency; ?> غير مسدّد</div>
+                </div>
+            </div>
+            <div class="col-md-4 col-6">
+                <div style="background:linear-gradient(135deg,#43e97b,#38f9d7);border-radius:12px;padding:16px 20px;color:#fff;">
+                    <div style="font-size:.8rem;opacity:.9;">المسدّد للموردين</div>
+                    <div style="font-size:1.4rem;font-weight:700;"><?php echo number_format($stat_purchases - $supp_debt, 0); ?></div>
+                    <div style="font-size:.75rem;opacity:.8;"><?php echo $currency; ?></div>
+                </div>
+            </div>
+        </div>
 
+        <!-- ═══ نموذج البحث ═══ -->
+        <form method="GET" class="no-print mb-3">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted mb-1">بحث (رقم فاتورة / مورد / ملاحظات)</label>
+                    <input type="text" name="search" class="form-control form-control-sm" placeholder="ابحث هنا..." value="<?php echo htmlspecialchars($search); ?>">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted mb-1">من تاريخ</label>
+                    <input type="date" name="from_date" class="form-control form-control-sm" value="<?php echo htmlspecialchars($from_date); ?>">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted mb-1">إلى تاريخ</label>
+                    <input type="date" name="to_date" class="form-control form-control-sm" value="<?php echo htmlspecialchars($to_date); ?>">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted mb-1">المورد</label>
+                    <input type="text" name="supplier" class="form-control form-control-sm" placeholder="اسم المورد..." value="<?php echo htmlspecialchars($supp_filter); ?>">
+                </div>
+                <div class="col-md-3 d-flex gap-3">
+                    <button type="submit" class="btn-flat btn-flat-primary btn-sm flex-grow-1">
+                        <i class="bi bi-search ml-2"></i> بحث
+                    </button>
+                    <a href="index.php" class="btn-flat btn-flat-secondary btn-sm flex-grow-1 text-decoration-none text-center">
+                        <i class="bi bi-x-circle ml-2"></i> مسح
+                    </a>
+                    <a href="index.php?from_date=<?php echo date('Y-m-d'); ?>&to_date=<?php echo date('Y-m-d'); ?>" class="btn-flat btn-flat-primary btn-sm text-decoration-none text-center" style="background:#e2e8f0;color:#475569;white-space:nowrap;">
+                      <i class="bi bi-calendar ml-2"></i>  اليوم
+                    </a>
+                </div>
+            </div>
+        </form>
 
+        <!-- ═══ جدول الفواتير ═══ -->
         <div class="table-responsive">
-            <table class="table-flat">
+            <table class="table-flat w-100">
                 <thead>
                     <tr>
-                        <?php if (!$fallback_mode): ?>
-                        <th style="width: 8%;">رقم الفاتورة</th>
-                        <th>اسم المورد</th>
-                        <th style="width: 12%;">عدد الأصناف</th>
-                        <th style="width: 15%;">إجمالي الفاتورة</th>
-                        <th style="width: 12%;">العملة</th>
-                        <th style="width: 14%;">تاريخ الشراء</th>
-                        <th class="no-print" style="width: 16%;">الإجراءات</th>
-                        <?php else: ?>
-                        <th>رقم المعاملة</th>
-                        <th>اسم المورد</th>
-                        <th>اسم المنتج</th>
-                        <th>الكمية</th>
-                        <th>سعر الشراء الكلي</th>
-                        <th>تاريخ الشراء</th>
-                        <?php endif; ?>
+                        <th style="width:70px;">#</th>
+                        <th>المورد</th>
+                        <th style="width:110px;">التاريخ</th>
+                        <th style="width:80px;">الأصناف</th>
+                        <th style="width:140px;">إجمالي الفاتورة</th>
+                        <th style="width:80px;">العملة</th>
+                        <th>ملاحظات</th>
+                        <th class="no-print text-center" style="width:120px;">الإجراءات</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php
                     if ($result && $result->num_rows > 0) {
-                        while($row = $result->fetch_assoc()) {
-                            if (!$fallback_mode): ?>
-                            <tr>
-                                <td class="font-weight-bold text-secondary">#<?php echo $row['id']; ?></td>
-                                <td class="font-weight-bold"><?php echo $row['supp_name'] ? htmlspecialchars($row['supp_name']) : 'مورد عام'; ?></td>
-                                <td class="text-center"><?php echo intval($row['items_count']); ?> صنف</td>
-                                <td class="font-weight-bold text-dark"><?php echo number_format($row['total'], 2); ?></td>
+                        while ($row = $result->fetch_assoc()) {
+                            $cc = $row['currency_code'] ?? 'YER';
+                            ?>
+                            <tr class="fw-bold" style="font-size:.85rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                <td><strong class="text-primary">#<?php echo $row['id']; ?></strong></td>
                                 <td>
-                                    <?php $cc = isset($row['currency_code']) ? $row['currency_code'] : 'YER'; ?>
-                                    <span class="badge badge-secondary px-2 py-1 font-weight-normal"><?php echo htmlspecialchars($cc); ?></span>
+                                    <?php echo htmlspecialchars($row['supp_name'] ?: 'مورد عام'); ?>
                                 </td>
-                                <td><?php echo htmlspecialchars($row['date']); ?></td>
-                                <td class="no-print">
-                                    <a href="view.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 ml-1 text-decoration-none">
-                                        <?php echo get_icon('eye', 'ml-1'); ?> تفاصيل
+                                <td class="text-muted"><?php echo htmlspecialchars($row['date']); ?></td>
+                                <td class="text-center">
+                                    <span style="background:#e0e7ff;color:#3730a3;padding:2px 10px;border-radius:20px;font-size:.8rem;font-weight:600;">
+                                        <?php echo (int)$row['items_count']; ?> صنف
+                                    </span>
+                                </td>
+                                <td class="fw-bold"><?php echo number_format($row['total'], 0); ?> <small class="text-muted"><?php echo $currency; ?></small></td>
+                                <td>
+                                    <span class="badge badge-secondary px-2 py-1" style="font-size:.75rem;font-weight:600;">
+                                        <?php echo htmlspecialchars($cc); ?>
+                                    </span>
+                                </td>
+                                <td class="text-muted" style="font-size:.85rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                    <?php echo htmlspecialchars($row['remark'] ?? ''); ?>
+                                </td>
+                                <td class="no-print text-center">
+                                    <a href="view.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 text-decoration-none" title="عرض الفاتورة">
+                                        <?php echo get_icon('eye', 'ml-1'); ?> عرض
                                     </a>
                                     <?php if ($is_admin): ?>
-                                    <a href="delete.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none" onclick="return confirm('تأكيد حذف فاتورة #<?php echo $row['id']; ?>\nسيتم استرجاع الكميات للمخزن.\nهذا الإجراء لا يمكن التراجع عنه!')">
-                                        <?php echo get_icon('trash', 'ml-1'); ?> حذف
+                                    <a href="edit.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-secondary btn-sm py-1 px-2 text-decoration-none" title="تعديل">
+                                        <?php echo get_icon('edit', 'ml-1'); ?> تعديل
+                                    </a>
+                                    <a href="delete.php?id=<?php echo $row['id']; ?>"                                         class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none" title="حذف"
+
+                                       onclick="return confirm('تأكيد حذف فاتورة #<?php echo $row['id']; ?>\nسيتم استرجاع الكميات للمخزن، وتعديل مديونية المورد ورصيد الصندوق.\nهذا الإجراء لا يمكن التراجع عنه!')"
+                                       title="حذف">
+                                                                                <i class="fa fa-trash ml-1"></i>مسح
                                     </a>
                                     <?php endif; ?>
                                 </td>
                             </tr>
-                            <?php else: ?>
-                            <tr>
-                                <td>#<?php echo $row['buyid']; ?></td>
-                                <td class="font-weight-bold text-secondary"><?php echo $row['supp_name'] ? htmlspecialchars($row['supp_name']) : 'مورد عام'; ?></td>
-                                <td class="text-right pr-4 font-weight-bold text-secondary"><?php echo htmlspecialchars($row['name']); ?></td>
-                                <td><?php echo htmlspecialchars($row['quantity']); ?></td>
-                                <td class="font-weight-bold text-dark"><?php echo number_format($row['buy_price'], 2); ?></td>
-                                <td><?php echo htmlspecialchars($row['buys_date']); ?></td>
-                            </tr>
-                            <?php endif;
+                            <?php
                         }
                     } else {
-                        $colspan = $fallback_mode ? 6 : 7;
-                        echo "<tr><td colspan='$colspan' class='text-center text-muted p-4'>لا توجد فواتير مشتريات مسجلة</td></tr>";
+                        echo "<tr><td colspan='8' class='text-center text-muted p-5'>
+                            <i class='bi bi-inbox' style='font-size:48px;opacity:.3;display:block;margin-bottom:12px;'></i>
+                            لا توجد فواتير مشتريات مطابقة للبحث
+                        </td></tr>";
                     }
                     ?>
                 </tbody>
             </table>
         </div>
+
+        <!-- ═══ الترقيم ═══ -->
+        <?php if ($total_pages > 1): ?>
+        <div class="d-flex justify-content-between align-items-center mt-3 no-print">
+            <div class="text-muted small">
+                عرض <?php echo min($offset + 1, $total_rows); ?> - <?php echo min($offset + $per_page, $total_rows); ?> من <?php echo number_format($total_rows); ?> فاتورة
+            </div>
+            <nav>
+                <ul class="pagination pagination-sm mb-0" style="gap:4px;">
+                    <?php if ($page > 1): ?>
+                    <li class="page-item">
+                        <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </li>
+                    <?php endif; ?>
+                    <?php
+                    $start_p = max(1, $page - 2);
+                    $end_p   = min($total_pages, $page + 2);
+                    for ($p = $start_p; $p <= $end_p; $p++):
+                    ?>
+                    <li class="page-item <?php echo $p == $page ? 'active' : ''; ?>">
+                        <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $p])); ?>"><?php echo $p; ?></a>
+                    </li>
+                    <?php endfor; ?>
+                    <?php if ($page < $total_pages): ?>
+                    <li class="page-item">
+                        <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>">
+                            <i class="bi bi-chevron-left"></i>
+                        </a>
+                    </li>
+                    <?php endif; ?>
+                </ul>
+            </nav>
+        </div>
+        <?php endif; ?>
+
     </div>
 </div>
 
-<?php
-require_once($dir_prefix . 'includes/footer.php');
-?>
+<?php require_once($dir_prefix . 'includes/footer.php'); ?>

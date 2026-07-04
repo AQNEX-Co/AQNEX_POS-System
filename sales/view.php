@@ -37,12 +37,19 @@ if (!$settings) {
 $is_thermal = ($settings['printer_type'] === 'receipt_80mm' || $settings['printer_type'] === 'receipt_58mm');
 $currency = $settings['currency'];
 
-// حساب المجاميع مسبقاً
+// حساب المجاميع مسبقاً مع خصم المردودات النشطة
 $grand_line_total = 0;
 $grand_paid = 0;
 $grand_discount = 0;
 $grand_remaining = 0;
 $items_data = [];
+
+// جلب إجمالي المردودات لهذه الفاتورة
+$res_total_returns = $conn->query("SELECT COALESCE(SUM(refund_amount),0) AS total_ret, COALESCE(SUM(CASE WHEN refund_method='cash' THEN refund_amount ELSE 0 END),0) AS total_cash_ret FROM sales_returns WHERE sales_id=$invoice_id AND status='active'");
+$total_returns_row = $res_total_returns ? $res_total_returns->fetch_assoc() : ['total_ret' => 0, 'total_cash_ret' => 0];
+$total_returns = doubleval($total_returns_row['total_ret']);
+$total_cash_returns = doubleval($total_returns_row['total_cash_ret']);
+
 if ($result_items && $result_items->num_rows > 0) {
     while ($row = $result_items->fetch_assoc()) {
         $p_name = $row['name'];
@@ -52,13 +59,28 @@ if ($result_items && $result_items->num_rows > 0) {
         $paid = floatval($row['bush']);
         $discount = floatval($row['d']);
         $remaining = floatval($row['dis']);
-        $grand_line_total += $line_total;
-        $grand_paid += $paid;
-        $grand_discount += $discount;
-        $grand_remaining += $remaining;
-        $items_data[] = ['name' => $p_name, 'quantity' => $row['quantity'], 'unit_price' => floatval($row['unit_price']), 'line_total' => $line_total, 'discount' => $discount, 'remaining' => $remaining];
+
+        // المردودات لهذا الصنف (مطابقة بالاسم + sales_id)
+        $ret_res = $conn->query("SELECT COALESCE(SUM(quantity),0) AS ret_qty, COALESCE(SUM(refund_amount),0) AS ret_amount FROM sales_returns WHERE sales_id=$invoice_id AND product_name='" . $conn->real_escape_string($row['name']) . "' AND status='active'");
+        $ret_row = $ret_res ? $ret_res->fetch_assoc() : ['ret_qty' => 0, 'ret_amount' => 0];
+        $ret_qty = intval($ret_row['ret_qty']);
+        $ret_amount = doubleval($ret_row['ret_amount']);
+
+        // الكميات والصافي المعروض بعد المردود
+        $qty = intval($row['quantity']) - $ret_qty;
+        if ($qty < 0) $qty = 0;
+        $net_line_total = max(0, $line_total - $ret_amount);
+
+        $grand_line_total += $net_line_total;
+        $grand_paid += max(0, $paid - ($ret_amount <= $paid ? $ret_amount : $paid));
+        $grand_discount += $discount; // خصم على باقي البنود
+        $grand_remaining += max(0, $remaining - max(0, $ret_amount - $paid));
+
+        $items_data[] = ['name' => $p_name, 'quantity' => $qty, 'unit_price' => floatval($row['unit_price']), 'line_total' => $net_line_total, 'discount' => $discount, 'remaining' => $remaining, 'returned_qty' => $ret_qty, 'returned_amount' => $ret_amount];
     }
 }
+// اخصم إجمالي المرتجعات من المجموع الإجمالي (في حال وجود فروقات)
+$grand_line_total = $grand_line_total; // محُسُب أعلاه من البنود بعد الخصم
 $tax_val = ($settings['tax_percent'] > 0) ? ($grand_line_total * floatval($settings['tax_percent'])) / 100 : 0;
 $net_total = $grand_line_total + $tax_val - $grand_discount;
 ?>
@@ -82,6 +104,10 @@ $net_total = $grand_line_total + $tax_val - $grand_discount;
     .thermal-receipt-box { display: none !important; }
     .a4-invoice-box { width: 100% !important; padding: 8mm !important; margin: 0 !important; }
     .inv-header { border-bottom: 2px solid #000 !important; }
+    .inv-table { page-break-inside: auto; width:100%; }
+    .inv-table thead { display: table-header-group; }
+    .inv-table tfoot { display: table-footer-group; }
+    .inv-table tr { page-break-inside: avoid; page-break-after: auto; }
     .inv-table th { background: #1e293b !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .inv-totals { border-top: 2px solid #000 !important; }
     <?php endif; ?>
@@ -260,50 +286,44 @@ $net_total = $grand_line_total + $tax_val - $grand_discount;
             <?php endforeach; ?>
         </tbody>
     </table>
-
-    <!-- المجاميع -->
-    <div class="inv-totals">
-        <div class="row">
-            <div class="col-md-7">
-                <?php if (!empty($invoice['remark'])): ?>
-                <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:12px; font-size:0.88rem;">
-                    <strong>ملاحظات:</strong> <?php echo nl2br(htmlspecialchars($invoice['remark'])); ?>
-                </div>
-                <?php endif; ?>
-            </div>
-            <div class="col-md-5">
-                <div class="totals-box">
-                    <table>
-                        <tr>
-                            <td class="tot-label">المجموع الفرعي:</td>
-                            <td class="tot-value"><?php echo number_format($grand_line_total, 2); ?> <?php echo $currency; ?></td>
-                        </tr>
-                        <?php if ($grand_discount > 0): ?>
-                        <tr>
-                            <td class="tot-label">إجمالي الخصم:</td>
-                            <td class="tot-value" style="color:#b45309;">- <?php echo number_format($grand_discount, 2); ?> <?php echo $currency; ?></td>
-                        </tr>
-                        <?php endif; ?>
-                        <?php if ($tax_val > 0): ?>
-                        <tr>
-                            <td class="tot-label">ضريبة (<?php echo $settings['tax_percent']; ?>%):</td>
-                            <td class="tot-value"><?php echo number_format($tax_val, 2); ?> <?php echo $currency; ?></td>
-                        </tr>
-                        <?php endif; ?>
-                        <tr class="tot-grand">
-                            <td class="tot-label" style="color:#fff; font-size:1rem;">المبلغ المستلم:</td>
-                            <td class="tot-value tot-paid" style="color:#4ade80; font-size:1.05rem;"><?php echo number_format($grand_paid, 2); ?> <?php echo $currency; ?></td>
-                        </tr>
-                        <?php if ($grand_remaining > 0): ?>
-                        <tr style="background:#fff5f5;">
-                            <td class="tot-label tot-remaining">المتبقي (أجل):</td>
-                            <td class="tot-value tot-remaining"><?php echo number_format($grand_remaining, 2); ?> <?php echo $currency; ?></td>
-                        </tr>
-                        <?php endif; ?>
-                    </table>
-                </div>
-            </div>
+    <!-- المجاميع (أسفل الفاتورة بشكل رسمي) -->
+    <div class="inv-summary-bottom" style="margin-top:20px;">
+        <?php if (!empty($invoice['remark'])): ?>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:12px; font-size:0.88rem; margin-bottom:12px;">
+            <strong>ملاحظات:</strong> <?php echo nl2br(htmlspecialchars($invoice['remark'])); ?>
         </div>
+        <?php endif; ?>
+
+        <table style="width:100%; border-collapse:collapse;">
+            <tbody>
+                <tr>
+                    <td style="text-align:right; padding:8px 12px; border-top:2px solid #e2e8f0;">المجموع الفرعي</td>
+                    <td style="text-align:left; padding:8px 12px; font-weight:700;"><?php echo number_format($grand_line_total, 2); ?> <?php echo $currency; ?></td>
+                </tr>
+                <?php if ($grand_discount > 0): ?>
+                <tr>
+                    <td style="text-align:right; padding:8px 12px;">إجمالي الخصم</td>
+                    <td style="text-align:left; padding:8px 12px; color:#b45309; font-weight:700;">- <?php echo number_format($grand_discount, 2); ?> <?php echo $currency; ?></td>
+                </tr>
+                <?php endif; ?>
+                <?php if ($tax_val > 0): ?>
+                <tr>
+                    <td style="text-align:right; padding:8px 12px;">ضريبة (<?php echo $settings['tax_percent']; ?>%)</td>
+                    <td style="text-align:left; padding:8px 12px; font-weight:700;"><?php echo number_format($tax_val, 2); ?> <?php echo $currency; ?></td>
+                </tr>
+                <?php endif; ?>
+                <tr>
+                    <td style="text-align:right; padding:8px 12px;">المبلغ المستلم</td>
+                    <td style="text-align:left; padding:8px 12px; color:#4ade80; font-weight:800; font-size:1.05rem;"><?php echo number_format($grand_paid, 2); ?> <?php echo $currency; ?></td>
+                </tr>
+                <?php if ($grand_remaining > 0): ?>
+                <tr>
+                    <td style="text-align:right; padding:8px 12px;">المتبقي (أجل)</td>
+                    <td style="text-align:left; padding:8px 12px; color:#be123c; font-weight:800;"><?php echo number_format($grand_remaining, 2); ?> <?php echo $currency; ?></td>
+                </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </div>
 
     <!-- التوقيعات والتذييل -->
@@ -326,11 +346,151 @@ $net_total = $grand_line_total + $tax_val - $grand_discount;
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('autoprint') === '1') window.print();
+    const autoprint = urlParams.get('autoprint') === '1';
+    
+    // فحص إذا ما كان موديول الطباعة الحرارية مفعلاً
+    <?php 
+    @include_once($dir_prefix . 'includes/modules.php');
+    $thermal_enabled = function_exists('is_module_enabled') && is_module_enabled('thermal_printing') ? 1 : 0;
+    ?>
+    const thermalPrintingEnabled = <?php echo $thermal_enabled; ?>;
+
+    if (autoprint) {
+        if (thermalPrintingEnabled) {
+            // محاولة الطباعة الصامتة عبر السيرفر الداخلي
+            fetch(`../printing/api_print.php?action=print_invoice&sale_id=<?php echo $invoice_id; ?>`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // إظهار رسالة نجاح صغيرة
+                        const toast = document.createElement("div");
+                        toast.style.position = "fixed";
+                        toast.style.bottom = "20px";
+                        toast.style.left = "20px";
+                        toast.style.background = "#10b981";
+                        toast.style.color = "#fff";
+                        toast.style.padding = "10px 20px";
+                        toast.style.zIndex = "9999";
+                        toast.textContent = "✓ تم إرسال الفاتورة للطابعة الحرارية تلقائياً.";
+                        document.body.appendChild(toast);
+                        setTimeout(() => toast.remove(), 4000);
+                    } else {
+                        console.warn("Silent printing failed: " + data.message);
+                        // الرجوع للطباعة التقليدية كخيار بديل في حال وجود مشكلة بالطابعة
+                        window.print();
+                    }
+                })
+                .catch(err => {
+                    console.error("Silent printing error:", err);
+                    window.print();
+                });
+        } else {
+            window.print();
+        }
+    }
+
     window.addEventListener("keydown", function(e) {
-        if (e.key === "Enter") { e.preventDefault(); window.print(); }
+        if (e.key === "Enter") { 
+            e.preventDefault(); 
+            if (thermalPrintingEnabled) {
+                // طباعة فورية بالضغط على Enter
+                fetch(`../printing/api_print.php?action=print_invoice&sale_id=<?php echo $invoice_id; ?>`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (!data.success) {
+                            alert("فشل الطباعة: " + data.message);
+                        }
+                    });
+            } else {
+                window.print(); 
+            }
+        }
     });
 });
 </script>
 
+<!-- WhatsApp Auto-Send Integration -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sendWa = urlParams.get('send_wa');
+    const invoiceId = urlParams.get('id');
+    
+    if ((sendWa === '1' || sendWa === '2') && invoiceId) {
+        // Find visible invoice element
+        const invoiceEl = document.querySelector('.a4-invoice-box:not([style*="display: none"])') || 
+                          document.querySelector('.thermal-receipt-box:not([style*="display: none"])') || 
+                          document.querySelector('.a4-invoice-box') || 
+                          document.querySelector('.thermal-receipt-box');
+                          
+        if (invoiceEl) {
+            // Wait 1200ms to ensure fonts and styles are fully loaded and rendered
+            setTimeout(function() {
+                // Set background explicitly to white for crisp screenshot rendering
+                const originalBg = invoiceEl.style.background;
+                invoiceEl.style.background = '#ffffff';
+                
+                html2canvas(invoiceEl, { 
+                    scale: 2,
+                    useCORS: true,
+                    backgroundColor: '#ffffff'
+                }).then(canvas => {
+                    // Restore background
+                    invoiceEl.style.background = originalBg;
+                    
+                    const base64Image = canvas.toDataURL('image/png');
+                    
+                    // Display status alert
+                    const alertDiv = document.createElement('div');
+                    alertDiv.style.position = 'fixed';
+                    alertDiv.style.top = '25px';
+                    alertDiv.style.right = '25px';
+                    alertDiv.style.zIndex = '999999';
+                    alertDiv.style.fontFamily = "'Tajawal', sans-serif";
+                    alertDiv.className = 'alert alert-info shadow-lg border-0 rounded-0';
+                    alertDiv.innerHTML = '<i class="fa fa-refresh fa-spin ml-2"></i> جاري إرسال الفاتورة والرصيد للعميل عبر الواتساب تلقائياً...';
+                    document.body.appendChild(alertDiv);
+                    
+                    fetch('../api/send_whatsapp.php', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            invoice_id: invoiceId,
+                            type: sendWa === '2' ? 'return' : 'sale',
+                            image_base64: base64Image
+                        })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alertDiv.className = 'alert alert-success shadow-lg border-0 rounded-0';
+                            alertDiv.innerHTML = '<i class="fa fa-check ml-2"></i> ' + data.message;
+                        } else {
+                            alertDiv.className = 'alert alert-danger shadow-lg border-0 rounded-0';
+                            alertDiv.innerHTML = '<i class="fa fa-times ml-2"></i> فشل إرسال الواتساب: ' + data.message;
+                        }
+                        // Remove status box and clean URL parameters to prevent re-sending
+                        setTimeout(() => {
+                            alertDiv.remove();
+                            urlParams.delete('send_wa');
+                            const newUrl = window.location.pathname + '?' + urlParams.toString();
+                            window.history.replaceState({}, '', newUrl);
+                        }, 4000);
+                    })
+                    .catch(err => {
+                        alertDiv.className = 'alert alert-danger shadow-lg border-0 rounded-0';
+                        alertDiv.innerHTML = '<i class="fa fa-times ml-2"></i> عطل في الاتصال ببوابة إرسال الواتساب.';
+                        setTimeout(() => alertDiv.remove(), 4000);
+                    });
+                });
+            }, 1200);
+        }
+    }
+});
+</script>
+
 <?php require_once($dir_prefix . 'includes/footer.php'); ?>
+

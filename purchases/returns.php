@@ -53,7 +53,7 @@ if (isset($_POST['btn_save_return'])) {
         $already_ret = $res_chk ? intval($res_chk->fetch_assoc()['ret']) : 0;
 
         // جلب الكمية المشتراة في الفاتورة الأصلية
-        $res_orig = $conn->query("SELECT quantity FROM purchase_items WHERE buys_date = '" . $conn->real_escape_string($pur_row['date']) . "' AND supp_name = '" . $conn->real_escape_string($supplier_name) . "' AND name = '" . $conn->real_escape_string($p_name) . "' LIMIT 1");
+        $res_orig = $conn->query("SELECT quantity FROM purchase_items WHERE purchase_id = $purchase_id AND name = '" . $conn->real_escape_string($p_name) . "' LIMIT 1");
         $orig_qty = $res_orig ? intval($res_orig->fetch_assoc()['quantity']) : 0;
         $can_return = $orig_qty - $already_ret;
 
@@ -79,33 +79,46 @@ if (isset($_POST['btn_save_return'])) {
                 
                 $saved_return_id = $conn->insert_id;
 
-                // 2. تخفيض الكمية في المخزن
-                $conn->query("UPDATE products SET quantity = quantity - $qty WHERE id = $product_id");
+                 // 2. تخفيض الكمية في المخزن وتحديث القيمة الكلية
+                 if (!$conn->query("UPDATE products SET quantity = quantity - $qty, total = quantity * buy_price WHERE id = $product_id")) {
+                     throw new Exception('فشل تحديث كمية المنتج في المخزن: ' . $conn->error);
+                 }
 
                 // 3. إضافة سجل حركة المخزن
-                $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
+                if (!$conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
                               SELECT id, name, 'manual', -$qty, quantity, 'مرتجع شراء فاتورة رقم #{$purchase_id} - {$reason}', '$user_name'
-                              FROM products WHERE id = $product_id LIMIT 1");
+                              FROM products WHERE id = $product_id LIMIT 1")) {
+                    throw new Exception('فشل إضافة سجل حركة المخزون: ' . $conn->error);
+                }
 
                 // 4. استرداد المبلغ
+                if ($refund_amount > 0) {
+                    if (!$conn->query("UPDATE purchases SET total = GREATEST(0, total - $refund_amount), remaining_total = GREATEST(0, remaining_total - $refund_amount) WHERE id = $purchase_id")) {
+                        throw new Exception('فشل تحديث إجمالي الفاتورة الأصلية: ' . $conn->error);
+                    }
+                }
+                 // تم نقل تعديل الذمم الدائنة للمورد ليكون حصرياً في خيار الآجل (الكريديت) في الأسفل لمنع الازدواج المالي ولأن النقد لا يؤثر على حساب المورد المالي
+
                 if ($refund_method === 'cash') {
-                    // إذا كان الاسترداد نقداً، تزيد سيولة الصندوق
                     if ($refund_source === 'box' && $refund_amount > 0) {
                         update_box_balance($conn, $active_box_id, $refund_amount, 'addition', "مرتجع شراء فاتورة #{$purchase_id} - {$p_name}", $return_date);
                     }
                     
-                    // قيد محاسبي للمرتجع النقدي
                     $debit_acc = ($refund_source === 'box') ? 'الصندوق - ' . $box_name : 'المشتريات';
-                    post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, 'المخزون / البضاعة', $refund_amount, "مرتجع مشتريات نقداً #{$purchase_id} - {$p_name}", $user_name, $active_box_id);
+                    if (!post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, 'المخزون / البضاعة', $refund_amount, "مرتجع مشتريات نقداً #{$purchase_id} - {$p_name}", $user_name, $active_box_id)) {
+                        throw new Exception('فشل تسجيل قيد مرتجع المشتريات نقداً');
+                    }
                 } else {
-                    // خصم من مديونية المورد
                     if ($refund_amount > 0 && !empty($supplier_name)) {
                         $supp_esc = $conn->real_escape_string($supplier_name);
-                        $conn->query("UPDATE suppliers SET supp_daain = GREATEST(0, supp_daain - $refund_amount) WHERE supp_name='$supp_esc'");
+                        if (!$conn->query("UPDATE suppliers SET supp_daain = GREATEST(0, supp_daain - $refund_amount) WHERE supp_name='$supp_esc'")) {
+                            throw new Exception('فشل تحديث رصيد المورد: ' . $conn->error);
+                        }
                     }
                     
-                    // قيد محاسبي للمرتجع الآجل
-                    post_journal_entry($conn, 'return', $saved_return_id, 'الذمم الدائنة - ' . $supplier_name, 'المخزون / البضاعة', $refund_amount, "مرتجع مشتريات آجل (خصم مديونية) #{$purchase_id} - {$p_name}", $user_name, $active_box_id);
+                    if (!post_journal_entry($conn, 'return', $saved_return_id, 'الذمم الدائنة - ' . $supplier_name, 'المخزون / البضاعة', $refund_amount, "مرتجع مشتريات آجل (خصم مديونية) #{$purchase_id} - {$p_name}", $user_name, $active_box_id)) {
+                        throw new Exception('فشل تسجيل قيد مرتجع المشتريات آجل');
+                    }
                 }
 
                 $conn->commit();
@@ -129,7 +142,9 @@ if (isset($_GET['cancel_ret']) && is_numeric($_GET['cancel_ret'])) {
     if ($ret_row) {
         $conn->begin_transaction();
         try {
-            $conn->query("UPDATE purchase_returns SET status='cancelled' WHERE id=$ret_id");
+            if (!$conn->query("UPDATE purchase_returns SET status='cancelled' WHERE id=$ret_id")) {
+                throw new Exception("فشل تحديث حالة المرتجع");
+            }
             
             $qty           = intval($ret_row['quantity']);
             $product_id    = intval($ret_row['product_id']);
@@ -145,33 +160,44 @@ if (isset($_GET['cancel_ret']) && is_numeric($_GET['cancel_ret'])) {
             $pur_row = $res_pur ? $res_pur->fetch_assoc() : null;
             $supplier_name = $pur_row ? $pur_row['supp_name'] : '';
 
-            // إعادة إضافة الكمية للمخزن
-            $conn->query("UPDATE products SET quantity = quantity + $qty WHERE id=$product_id");
+             // إعادة إضافة الكمية للمخزن وتحديث القيمة الكلية
+             if (!$conn->query("UPDATE products SET quantity = quantity + $qty, total = quantity * buy_price WHERE id=$product_id")) {
+                 throw new Exception("فشل إعادة الكمية للمخزن");
+             }
 
             // سجل حركة المخزن
-            $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
+            if (!$conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
                           SELECT id, name, 'manual', $qty, quantity, 'إلغاء مرتجع شراء #{$ret_id}', '$uname'
-                          FROM products WHERE id = $product_id LIMIT 1");
+                          FROM products WHERE id = $product_id LIMIT 1")) {
+                throw new Exception("فشل إضافة سجل حركة المخزون");
+            }
 
             if ($refund_method === 'cash') {
                 $refund_source = $ret_row['refund_source'];
-                // خصم المبلغ من الصندوق مجدداً
                 if ($refund_source === 'box') {
                     update_box_balance($conn, $box_id, $refund, 'discount', "إلغاء مرتجع شراء #{$ret_id}", $today_date);
                 }
                 
-                // قيد عكسي
                 $debit_acc = ($refund_source === 'box') ? 'الصندوق - ' . $box_name : 'المشتريات';
-                post_journal_entry($conn, 'return', $ret_id, 'المخزون / البضاعة', $debit_acc, $refund, "إلغاء مرتجع شراء نقدي #{$ret_id}", $uname, $box_id);
+                if (!post_journal_entry($conn, 'return', $ret_id, 'المخزون / البضاعة', $debit_acc, $refund, "إلغاء مرتجع شراء نقدي #{$ret_id}", $uname, $box_id)) {
+                    throw new Exception("فشل تسجيل قيد إلغاء مرتجع شراء نقدي");
+                }
             } else {
-                // إعادة مديونية المورد
                 if (!empty($supplier_name)) {
                     $supp_esc = $conn->real_escape_string($supplier_name);
-                    $conn->query("UPDATE suppliers SET supp_daain = supp_daain + $refund WHERE supp_name='$supp_esc'");
+                    if (!$conn->query("UPDATE suppliers SET supp_daain = supp_daain + $refund WHERE supp_name='$supp_esc'")) {
+                        throw new Exception("فشل إعادة مديونية المورد");
+                    }
                 }
                 
-                // قيد عكسي
-                post_journal_entry($conn, 'return', $ret_id, 'المخزون / البضاعة', 'الذمم الدائنة - ' . $supplier_name, $refund, "إلغاء مرتجع شراء آجل #{$ret_id}", $uname, $box_id);
+                if (!post_journal_entry($conn, 'return', $ret_id, 'المخزون / البضاعة', 'الذمم الدائنة - ' . $supplier_name, $refund, "إلغاء مرتجع شراء آجل #{$ret_id}", $uname, $box_id)) {
+                    throw new Exception("فشل تسجيل قيد إلغاء مرتجع شراء آجل");
+                }
+            }
+
+             // تم إلغاء الكود المكرر لتعديل حساب المورد للمرتجع النقدي هنا لمنع الازدواج المحاسبي
+            if (!$conn->query("UPDATE purchases SET total = total + $refund, remaining_total = remaining_total + $refund WHERE id = $p_id")) {
+                throw new Exception("فشل تحديث الفاتورة الأصلية");
             }
 
             $conn->commit();
@@ -301,9 +327,9 @@ document.addEventListener('keydown', function(e) {
 <div class="row no-print">
     <!-- ===== نموذج تسجيل المرتجع ===== -->
     <div class="col-lg-6 mb-4">
-        <div class="card-flat ret-card">
+        <div class="card-flat ret-card mt-5">
             <div class="card-header" style="background: var(--secondary); color: #fff;">
-                <h5 class="mb-0"><i class="fa fa-undo ml-2"></i> تسجيل مرتجع شراء جديد</h5>
+                <h5 class="mb-0 font-weight-bold"><i class="fa fa-undo ml-2"></i> تسجيل مرتجع شراء جديد</h5>
             </div>
             <div class="card-body">
 
@@ -321,7 +347,7 @@ document.addEventListener('keydown', function(e) {
                             </button>
                         </div>
                     </div>
-                    <small class="text-muted">اضغط Enter أو زر بحث لتحميل البنود المشتراة</small>
+                    <small class="text-muted">اضغط Enter أو زر بحث لتحميل البنود المشتراة  , اضغط زر F2 لاظهار فواتير المشتريات واختيار الفاتورة المطلوبة</small>
                 </div>
 
                 <!-- معلومات الفاتورة المجلوبة -->
@@ -660,6 +686,133 @@ function escHtml(str) {
     d.textContent = str;
     return d.innerHTML;
 }
+</script>
+
+<!-- مودال البحث واختيار الفاتورة (F2) -->
+<div class="modal fade mt-3" id="invoiceListModal" tabindex="-1" role="dialog" aria-labelledby="invoiceListModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content rounded-0">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title font-weight-bold" id="invoiceListModalLabel">
+                    <i class="fa fa-list ml-2"></i> نافذة اختيار فاتورة مشتريات (اضغط Esc للإغلاق)
+                </h5>
+                <button type="button" class="close text-white rounded" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true" class="p-2">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group mb-3 text-right">
+                    <label class="font-weight-bold text-secondary mb-1">ابحث باسم المورد أو رقم الفاتورة:</label>
+                    <input type="text" id="modalInvoiceSearchInput" class="form-control rounded-0 font-weight-bold text-right" placeholder="ابحث...">
+                </div>
+                <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
+                    <table class="table-flat mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 15%;">رقم الفاتورة</th>
+                                <th>المورد</th>
+                                <th style="width: 25%;">التاريخ</th>
+                                <th style="width: 20%;">الإجمالي (ر.ي)</th>
+                                <th style="width: 15%;" class="text-center">تحديد</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modalInvoicesTableBody">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted p-3">جاري تحميل الفواتير...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// الاستماع لزر F2 لفتح نافذة البحث السريع عن الفاتورة
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'F2') {
+        e.preventDefault();
+        openInvoiceLookupModal();
+    }
+});
+
+function openInvoiceLookupModal() {
+    if (typeof $ !== 'undefined' && $.fn.modal) {
+        $('#invoiceListModal').modal('show');
+    } else {
+        var modal = document.getElementById('invoiceListModal');
+        if (modal) {
+            modal.classList.add('show');
+            modal.style.display = 'block';
+            document.body.classList.add('modal-open');
+            var backdrop = document.createElement('div');
+            backdrop.className = 'modal-backdrop fade show';
+            document.body.appendChild(backdrop);
+        }
+    }
+    loadModalInvoices('');
+}
+
+// تحميل الفواتير للمودال عبر AJAX
+function loadModalInvoices(search) {
+    const tbody = document.getElementById('modalInvoicesTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">جاري البحث...</td></tr>';
+    
+    fetch(`ajax_invoice.php?action=list&search=${encodeURIComponent(search)}`)
+        .then(r => r.json())
+        .then(data => {
+            tbody.innerHTML = '';
+            const list = data.invoices || [];
+            if (list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">لم يتم العثور على أي فواتير مطابقة</td></tr>';
+                return;
+            }
+            list.forEach(inv => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="font-weight-bold">#${inv.id}</td>
+                    <td class="text-right font-weight-bold text-secondary">${escHtml(inv.supp_name)}</td>
+                    <td class="small">${inv.date}</td>
+                    <td class="font-weight-bold">${formatNum(inv.total)}</td>
+                    <td class="text-center">
+                        <button type="button" class="btn-flat btn-flat-primary btn-sm py-1 px-2" onclick="selectModalInvoice(${inv.id})">
+                            <i class="bi bi-check-square"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(err => {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger p-3">فشل جلب البيانات: ${err.message}</td></tr>`;
+        });
+}
+
+function selectModalInvoice(id) {
+    document.getElementById('invoiceSearchInput').value = id;
+    
+    // إغلاق المودال
+    if (typeof $ !== 'undefined' && $.fn.modal) {
+        $('#invoiceListModal').modal('hide');
+    } else {
+        var modal = document.getElementById('invoiceListModal');
+        if (modal) {
+            modal.classList.remove('show');
+            modal.style.display = 'none';
+            document.body.classList.remove('modal-open');
+            var backdrops = document.querySelectorAll('.modal-backdrop');
+            backdrops.forEach(b => b.remove());
+        }
+    }
+    
+    searchInvoice();
+}
+
+// تصفية الفواتير في المودال عند الكتابة
+document.getElementById('modalInvoiceSearchInput').addEventListener('input', function() {
+    loadModalInvoices(this.value);
+});
 </script>
 
 <?php require_once($dir_prefix . 'includes/footer.php'); ?>

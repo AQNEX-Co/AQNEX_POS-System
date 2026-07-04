@@ -1,0 +1,19 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^powershell -NoProfile -Command \"Select-String -Path \\.\\\\settings\\\\index\\.php -Pattern '</script>' \\| ForEach-Object \\{ Write-Host \\(\\$_\\.LineNumber\\); Write-Host \\$_\\.Line \\}\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /d c:\\\\xampp\\\\htdocs\\\\tech ; python -c \"from pathlib import Path; lines=Path\\('settings/index\\.php'\\)\\.read_text\\(encoding='utf-8'\\)\\.splitlines\\(\\);\nfor i,line in enumerate\\(lines\\):\n    if '</script>' in line:\n        print\\(i\\+1, repr\\(line\\)\\);\n        start=max\\(0, i-5\\); end=min\\(len\\(lines\\), i\\+3\\);\n        print\\('\\\\n'\\.join\\(f'\\{j\\+1\\}: \\{repr\\(lines\\[j\\]\\)\\}' for j in range\\(start,end\\)\\)\\)\n        break\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    },
+    "markdown.validate.enabled": false,
+    "yaml.schemas": {
+        "file:///c%3A/Users/AQ/.vscode/extensions/continue.continue-2.0.0-win32-x64/config-yaml-schema.json": [
+            ".continue/**/*.yaml",
+            "file:///c%3A/Users/AQ/.continue/config.yaml"
+        ]
+    }
+}

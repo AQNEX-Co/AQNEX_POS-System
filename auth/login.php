@@ -1,12 +1,12 @@
 <?php
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 // بادئة المسار للمجلد الرئيسي
 $dir_prefix = '../';
 
-// تضمين ترويسة HTML والمكونات المشتركة
-require_once($dir_prefix . "includes/header.php");
+// بدء الجلسة والاتصال بقاعدة البيانات قبل أي مخرجات لتجنب أخطاء ترويسات الاستجابة المرسلة مسبقاً
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+require_once($dir_prefix . "includes/connect.php");
 
 // إذا كان المستخدم مسجلاً دخوله بالفعل، يتم توجيهه للرئيسية
 if (isset($_SESSION['SESS_MEMBER_ID']) && !empty($_SESSION['SESS_MEMBER_ID'])) {
@@ -15,6 +15,7 @@ if (isset($_SESSION['SESS_MEMBER_ID']) && !empty($_SESSION['SESS_MEMBER_ID'])) {
 }
 
 $error_message = '';
+$prefill_username = isset($_GET['u']) ? htmlspecialchars(trim($_GET['u'])) : '';
 
 if (isset($_POST['submit'])) {
     $username = $conn->real_escape_string($_POST['username']);
@@ -33,7 +34,57 @@ if (isset($_POST['submit'])) {
         // الاسم الكامل - يأخذ full_name إن وُجد وإلا يستخدم username
         $_SESSION['SESS_FULL_NAME'] = !empty($member['full_name']) ? $member['full_name'] : $member['username'];
         $_SESSION['SESS_LAST_NAME'] = isset($member['position']) ? $member['position'] : 'مسؤول';
-        
+
+        // ===== تصدير قاعدة البيانات الحية إلى DB/aqnex_pos_full.sql في الخلفية =====
+        // يضمن أن الملف دائماً يعكس البيانات الفعلية الحالية للعميل
+        try {
+            $appRoot = defined('APP_ROOT') ? APP_ROOT : dirname(__DIR__);
+            $config = require $appRoot . '/app/Config/config.php';
+            $dbHost = $config['db']['host'] ?? 'localhost';
+            $dbPort = $config['db']['port'] ?? 3307;
+            $dbName = $config['db']['name'] ?? 'aqnex_pos';
+            $dbUser = $config['db']['user'] ?? 'root';
+            $dbPass = $config['db']['pass'] ?? '';
+
+            // مسار mysqldump — يحاول المسار المدمج أولاً ثم XAMPP
+            $dumpCandidates = [
+                $appRoot . '/runtime/mariadb/bin/mysqldump.exe',
+                'C:/xampp/mysql/bin/mysqldump.exe',
+                'mysqldump', // إذا كان في PATH
+            ];
+            $dumpBin = null;
+            foreach ($dumpCandidates as $candidate) {
+                if ($candidate === 'mysqldump' || file_exists($candidate)) {
+                    $dumpBin = $candidate;
+                    break;
+                }
+            }
+
+            if ($dumpBin) {
+                $outputFile = $appRoot . '/DB/aqnex_pos_full.sql';
+                $passArg = !empty($dbPass) ? '-p' . escapeshellarg($dbPass) : '';
+                $cmd = sprintf(
+                    '"%s" -h %s -P %d -u %s %s --add-drop-table --single-transaction --complete-insert %s > "%s" 2>&1',
+                    str_replace('/', DIRECTORY_SEPARATOR, $dumpBin),
+                    escapeshellarg($dbHost),
+                    (int)$dbPort,
+                    escapeshellarg($dbUser),
+                    $passArg,
+                    escapeshellarg($dbName),
+                    $outputFile
+                );
+                // تشغيل في الخلفية (لا ينتظر الانتهاء)
+                if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                    pclose(popen("start /B " . $cmd, "r"));
+                } else {
+                    exec($cmd . ' &');
+                }
+            }
+        } catch (\Throwable $e) {
+            // لا يوقف عملية تسجيل الدخول عند الفشل
+        }
+        // ===== نهاية التصدير =====
+
         session_write_close();
         header("Location: ../home.php");
         exit();
@@ -41,6 +92,9 @@ if (isset($_POST['submit'])) {
         $error_message = "خطأ: اسم المستخدم أو كلمة المرور غير صحيحة.";
     }
 }
+
+// تضمين ترويسة HTML بعد معالجة تسجيل الدخول والتوجيهات لتجنب إرسال ترويسات HTML مبكراً
+require_once($dir_prefix . "includes/header.php");
 ?>
 <title>تسجيل الدخول - AQNEX POS</title>
 <style>
@@ -135,7 +189,7 @@ if (isset($_POST['submit'])) {
                     <div class="input-group-prepend">
                         <span class="input-group-text"><i class="fa fa-user"></i></span>
                     </div>
-                    <input type="text" name="username" class="form-control" placeholder="أدخل اسم المستخدم" required autofocus>
+                    <input type="text" name="username" class="form-control" placeholder="أدخل اسم المستخدم" value="<?php echo $prefill_username; ?>" required autofocus>
                 </div>
             </div>
             

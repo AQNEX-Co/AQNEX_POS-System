@@ -57,7 +57,7 @@ $stats = [];
 $res = $conn->query("SELECT COUNT(*) AS total FROM products WHERE delete_status = 0");
 $stats['total'] = $res ? intval($res->fetch_assoc()['total']) : 0;
 
-$res = $conn->query("SELECT COUNT(*) AS cnt FROM products WHERE delete_status = 0 AND quantity > 0 AND quantity <= $low_stock_threshold");
+$res = $conn->query("SELECT COUNT(*) AS cnt FROM products WHERE delete_status = 0 AND quantity > 0 AND quantity <= COALESCE(NULLIF(min_stock_alert, 0), $low_stock_threshold)");
 $stats['low'] = $res ? intval($res->fetch_assoc()['cnt']) : 0;
 
 $res = $conn->query("SELECT COUNT(*) AS cnt FROM products WHERE delete_status = 0 AND quantity = 0");
@@ -82,11 +82,11 @@ if (!empty($search_q)) {
     $sql_products .= " AND (p.name LIKE '%$search_q%' OR p.barcode LIKE '%$search_q%')";
 }
 if ($filter_status === 'low') {
-    $sql_products .= " AND p.quantity > 0 AND p.quantity <= $low_stock_threshold";
+    $sql_products .= " AND p.quantity > 0 AND p.quantity <= COALESCE(NULLIF(p.min_stock_alert, 0), $low_stock_threshold)";
 } elseif ($filter_status === 'out') {
     $sql_products .= " AND p.quantity = 0";
 } elseif ($filter_status === 'ok') {
-    $sql_products .= " AND p.quantity > $low_stock_threshold";
+    $sql_products .= " AND p.quantity > COALESCE(NULLIF(p.min_stock_alert, 0), $low_stock_threshold)";
 }
 $sql_products .= " ORDER BY p.quantity ASC, p.id DESC";
 $result_products = $conn->query($sql_products);
@@ -224,15 +224,16 @@ if ($result_products) {
                     <?php else: ?>
                         <?php foreach ($all_products_list as $prod):
                             $qty = intval($prod['quantity']);
+                            $prod_alert_limit = ($prod['min_stock_alert'] > 0 ? intval($prod['min_stock_alert']) : $low_stock_threshold);
                             if ($qty <= 0) {
                                 $stock_badge = '<span class="badge badge-stock-out px-2 py-1 font-weight-normal">نافذ</span>';
-                            } elseif ($qty <= $low_stock_threshold) {
+                            } elseif ($qty <= $prod_alert_limit) {
                                 $stock_badge = '<span class="badge badge-stock-low px-2 py-1 font-weight-normal">منخفض</span>';
                             } else {
                                 $stock_badge = '<span class="badge badge-stock-ok px-2 py-1 font-weight-normal">متوفر</span>';
                             }
                         ?>
-                        <tr class="<?php echo ($qty <= 0) ? 'table-danger' : (($qty <= $low_stock_threshold) ? 'table-warning' : ''); ?>" style="<?php echo ($qty <= 0) ? 'background: #fff5f5;' : (($qty <= $low_stock_threshold) ? 'background: #fffbeb;' : ''); ?>">
+                        <tr class="<?php echo ($qty <= 0) ? 'table-danger' : (($qty <= $prod_alert_limit) ? 'table-warning' : ''); ?>" style="<?php echo ($qty <= 0) ? 'background: #fff5f5;' : (($qty <= $prod_alert_limit) ? 'background: #fffbeb;' : ''); ?>">
                             <td class="font-weight-bold text-muted">#<?php echo $prod['id']; ?></td>
                             <td class="font-weight-bold text-right pr-3"><?php echo htmlspecialchars($prod['name']); ?></td>
                             <td class="small font-weight-bold text-muted"><?php echo htmlspecialchars($prod['barcode'] ?? '-'); ?></td>
@@ -419,6 +420,168 @@ if (document.readyState === 'loading') {
 } else {
     setupAdjustmentEvents();
 }
+</script>
+
+<!-- أنماط CSS للمساعد الذكي العائم -->
+<style>
+@keyframes pulse-red {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+#aiInventoryBtn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.6) !important;
+}
+</style>
+
+<!-- زر المساعد الذكي العائم للمخازن -->
+<button type="button" id="aiInventoryBtn" class="no-print" style="position: fixed; bottom: 30px; left: 30px; z-index: 1040; width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;">
+    <i class="bi bi-robot text-white" style="font-size: 1.8rem; pointer-events: none;"></i>
+    <span style="position: absolute; top: 0; right: 0; width: 14px; height: 14px; background: #10b981; border-radius: 50%; border: 2px solid #fff; animation: pulse-red 2s infinite;"></span>
+</button>
+
+<!-- لوحة المساعد الذكي الجانبية -->
+<div id="aiInventoryPanel" class="no-print" style="position: fixed; top: 0; left: -420px; width: 400px; height: 100%; background: #fff; box-shadow: 4px 0 25px rgba(0,0,0,0.15); z-index: 1050; transition: left 0.3s ease; display: flex; flex-direction: column; text-align: right;">
+    <!-- هيدر اللوحة -->
+    <div style="padding: 20px; background: linear-gradient(135deg, #1e1e38, #2a2a50); color: #fff; display: flex; justify-content: space-between; align-items: center;">
+        <h5 class="m-0 font-weight-bold" style="font-size: 1.1rem; display: flex; align-items: center;">
+            <i class="bi bi-robot ml-2 text-primary" style="font-size: 1.3rem;"></i> مستشار الجرد والمخازن الذكي
+        </h5>
+        <button type="button" id="closeAiPanelBtn" style="background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer;">&times;</button>
+    </div>
+    
+    <!-- جسم اللوحة (محتوى الشات والتحليلات) -->
+    <div id="aiChatBody" style="flex: 1; padding: 20px; overflow-y: auto; background: #f8fafc; display: flex; flex-direction: column; gap: 15px;">
+        <div class="ai-message" style="background: #eef2f6; padding: 12px 16px; border-radius: 12px 12px 0 12px; max-width: 85%; align-self: flex-start; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <p class="m-0 font-weight-bold text-secondary mb-1" style="font-size: 0.8rem;">المساعد الذكي</p>
+            <p class="m-0" style="font-size: 0.9rem; line-height: 1.5; color: #334155;">
+                مرحباً بك! يمكنني فحص مستويات المخزون، وتحليل الأصناف الأكثر نقصاً، وتقديم توصيات حول إعادة الطلب والسلع الراكدة.
+            </p>
+            <button type="button" onclick="triggerQuickInsights()" class="btn-flat btn-flat-primary btn-sm mt-3 py-1 px-3 w-100" style="font-size: 0.8rem;">
+                <i class="bi bi-activity ml-1"></i> تشغيل تحليل الجرد الفوري والمخاطر
+            </button>
+        </div>
+    </div>
+    
+    <!-- أسفل اللوحة (شريط الكتابة) -->
+    <div style="padding: 15px; border-top: 1px solid #e2e8f0; background: #fff; display: flex; gap: 8px;">
+        <input type="text" id="aiChatInput" class="form-control rounded-0" placeholder="اسألني عن المخزون هنا..." style="font-size: 0.9rem;">
+        <button type="button" id="sendAiChatBtn" class="btn-flat btn-flat-primary py-2 px-3">إرسال</button>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const aiBtn = document.getElementById('aiInventoryBtn');
+    const aiPanel = document.getElementById('aiInventoryPanel');
+    const closePanelBtn = document.getElementById('closeAiPanelBtn');
+    const sendBtn = document.getElementById('sendAiChatBtn');
+    const chatInput = document.getElementById('aiChatInput');
+    const chatBody = document.getElementById('aiChatBody');
+    
+    if (aiBtn && aiPanel && closePanelBtn) {
+        aiBtn.addEventListener('click', function() {
+            aiPanel.style.left = '0px';
+        });
+        closePanelBtn.addEventListener('click', function() {
+            aiPanel.style.left = '-420px';
+        });
+    }
+    
+    function appendMessage(role, text) {
+        const msgDiv = document.createElement('div');
+        msgDiv.style.maxWidth = '85%';
+        msgDiv.style.padding = '12px 16px';
+        msgDiv.style.borderRadius = '12px';
+        msgDiv.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)';
+        msgDiv.style.fontSize = '0.9rem';
+        msgDiv.style.lineHeight = '1.5';
+        
+        if (role === 'user') {
+            msgDiv.style.background = '#e0f2fe';
+            msgDiv.style.color = '#0369a1';
+            msgDiv.style.alignSelf = 'flex-end';
+            msgDiv.style.borderRadius = '12px 12px 12px 0';
+            msgDiv.innerHTML = `<p class="m-0 font-weight-bold mb-1" style="font-size: 0.8rem;">أنت</p><p class="m-0">${escapeHtml(text)}</p>`;
+        } else {
+            msgDiv.style.background = '#eef2f6';
+            msgDiv.style.color = '#334155';
+            msgDiv.style.alignSelf = 'flex-start';
+            msgDiv.style.borderRadius = '12px 12px 0 12px';
+            msgDiv.innerHTML = `<p class="m-0 font-weight-bold text-secondary mb-1" style="font-size: 0.8rem;">المساعد الذكي</p><p class="m-0">${markdownToHtml(text)}</p>`;
+        }
+        chatBody.appendChild(msgDiv);
+        chatBody.scrollTop = chatBody.scrollHeight;
+    }
+    
+    function escapeHtml(str) {
+        return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    
+    function markdownToHtml(text) {
+        let html = escapeHtml(text);
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" class="text-primary font-weight-bold">$1</a>');
+        html = html.replace(/\n/g, '<br>');
+        return html;
+    }
+    
+    function sendMessage(text) {
+        if (!text.trim()) return;
+        appendMessage('user', text);
+        chatInput.value = '';
+        
+        const typingDiv = document.createElement('div');
+        typingDiv.id = 'aiTypingIndicator';
+        typingDiv.style.alignSelf = 'flex-start';
+        typingDiv.style.color = '#64748b';
+        typingDiv.style.fontSize = '0.85rem';
+        typingDiv.style.padding = '5px';
+        typingDiv.textContent = 'جاري التحليل وصياغة الرد...';
+        chatBody.appendChild(typingDiv);
+        chatBody.scrollTop = chatBody.scrollHeight;
+        
+        fetch('../api/ai_assistant.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'message=' + encodeURIComponent(text)
+        })
+        .then(r => r.json())
+        .then(data => {
+            const indicator = document.getElementById('aiTypingIndicator');
+            if (indicator) indicator.remove();
+            
+            if (data.status === 'success') {
+                appendMessage('model', data.message);
+            } else {
+                appendMessage('model', 'عذراً، حدث خطأ: ' + (data.message || 'خطأ غير معروف.'));
+            }
+        })
+        .catch(err => {
+            const indicator = document.getElementById('aiTypingIndicator');
+            if (indicator) indicator.remove();
+            appendMessage('model', 'فشل الاتصال بخادم الذكاء الاصطناعي: ' + err.message);
+        });
+    }
+    
+    window.triggerQuickInsights = function() {
+        sendMessage('قم بإعطائي تحليلاً ذكياً لحالة جرد المخزن وتحديد المخاطر والأصناف الأكثر نقصاً');
+    };
+    
+    if (sendBtn && chatInput) {
+        sendBtn.addEventListener('click', function() {
+            sendMessage(chatInput.value);
+        });
+        chatInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage(chatInput.value);
+            }
+        });
+    }
+});
 </script>
 
 <?php

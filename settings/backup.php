@@ -8,7 +8,7 @@ if (isset($_GET['export'])) {
     $servername = "localhost";
     $username = "root";
     $password = "";
-    $dbname = "aq_pos";
+    $dbname = "aqnex_pos";
 
     $conn = new \mysqli($servername, $username, $password, $dbname, 3307);
     if ($conn->connect_error) {
@@ -21,7 +21,7 @@ if (isset($_GET['export'])) {
         ob_end_clean();
     }
 
-    $backup_name = 'aq_pos_backup_' . date('Y-m-d_H-i-s') . '.sql';
+    $backup_name = 'aqnex_pos_backup_' . date('Y-m-d_H-i-s') . '.sql';
 
     header('Content-Type: application/octet-stream');
     header('Content-Disposition: attachment; filename="' . $backup_name . '"');
@@ -29,7 +29,7 @@ if (isset($_GET['export'])) {
     header('Expires: 0');
 
     echo "-- AQNEX POS Database Backup\n";
-    echo "-- Database: aq_pos\n";
+    echo "-- Database: aqnex_pos\n";
     echo "-- Generated: " . date('Y-m-d H:i:s') . "\n";
     echo "-- --------------------------------------------------------\n\n";
 

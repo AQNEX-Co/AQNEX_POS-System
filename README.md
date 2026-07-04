@@ -29,3 +29,22 @@
 4. **التشغيل:**
    - انقل المجلد إلى `htdocs` أو `www`.
    - افتح المتصفح على الرابط: `http://localhost/AQNEX_POS`.
+
+
+   لتصدير قاعدة البيانات:
+   Microsoft Windows [Version 10.0.26200.8737]
+(c) Microsoft Corporation. All rights reserved.
+
+C:\Windows\System32>cd C:\AQNEX_POS\runtime\mariadb\bin
+
+C:\AQNEX_POS\runtime\mariadb\bin>mysqldump.exe -u root -p aqnex_pos > C:\backup_aqnex.sql
+Enter password:
+
+C:\AQNEX_POS\runtime\mariadb\bin>mysqldump.exe -u root -p --routines --triggers --adds-drop-table aqnex_pos > C:\backup_aqnex_full.sql
+mysqldump.exe: unknown option '--adds-drop-table'
+
+C:\AQNEX_POS\runtime\mariadb\bin>mysqldump.exe -u root -p --routines --triggers --add-drop-table aqnex_pos > C:\backup_aqnex_full.sql
+Enter password:
+
+C:\AQNEX_POS\runtime\mariadb\bin>
+

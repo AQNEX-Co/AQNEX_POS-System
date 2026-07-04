@@ -19,28 +19,42 @@ if (isset($_POST['btn'])) {
     $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
     $box_name = get_box_name($conn, $selected_box_id);
     
-    // 1. تحديث حساب المورد (خصم المبلغ المدفوع من دائنية المورد)
-    $sql_update = "UPDATE Suppliers SET supp_daain = supp_daain - $amount WHERE supp_name = '$supplier_name'";
-    $conn->query($sql_update);
-    
-    // 2. تسجيل عملية تسديد المورد في جدول supplier_payments
-    $sql_bush = "INSERT INTO supplier_payments (supp_name, bush_price, remark, bush_date) VALUES ('$supplier_name', '$amount', '$remark', '$date')";
-    $conn->query($sql_bush);
-    
-    // 3. تسجيل العملية كمصروف في الصندوق المالي (جدول treasury_expenses)
-    $sql_ms = "INSERT INTO treasury_expenses (st, sname, sdate, sprice, sremark, tot, box_id) VALUES ('تسديد مورد', '$supplier_name', '$date', '$amount', '$remark', '$amount', $selected_box_id)";
-    if ($conn->query($sql_ms)) {
+    $conn->begin_transaction();
+    try {
+        // 1. تحديث حساب المورد (خصم المبلغ المدفوع من دائنية المورد)
+        $sql_update = "UPDATE Suppliers SET supp_daain = supp_daain - $amount WHERE supp_name = '$supplier_name'";
+        if (!$conn->query($sql_update)) {
+            throw new Exception("فشل تحديث رصيد المورد");
+        }
+        
+        // 2. تسجيل عملية تسديد المورد في جدول supplier_payments
+        $sql_bush = "INSERT INTO supplier_payments (supp_name, bush_price, remark, bush_date) VALUES ('$supplier_name', '$amount', '$remark', '$date')";
+        if (!$conn->query($sql_bush)) {
+            throw new Exception("فشل تسجيل سند الصرف للمورد");
+        }
+        
+        // 3. تسجيل العملية كمصروف في الصندوق المالي (جدول treasury_expenses)
+        $sql_ms = "INSERT INTO treasury_expenses (st, sname, sdate, sprice, sremark, tot, box_id) VALUES ('تسديد مورد', '$supplier_name', '$date', '$amount', '$remark', '$amount', $selected_box_id)";
+        if (!$conn->query($sql_ms)) {
+            throw new Exception("فشل تسجيل المصروف في الخزينة");
+        }
         $sid = $conn->insert_id;
         
         // 4. خصم المبلغ من الصندوق وتسجيل العملية
         update_box_balance($conn, $selected_box_id, $amount, 'discount', "تسديد مورد: $supplier_name - بيان: $remark", $date);
         
         // 5. قيد يومية محاسبي مزدوج
-        post_journal_entry($conn, 'expense', $sid, 'الذمم الدائنة - ' . $supplier_name, 'الصندوق - ' . $box_name, $amount, "تسديد حساب مورد: $supplier_name - $remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id);
+        if (!post_journal_entry($conn, 'expense', $sid, 'الذمم الدائنة - ' . $supplier_name, 'الصندوق - ' . $box_name, $amount, "تسديد حساب مورد: $supplier_name - $remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id)) {
+            throw new Exception("فشل تسجيل قيد اليومية");
+        }
+        
+        $conn->commit();
+        echo "<script>window.location='index.php';</script>";
+        exit;
+    } catch (Exception $e) {
+        $conn->rollback();
+        echo "<script>alert('خطأ أثناء الحفظ: " . addslashes($e->getMessage()) . "');</script>";
     }
-    
-    echo "<script>window.location='index.php';</script>";
-    exit;
 }
 ?>
 <title>تسديد حساب مورد - تكنولوجيا فون</title>
@@ -66,7 +80,7 @@ if (isset($_POST['btn'])) {
                 <h5>بيانات سند الصرف للتسديد</h5>
             </div>
             <div class="card-body">
-                <form method="POST">
+                <form method="POST" id="payForm">
                     <div class="row">
                         <div class="col-md-4 mb-3">
                             <div class="form-group">
@@ -83,7 +97,7 @@ if (isset($_POST['btn'])) {
                                         $res_b = $conn->query("SELECT box_id, name, mony FROM treasury WHERE is_active = 1 ORDER BY box_id ASC");
                                         if ($res_b) {
                                             while($b = $res_b->fetch_assoc()) {
-                                                echo "<option value='{$b['box_id']}' " . ($b['box_id'] == 1 ? 'selected' : '') . ">" . htmlspecialchars($b['name']) . " (" . number_format($b['mony'], 2) . " ر.ي)</option>";
+                                                echo "<option value='{$b['box_id']}' " . ($b['name'] === 'الصندوق الرئيسي' ? 'selected' : '') . ">" . htmlspecialchars($b['name']) . " (" . number_format($b['mony'], 2) . " ر.ي)</option>";
                                             }
                                         }
                                         ?>
@@ -142,6 +156,35 @@ if (isset($_POST['btn'])) {
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const form = document.getElementById("payForm");
+    if (form) {
+        form.addEventListener("submit", function(e) {
+            const supplier = form.querySelector("select[name='select']").value;
+            const amount = parseFloat(form.querySelector("input[name='pr']").value) || 0;
+            const remark = form.querySelector("input[name='r']").value.trim();
+            
+            if (!supplier) {
+                alert("خطأ: يرجى تحديد المورد!");
+                e.preventDefault();
+                return false;
+            }
+            if (amount <= 0) {
+                alert("خطأ: يجب إدخال مبلغ دفع صحيح أكبر من صفر!");
+                e.preventDefault();
+                return false;
+            }
+            if (!remark) {
+                alert("خطأ: يرجى إدخال البيان / الملاحظات لمستند الصرف!");
+                e.preventDefault();
+                return false;
+            }
+        });
+    }
+});
+</script>
 
 <?php
 require_once($dir_prefix . 'includes/footer.php');

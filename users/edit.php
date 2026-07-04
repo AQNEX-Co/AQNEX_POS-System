@@ -221,13 +221,13 @@ if (!empty(trim($user['custom_permissions'] ?? ''))) {
                     </div>
                     <?php foreach ($system_modules as $key => $mod): ?>
                     <div class="perm-check-row">
-                        <div class="custom-control custom-checkbox">
-                            <input type="checkbox" class="custom-control-input"
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input"
                                 name="custom_perms[]"
                                 value="<?php echo $key; ?>"
                                 id="ep_<?php echo $key; ?>"
                                 <?php echo in_array($key, $custom_active) ? 'checked' : ''; ?>>
-                            <label class="custom-control-label" for="ep_<?php echo $key; ?>">
+                            <label class="form-check-label font-weight-bold text-secondary mr-4" for="ep_<?php echo $key; ?>">
                                 <i class="fa <?php echo $mod['icon']; ?> ml-1 text-muted"></i>
                                 <?php echo $mod['label']; ?>
                             </label>
