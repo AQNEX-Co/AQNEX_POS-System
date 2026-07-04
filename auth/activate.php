@@ -156,7 +156,7 @@ if (isset($_POST['btn_request'])) {
     <!-- Bootstrap Icons محلي -->
     <link rel="stylesheet" type="text/css" href="../files/bootstrap-icons/bootstrap-icons.min.css">
     <!-- التنسيق المخصص للنظام للحصول على المظهر الموحد والمسطح -->
-    <link rel="stylesheet" type="text/css" href="../css/custom.css">
+    <link rel="stylesheet" type="text/css" href="../assets/css/custom.css">
 
     <style>
         body {

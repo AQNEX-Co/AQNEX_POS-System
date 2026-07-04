@@ -92,9 +92,22 @@ if (isset($_POST['btn_import']) && isset($_FILES['import_file']) && $_FILES['imp
             fclose($handle);
             
             if (!empty($items_processed)) {
+                // جلب معرف الصندوق الرئيسي ديناميكياً لتفادي تعارض الـ ID
+                $res_main = $conn->query("SELECT box_id FROM treasury WHERE name = 'الصندوق الرئيسي' LIMIT 1");
+                $main_box_id = ($res_main && $res_main->num_rows > 0) ? intval($res_main->fetch_assoc()['box_id']) : 2;
+                $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : $main_box_id;
+                $pay_from_box = isset($_POST['pay_from_box']) && intval($_POST['pay_from_box']) === 1;
+                $box_name = get_box_name($conn, $selected_box_id);
+                $total_remaining_base = 0;
+                $total_paid_base = 0;
+                foreach ($items_processed as $item) {
+                    $total_paid_base += doubleval($item['paid_base']);
+                    $total_remaining_base += doubleval($item['rem_base']);
+                }
+
                 // إدراج الفاتورة الرئيسية
-                $sql_inv = "INSERT INTO `purchases`(`date`, `supp_name`, `total`, `remark`, `currency_code`, `exchange_rate`) 
-                            VALUES ('$build_date', '$supp_esc', '$total_val_base', 'استيراد من ملف CSV', '$currency_code', '$exchange_rate')";
+                $sql_inv = "INSERT INTO `purchases`(`date`, `supp_name`, `total`, `remark`, `currency_code`, `exchange_rate`, `box_id`, `remaining_total`) 
+                            VALUES ('$build_date', '$supp_esc', '$total_val_base', 'استيراد من ملف CSV', '$currency_code', '$exchange_rate', $selected_box_id, '$total_remaining_base')";
                 if ($conn->query($sql_inv)) {
                     $billing_id = $conn->insert_id;
                     $total_remaining_base = 0;
@@ -111,17 +124,40 @@ if (isset($_POST['btn_import']) && isset($_FILES['import_file']) && $_FILES['imp
                         $total_paid_base += $p_base;
                         $total_remaining_base += $r_base;
                         
-                        // إدراج بند الشراء
-                        $conn->query("INSERT INTO `purchase_items`(`buys_date`, `supp_name`, `name`, `quantity`, `buy_price`, `pushtosupp`, `total_d`, `s`) 
-                                      VALUES ('$build_date', '$supp_esc', '$nm', '$qty', '$l_base', '$p_base', '$r_base', 0)");
+                        // 1. التحقق من وجود المنتج أو إنشائه تلقائياً
+                        $nm_esc = $conn->real_escape_string($nm);
+                        $chk = $conn->query("SELECT id FROM products WHERE name = '$nm_esc' AND delete_status = 0 LIMIT 1");
+                        if ($chk && $chk->num_rows > 0) {
+                            $p_id = intval($chk->fetch_assoc()['id']);
+                            // تحديث المنتج الحالي
+                            $conn->query("UPDATE `products` SET `quantity` = `quantity` + $qty, `buy_price` = $ub, `total` = `quantity` * `buy_price` WHERE `id` = $p_id");
+                        } else {
+                            // إنشاء منتج جديد
+                            $res_cat = $conn->query("SELECT catid FROM categories WHERE d_s = 0 LIMIT 1");
+                            $cat_id = ($res_cat && $res_cat->num_rows > 0) ? intval($res_cat->fetch_assoc()['catid']) : 0;
+                            if ($cat_id <= 0) {
+                                $conn->query("INSERT INTO categories (name, d_s) VALUES ('عام', 0)");
+                                $cat_id = $conn->insert_id;
+                            }
+                            $sale_price_val = $ub * 1.25; // هامش 25%
+                            $conn->query("INSERT INTO products (name, quantity, buy_price, sale_price, catid, date, delete_status) 
+                                          VALUES ('$nm_esc', $qty, $ub, $sale_price_val, $cat_id, NOW(), 0)");
+                            $p_id = $conn->insert_id;
+                        }
+
+                        // 2. إدراج بند الشراء (مع ربطه بالفاتورة الأصلية عبر purchase_id)
+                        $supplier_id = 0;
+                        $supplier_res = $conn->query("SELECT supp_id FROM suppliers WHERE supp_name = '$supp_esc' LIMIT 1");
+                        if ($supplier_res && $supplier_res->num_rows > 0) {
+                            $supplier_id = intval($supplier_res->fetch_assoc()['supp_id']);
+                        }
+                        $conn->query("INSERT INTO `purchase_items`(`purchase_id`, `buys_date`, `supp_name`, `supp_id`, `name`, `quantity`, `buy_price`, `pushtosupp`, `total_d`, `s`) 
+                                      VALUES ($billing_id, '$build_date', '$supp_esc', $supplier_id, '$nm_esc', '$qty', '$l_base', '$p_base', '$r_base', 0)");
                         
-                        // تحديث المخزن وسعر الشراء
-                        $conn->query("UPDATE `products` SET `quantity` = `quantity` + $qty, `buy_price` = $ub, `total` = `quantity` * `buy_price` WHERE `name` = '$nm'");
-                        
-                        // سجل المخازن
+                        // 3. سجل المخازن
                         $user_name = $_SESSION['SESS_FIRST_NAME'];
                         $conn->query("INSERT INTO `inventory_log`(`product_id`, `product_name`, `type`, `qty_change`, `new_qty`, `reason`, `user`)
-                                      SELECT id, name, 'purchase', $qty, quantity, 'استيراد CSV فاتورة #$billing_id', '$user_name' FROM products WHERE name = '$nm' LIMIT 1");
+                                      VALUES ($p_id, '$nm_esc', 'purchase', $qty, (SELECT quantity FROM products WHERE id = $p_id), 'استيراد CSV فاتورة #$billing_id', '$user_name')");
                     }
                     
                     // تحديث مديونية المورد
@@ -129,11 +165,19 @@ if (isset($_POST['btn_import']) && isset($_FILES['import_file']) && $_FILES['imp
                         $conn->query("UPDATE `suppliers` SET `supp_daain` = `supp_daain` + $total_remaining_base WHERE `supp_name` = '$supp_esc'");
                     }
                     
-                    // تحديث الخزينة
+                    // تحديث الخزينة والصندوق المالي (إذا تم التمكين)
+                    if ($total_paid_base > 0 && $pay_from_box) {
+                        update_box_balance($conn, $selected_box_id, $total_paid_base, 'discount', "استيراد مشتريات CSV فاتورة #$billing_id", $build_date);
+                    }
+                    
+                    // إثبات القيود اليومية المزدوجة الدقيقة
                     if ($total_paid_base > 0) {
-                        $conn->query("UPDATE `treasury` SET `mony` = `mony` - $total_paid_base WHERE `box_id` = '1'");
-                        $conn->query("INSERT INTO `treasury_transactions`(`mony`, `statue`, `remark`, `datte`) 
-                                      VALUES ('$total_paid_base', 'subtraction', 'استيراد مشتريات CSV فاتورة #$billing_id', '$build_date')");
+                        $credit_acc = $pay_from_box ? ('الصندوق - ' . $box_name) : 'رأس المال / دفع خارجي';
+                        $journal_box_id = $pay_from_box ? $selected_box_id : null;
+                        post_journal_entry($conn, 'purchase', $billing_id, 'المخزون / البضاعة', $credit_acc, $total_paid_base, "شراء بضاعة استيراد CSV (نقداً) فاتورة رقم #$billing_id", $_SESSION['SESS_FIRST_NAME'], $journal_box_id);
+                    }
+                    if ($total_remaining_base > 0) {
+                        post_journal_entry($conn, 'purchase', $billing_id, 'المخزون / البضاعة', 'الذمم الدائنة - ' . $supp_name_for_invoice, $total_remaining_base, "شراء بضاعة استيراد CSV (آجل) فاتورة رقم #$billing_id", $_SESSION['SESS_FIRST_NAME'], $selected_box_id);
                     }
                     
                     $success = "تم استيراد " . count($items_processed) . " صنف بنجاح في فاتورة رقم #$billing_id";
@@ -181,6 +225,11 @@ if (isset($_POST['btn_import']) && isset($_FILES['import_file']) && $_FILES['imp
                 <h5><?php echo get_icon('import', 'ml-1'); ?> رفع ملف الاستيراد</h5>
             </div>
             <div class="card-body">
+                <div class="mb-3">
+                    <a href="../files/purchases_template.csv" class="btn btn-outline-info rounded-0 btn-sm text-decoration-none" download>
+                        <i class="fa fa-download ml-1"></i> تحميل نموذج ملف استيراد الفاتورة (CSV)
+                    </a>
+                </div>
                 <form method="POST" enctype="multipart/form-data">
                     <div class="form-group mb-3">
                         <label class="font-weight-bold text-secondary mb-2">ملف CSV للاستيراد *</label>
@@ -194,6 +243,26 @@ if (isset($_POST['btn_import']) && isset($_FILES['import_file']) && $_FILES['imp
                             <?php foreach($suppliers_list as $s): ?>
                                 <option value="<?php echo htmlspecialchars($s); ?>"><?php echo htmlspecialchars($s); ?></option>
                             <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label class="font-weight-bold text-secondary mb-2">طريقة دفع الفاتورة المستوردة</label>
+                        <div class="form-check mb-1">
+                            <input type="checkbox" name="pay_from_box" id="payFromBoxImport" class="form-check-input" value="1" checked onchange="toggleBoxSelectImport(this)">
+                            <label class="form-check-label small font-weight-bold text-dark" for="payFromBoxImport">خصم المدفوع النقدي من الصندوق</label>
+                        </div>
+                    </div>
+                    <div class="form-group mb-3" id="boxSelectContainer">
+                        <label class="font-weight-bold text-secondary mb-2">الصندوق المالي للخصم</label>
+                        <select name="box_id" id="boxIdImport" class="form-control rounded-0">
+                            <?php
+                            $res_b = $conn->query("SELECT box_id, name, mony FROM treasury WHERE is_active = 1 ORDER BY box_id ASC");
+                            if ($res_b) {
+                                while($b = $res_b->fetch_assoc()) {
+                                    echo "<option value='{$b['box_id']}' " . ($b['name'] === 'الصندوق الرئيسي' ? 'selected' : '') . ">" . htmlspecialchars($b['name']) . " (" . number_format($b['mony'], 2) . " ر.ي)</option>";
+                                }
+                            }
+                            ?>
                         </select>
                     </div>
                     <div class="row">
@@ -323,6 +392,18 @@ document.getElementById('csvCurrencySelect').addEventListener('change', function
         rateInput.classList.remove('bg-light');
     }
 });
+
+function toggleBoxSelectImport(chk) {
+    const boxSelect = document.getElementById("boxIdImport");
+    if (boxSelect) {
+        boxSelect.disabled = !chk.checked;
+        if (!chk.checked) {
+            boxSelect.classList.add('bg-light');
+        } else {
+            boxSelect.classList.remove('bg-light');
+        }
+    }
+}
 </script>
 
 <?php

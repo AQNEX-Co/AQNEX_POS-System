@@ -1,0 +1,19 @@
+# منع الوصول المباشر لملف Adminer من المتصفح
+<IfModule mod_authz_core.c>
+    <Files "adminer.php">
+        Require all denied
+    </Files>
+    <Files "index.php">
+        Require all granted
+    </Files>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <Files "adminer.php">
+        Deny from all
+    </Files>
+    <Files "index.php">
+        Allow from all
+    </Files>
+</IfModule>
+
+Options -Indexes

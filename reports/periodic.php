@@ -40,9 +40,21 @@ if ($has_search) {
     $sql_spent_sum = "SELECT SUM(m_price) as sum_spent FROM expenses WHERE m_date BETWEEN '$start_date' AND '$end_date'";
     $row_s = $conn->query($sql_spent_sum)->fetch_assoc();
     $total_spent = isset($row_s['sum_spent']) ? floatval($row_s['sum_spent']) : 0.0;
+
+    // حساب أرباح المرتجعات المفقودة خلال الفترة
+    $sql_returns_profit_sum = "SELECT SUM(profit_impact) as sum_returns_profit FROM sales_returns WHERE status = 'active' AND return_date BETWEEN '$start_date' AND '$end_date'";
+    $row_rp = $conn->query($sql_returns_profit_sum)->fetch_assoc();
+    $total_returns_profit_impact = isset($row_rp['sum_returns_profit']) ? abs(floatval($row_rp['sum_returns_profit'])) : 0.0;
+
+    // جلب سجل مرتجعات المبيعات خلال الفترة
+    $sql_returns_periodic = "SELECT sr.*, s.cust_name FROM sales_returns sr JOIN sales s ON sr.sales_id = s.id WHERE sr.status='active' AND sr.return_date BETWEEN '$start_date' AND '$end_date' ORDER BY sr.id DESC";
+    $result_returns_periodic = $conn->query($sql_returns_periodic);
+} else {
+    $total_returns_profit_impact = 0.0;
+    $result_returns_periodic = null;
 }
 
-$net_profit = $total_profit - $total_spent;
+$net_profit = $total_profit - $total_spent - $total_returns_profit_impact;
 ?>
 <title>تقرير المبيعات والأرباح - تكنولوجيا فون</title>
 
@@ -99,9 +111,156 @@ $net_profit = $total_profit - $total_spent;
 </div>
 
 <?php if ($has_search): ?>
+
+    <!-- جداول تفاصيل الفترة -->
+    <div class="row">
+        <!-- سجل المبيعات خلال الفترة -->
+        <div class="col-lg-7">
+            <div class="card-flat mb-4">
+                <div class="card-header bg-light">
+                    <h5><i class="fa fa-shopping-cart ml-2"></i>تفاصيل فواتير المبيعات والأرباح المحققة</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="report-table mb-0" style="font-size: 0.9rem;">
+                            <thead>
+                                <tr>
+                                    <th>رقم الفاتورة</th>
+                                    <th>العميل</th>
+                                    <th>المجموع</th>
+                                    <th>الربح</th>
+                                    <th>التاريخ</th>
+                                    <th class="no-print">الإجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if ($result_sales && $result_sales->num_rows > 0): ?>
+                                    <?php while ($rows = $result_sales->fetch_assoc()): ?>
+                                        <tr>
+                                            <td class="font-weight-bold text-secondary">#<?php echo htmlspecialchars($rows['id']); ?></td>
+                                            <td class="font-weight-bold"><?php echo htmlspecialchars($rows['cust_name']); ?></td>
+                                            <td><?php echo number_format($rows['total'], 2); ?></td>
+                                            <td class="text-success font-weight-bold"><?php echo number_format($rows['prifet'], 2); ?></td>
+                                            <td><?php echo htmlspecialchars($rows['build_date']); ?></td>
+                                            <td class="no-print">
+                                                <a href="../sales/view.php?id=<?php echo $rows['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 text-decoration-none">
+                                                    <i class="fa fa-eye ml-1"></i>التفاصيل
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted p-3">لا توجد حركات مبيعات في هذه الفترة المحددة.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- المصروفات خلال الفترة -->
+        <div class="col-lg-5">
+            <div class="card-flat mb-4">
+                <div class="card-header bg-light">
+                    <h5><i class="fa fa-minus-circle ml-2"></i>المصروفات العامة المسجلة</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="report-table mb-0" style="font-size: 0.9rem;">
+                            <thead>
+                                <tr>
+                                    <th>الرقم</th>
+                                    <th>البند</th>
+                                    <th>التاريخ</th>
+                                    <th>المبلغ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if ($result_expenses && $result_expenses->num_rows > 0): ?>
+                                    <?php while ($rowsa = $result_expenses->fetch_assoc()): ?>
+                                        <tr>
+                                            <td>#<?php echo htmlspecialchars($rowsa['m_id']); ?></td>
+                                            <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($rowsa['sname']); ?></td>
+                                            <td><?php echo htmlspecialchars($rowsa['m_date']); ?></td>
+                                            <td class="text-danger font-weight-bold"><?php echo number_format($rowsa['m_price'], 2); ?></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted p-3">لا توجد مصروفات مسجلة في هذه الفترة المحددة.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <!-- مرتجعات المبيعات خلال الفترة -->
+        <div class="col-12">
+            <div class="card-flat mb-4">
+                <div class="card-header bg-light">
+                    <h5><i class="fa fa-reply ml-2 text-warning"></i>سجل مرتجعات المبيعات خلال الفترة</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="report-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>رقم المرتجع</th>
+                                    <th>رقم الفاتورة</th>
+                                    <th>العميل</th>
+                                    <th>اسم المنتج</th>
+                                    <th>الكمية المرتجعة</th>
+                                    <th>المبلغ المسترد</th>
+                                    <th>طريقة الاسترداد</th>
+                                    <th>السبب</th>
+                                    <th>التاريخ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if ($result_returns_periodic && $result_returns_periodic->num_rows > 0): ?>
+                                    <?php while ($r_row = $result_returns_periodic->fetch_assoc()): ?>
+                                        <tr>
+                                            <td>#<?php echo htmlspecialchars($r_row['id']); ?></td>
+                                            <td>#<?php echo htmlspecialchars($r_row['sales_id']); ?></td>
+                                            <td><?php echo htmlspecialchars($r_row['cust_name']); ?></td>
+                                            <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($r_row['product_name']); ?></td>
+                                            <td><?php echo htmlspecialchars($r_row['quantity']); ?></td>
+                                            <td class="text-danger font-weight-bold"><?php echo number_format($r_row['refund_amount'], 2); ?></td>
+                                            <td>
+                                                <?php if ($r_row['refund_method'] === 'cash'): ?>
+                                                    <span class="badge badge-success" style="background-color: var(--accent-success); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px;">نقدي (<?php echo ($r_row['refund_source'] === 'box') ? 'من الصندوق' : 'من المبيعات'; ?>)</span>
+                                                <?php else: ?>
+                                                    <span class="badge badge-warning" style="background-color: var(--accent-warning); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px;">آجل (خصم مديونية)</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-right pr-4"><?php echo htmlspecialchars($r_row['reason']); ?></td>
+                                            <td><?php echo htmlspecialchars($r_row['return_date']); ?></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="9" class="text-center text-muted py-3">لا توجد عمليات مرتجعات مبيعات مسجلة في هذه الفترة المحددة.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- البطاقات الإحصائية للمجاميع -->
-    <div class="row mb-4">
-        <div class="col-md-4">
+    <div class="row mb-4 mt-4">
+        <div class="col-md-3">
             <div class="stat-card success mb-3">
                 <div class="stat-info">
                     <h6>إجمالي أرباح المبيعات</h6>
@@ -112,7 +271,7 @@ $net_profit = $total_profit - $total_spent;
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="stat-card danger mb-3">
                 <div class="stat-info">
                     <h6>إجمالي المصروفات العامة</h6>
@@ -123,13 +282,24 @@ $net_profit = $total_profit - $total_spent;
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
+            <div class="stat-card warning mb-3">
+                <div class="stat-info">
+                    <h6>أرباح المرتجعات المفقودة</h6>
+                    <h3><?php echo number_format($total_returns_profit_impact, 2); ?> ر.ي</h3>
+                </div>
+                <div class="stat-icon">
+                    <i class="fa fa-reply text-warning"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
             <?php
             $net_class = $net_profit >= 0 ? 'success' : 'danger';
             ?>
             <div class="stat-card <?php echo $net_class; ?> mb-3">
                 <div class="stat-info">
-                    <h6>صافي الأرباح الدورية (الخلاصة)</h6>
+                    <h6>صافي الأرباح الدورية</h6>
                     <h3><?php echo number_format($net_profit, 2); ?> ر.ي</h3>
                 </div>
                 <div class="stat-icon">
@@ -328,95 +498,6 @@ $net_profit = $total_profit - $total_spent;
 
     <div class="alert alert-info rounded-0 no-print mb-4">
         <strong>* ملاحظة محاسبية:</strong> يتم احتساب صافي الأرباح على أساس خصم إجمالي المصروفات العامة (عدا تسديدات حسابات الموردين في المخزن) من إجمالي أرباح المبيعات المحققة خلال هذه الفترة المحددة.
-    </div>
-
-    <!-- جداول تفاصيل الفترة -->
-    <div class="row">
-        <!-- سجل المبيعات خلال الفترة -->
-        <div class="col-lg-7">
-            <div class="card-flat mb-4">
-                <div class="card-header bg-light">
-                    <h5><i class="fa fa-shopping-cart ml-2"></i>تفاصيل فواتير المبيعات والأرباح المحققة</h5>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="report-table mb-0" style="font-size: 0.9rem;">
-                            <thead>
-                                <tr>
-                                    <th>رقم الفاتورة</th>
-                                    <th>العميل</th>
-                                    <th>المجموع</th>
-                                    <th>الربح</th>
-                                    <th>التاريخ</th>
-                                    <th class="no-print">الإجراءات</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if ($result_sales && $result_sales->num_rows > 0): ?>
-                                    <?php while ($rows = $result_sales->fetch_assoc()): ?>
-                                        <tr>
-                                            <td class="font-weight-bold text-secondary">#<?php echo htmlspecialchars($rows['id']); ?></td>
-                                            <td class="font-weight-bold"><?php echo htmlspecialchars($rows['cust_name']); ?></td>
-                                            <td><?php echo number_format($rows['total'], 2); ?></td>
-                                            <td class="text-success font-weight-bold"><?php echo number_format($rows['prifet'], 2); ?></td>
-                                            <td><?php echo htmlspecialchars($rows['build_date']); ?></td>
-                                            <td class="no-print">
-                                                <a href="../sales/view.php?id=<?php echo $rows['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 text-decoration-none">
-                                                    <i class="fa fa-eye ml-1"></i>التفاصيل
-                                                </a>
-                                            </td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="6" class="text-center text-muted p-3">لا توجد حركات مبيعات في هذه الفترة المحددة.</td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- المصروفات خلال الفترة -->
-        <div class="col-lg-5">
-            <div class="card-flat mb-4">
-                <div class="card-header bg-light">
-                    <h5><i class="fa fa-minus-circle ml-2"></i>المصروفات العامة المسجلة</h5>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="report-table mb-0" style="font-size: 0.9rem;">
-                            <thead>
-                                <tr>
-                                    <th>الرقم</th>
-                                    <th>البند</th>
-                                    <th>التاريخ</th>
-                                    <th>المبلغ</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if ($result_expenses && $result_expenses->num_rows > 0): ?>
-                                    <?php while ($rowsa = $result_expenses->fetch_assoc()): ?>
-                                        <tr>
-                                            <td>#<?php echo htmlspecialchars($rowsa['m_id']); ?></td>
-                                            <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($rowsa['sname']); ?></td>
-                                            <td><?php echo htmlspecialchars($rowsa['m_date']); ?></td>
-                                            <td class="text-danger font-weight-bold"><?php echo number_format($rowsa['m_price'], 2); ?></td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="4" class="text-center text-muted p-3">لا توجد مصروفات مسجلة في هذه الفترة المحددة.</td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 <?php else: ?>
     <!-- رسالة ترحيبية وتوجيه -->

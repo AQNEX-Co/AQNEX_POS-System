@@ -1,11 +1,15 @@
 <?php
-$dir_prefix = '../';
-require_once($dir_prefix . "includes/header.php");
-
+// Start session and check login before includes/header.php to avoid "headers already sent"
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (isset($_SESSION['SESS_MEMBER_ID']) && !empty($_SESSION['SESS_MEMBER_ID'])) {
     header("Location: ../home.php");
     exit();
 }
+
+$dir_prefix = '../';
+require_once($dir_prefix . "includes/header.php");
 
 $success_output = '';
 $error_message = '';

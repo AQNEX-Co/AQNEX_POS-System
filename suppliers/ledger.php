@@ -4,9 +4,15 @@ $module = 'suppliers';
 require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'inventory']);
-// التأكد من تمرير رقم تعريف المورد
+
+// 1. جلب بيانات المتجر من قاعدة البيانات (الشعار والاسم)
+$store_sql = "SELECT * FROM settings LIMIT 1";
+$store_res = $conn->query($store_sql);
+$store = $store_res->fetch_assoc();
+$store_name = $store['store_name'] ?? 'تكنولوجيا فون'; 
+
 if (!isset($_GET['id']) || empty($_GET['id'])) {
-    echo "<div class='alert alert-danger rounded-0'>خطأ: لم يتم تحديد المورد.</div>";
+    echo "<div class='alert alert-danger'>خطأ: لم يتم تحديد المورد.</div>";
     require_once($dir_prefix . 'includes/footer.php');
     exit;
 }
@@ -14,199 +20,155 @@ if (!isset($_GET['id']) || empty($_GET['id'])) {
 $id = $conn->real_escape_string($_GET['id']);
 $sql = "SELECT * FROM Suppliers WHERE supp_id='$id'";
 $result = $conn->query($sql);
-
 if (!$result || $result->num_rows == 0) {
-    echo "<div class='alert alert-danger rounded-0'>خطأ: المورد غير موجود.</div>";
+    echo "<div class='alert alert-danger'>خطأ: المورد غير موجود.</div>";
     require_once($dir_prefix . 'includes/footer.php');
     exit;
 }
-
 $supplier = $result->fetch_assoc();
 $supp_name = $supplier['supp_name'];
 
-// حساب إجمالي المشتريات (buy_price في جدول purchase_items)
-$sql_buys_sum = "SELECT SUM(buy_price) as total_bought FROM purchase_items WHERE supp_name='$supp_name'";
-$res_buys_sum = $conn->query($sql_buys_sum);
-$row_buys_sum = $res_buys_sum->fetch_assoc();
-$total_bought = isset($row_buys_sum['total_bought']) ? floatval($row_buys_sum['total_bought']) : 0.0;
+// --- جلب العمليات المحاسبية من دفتر اليومية الفعلي لحساب مديونية المورد ---
+$transactions = [];
+$total_debit = 0; // مدين / عليه
+$total_credit = 0; // دائن / له
 
-// حساب إجمالي المبالغ المسددة للمورد (bush_price في جدول bush)
-$sql_bush_sum = "SELECT SUM(bush_price) as total_paid FROM supplier_payments WHERE supp_name='$supp_name'";
-$res_bush_sum = $conn->query($sql_bush_sum);
-$row_bush_sum = $res_bush_sum->fetch_assoc();
-$total_paid = isset($row_bush_sum['total_paid']) ? floatval($row_bush_sum['total_paid']) : 0.0;
+$sql_je = "SELECT * FROM journal_entries 
+           WHERE (debit_entity_type = 'supplier' AND debit_entity_id = '$id')
+              OR (credit_entity_type = 'supplier' AND credit_entity_id = '$id')
+           ORDER BY created_at ASC, id ASC";
+$res_je = $conn->query($sql_je);
 
-// المتبقي النهائي للمورد
-$remaining_balance = $total_bought - $total_paid;
-
-// جلب تفاصيل حركات الشراء
-$sql_buys = "SELECT * FROM purchase_items WHERE supp_name='$supp_name' ORDER BY buyid DESC";
-$buys_result = $conn->query($sql_buys);
-
-// جلب تفاصيل سندات التسديد للمورد
-$sql_bush = "SELECT * FROM supplier_payments WHERE supp_name='$supp_name' ORDER BY bush_id DESC";
-$bush_result = $conn->query($sql_bush);
+if ($res_je) {
+    while ($row = $res_je->fetch_assoc()) {
+        $is_debit = ($row['debit_entity_type'] === 'supplier' && intval($row['debit_entity_id']) === intval($id));
+        $debit_val = $is_debit ? floatval($row['amount']) : 0.0;
+        $credit_val = !$is_debit ? floatval($row['amount']) : 0.0;
+        
+        $total_debit += $debit_val;
+        $total_credit += $credit_val;
+        
+        $transactions[] = [
+            'date' => date('Y-m-d', strtotime($row['created_at'])),
+            'desc' => $row['description'],
+            'debit' => $debit_val,
+            'credit' => $credit_val
+        ];
+    }
+}
 ?>
-<title>كشف حساب المورد: <?php echo htmlspecialchars($supp_name); ?> - تكنولوجيا فون</title>
 
+<style>
+    /* التنسيق العام والكشف */
+    .statement-box { background: #fff; padding: 30px; border: 1px solid #ddd; margin-bottom: 20px; direction: rtl; }
+    .header-table { width: 100%; border-bottom: 2px solid #333; margin-bottom: 20px; }
+    .report-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    .report-table th { background: #f4f4f4; border: 1px solid #ddd; padding: 10px; text-align: center; color: #333; }
+    .report-table td { border: 1px solid #ddd; padding: 10px; text-align: center; font-size: 14px; }
+    .totals-box { width: 300px; margin-right: auto; margin-top: 20px; border: 2px solid #333; }
+    .totals-box td { padding: 8px; font-weight: bold; border: 1px solid #ddd; }
+    .bg-light { background-color: #f8f9fa; }
+    
+    @media print {
+        .no-print { display: none !important; }
+        .statement-box { border: none; padding: 0; }
+        body { background: #fff; }
+    }
+</style>
 
-
-<div class="row no-print mb-4">
-    <div class="col-md-6">
-        <h3 class="text-secondary font-weight-bold">
-            <i class="fa fa-file-text-o ml-2"></i>كشف حساب المورد
-        </h3>
-        <p class="text-muted small mb-0">كشف حركات المشتريات وسندات الصرف والصرف للمورد: <strong><?php echo htmlspecialchars($supp_name); ?></strong></p>
+<div class="container-fluid mt-3">
+    <!-- أزرار التحكم -->
+    <div class="no-print mb-3 text-left">
+        <button onclick="window.print();" class="btn btn-dark"><i class="fa fa-printer"></i> طباعة كشف الحساب</button>
+        <a href="index.php" class="btn btn-secondary">العودة للموردين</a>
     </div>
-    <div class="col-md-6 text-left">
-        <a href="../purchases/create.php" class="btn-flat btn-flat-primary btn-sm ml-2 text-decoration-none">
-            <i class="fa fa-truck ml-1"></i>إضافة مشتريات
-        </a>
-        <a href="pay.php" class="btn-flat btn-flat-success btn-sm ml-2 text-decoration-none">
-            <i class="fa fa-money ml-1"></i>تسديد مورد
-        </a>
-        <button onclick="window.print()" class="btn-flat btn-flat-info btn-sm ml-2" style="background-color: var(--accent-info); color:#fff;">
-            <i class="fa fa-print ml-1"></i>طباعة كشف الحساب
-        </button>
-        <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-            <i class="fa fa-arrow-left ml-1"></i>عودة لقائمة الموردين
-        </a>
-    </div>
-</div>
 
-<!-- كشف الحساب التفصيلي -->
-<div class="card-flat mb-4">
-    <div class="card-header bg-light">
-        <h5 class="font-weight-bold mb-0">
-            <i class="fa fa-briefcase ml-2 text-primary"></i>تفاصيل المورد: <?php echo htmlspecialchars($supp_name); ?>
-            <?php if (!empty($supplier['phone'])): ?>
-                <span class="text-muted small ml-3">(جوال: <?php echo htmlspecialchars($supplier['phone']); ?>)</span>
-            <?php endif; ?>
-        </h5>
-    </div>
-    <div class="card-body">
-        <div class="row">
-            <div class="col-md-4">
-                <div class="stat-card danger mb-3">
-                    <div class="stat-info">
-                        <h6>إجمالي المشتريات (المدين)</h6>
-                        <h3><?php echo number_format($total_bought, 2); ?> ر.ي</h3>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="fa fa-truck text-danger"></i>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="stat-card success mb-3">
-                    <div class="stat-info">
-                        <h6>إجمالي المسدد (الدائن)</h6>
-                        <h3><?php echo number_format($total_paid, 2); ?> ر.ي</h3>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="fa fa-money text-success"></i>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <?php
-                $balance_class = $remaining_balance > 0 ? 'danger' : ($remaining_balance < 0 ? 'success' : 'secondary');
-                $balance_title = $remaining_balance > 0 ? 'المتبقي له (دائن)' : ($remaining_balance < 0 ? 'المتبقي عليه (مدين)' : 'المتبقي (متزن)');
+    <div class="statement-box">
+        <!-- الترويسة الرسمية -->
+        <table class="header-table">
+            <tr>
+                <td style="width: 33%; text-align: right; vertical-align: top;">
+                    <h2 style="margin:0;"><?php echo $store_name; ?></h2>
+                    <p style="margin:5px 0;">كشف حساب مورد </p>
+                    <p style="margin:0; font-size:13px;">تاريخ الاستخراج: <?php echo date('Y-m-d'); ?></p>
+                </td>
+                <td style="width: 33%; text-align: center;">
+        <?php if (!empty($global_settings['logo'])): ?>
+        <img src="<?php echo htmlspecialchars($logo_url); ?>" style="max-height:50px; width:auto; margin-bottom:5px;"><br>
+        <?php endif; ?>                </td>
+                <td style="width: 33%; text-align: left; vertical-align: top; font-size: 14px;">
+                    <strong>بيانات المورد:</strong><br>
+                    الاسم: <?php echo htmlspecialchars($supp_name); ?><br>
+                    الجوال: <?php echo $supplier['phone']; ?><br>
+                    العنوان: <?php echo $supplier['address']; ?>
+                </td>
+            </tr>
+        </table>
+
+        <h4 class="text-center" style="text-decoration: underline;">تفاصيل حركة الحساب</h4>
+
+        <!-- الجدول الموحد للعمليات -->
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th width="5%">#</th>
+                    <th width="15%">التاريخ</th>
+                    <th width="45%">البيان (نوع العملية)</th>
+                    <th width="10%">مدين (عليه)</th>
+                    <th width="10%">دائن (له)</th>
+                    <th width="15%">الرصيد التراكمي</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php 
+                $total_debit = 0;
+                $total_credit = 0;
+                $balance = 0;
+                foreach ($transactions as $key => $trans): 
+                    $total_debit += $trans['debit'];
+                    $total_credit += $trans['credit'];
+                    $balance += ($trans['credit'] - $trans['debit']);
                 ?>
-                <div class="stat-card <?php echo $balance_class; ?> mb-3">
-                    <div class="stat-info">
-                        <h6><?php echo $balance_title; ?></h6>
-                        <h3><?php echo number_format(abs($remaining_balance), 2); ?> ر.ي</h3>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="fa fa-balance-scale"></i>
-                    </div>
-                </div>
+                <tr>
+                    <td><?php echo $key + 1; ?></td>
+                    <td><?php echo $trans['date']; ?></td>
+                    <td style="text-align: right;"><?php echo $trans['desc']; ?></td>
+                    <td style="color: green; font-weight: bold;"><?php echo ($trans['debit'] > 0) ? number_format($trans['debit'], 2) : '-'; ?></td>
+                    <td style="color: red; font-weight: bold;"><?php echo ($trans['credit'] > 0) ? number_format($trans['credit'], 2) : '-'; ?></td>
+                    <td dir="ltr"><?php echo number_format($balance, 2); ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <!-- إجماليات آخر الصفحة -->
+        <table class="totals-box">
+            <tr>
+                <td class="bg-light">إجمالي الدائن (له):</td>
+                <td style="color: red;"><?php echo number_format($total_credit, 2); ?></td>
+            </tr>
+            <tr>
+                <td class="bg-light">إجمالي المدين (عليه):</td>
+                <td style="color: green;"><?php echo number_format($total_debit, 2); ?></td>
+            </tr>
+            <tr style="background: #333; color: #fff;">
+                <td>الرصيد المتبقي:</td>
+                <td><?php echo number_format($balance, 2); ?> ر.ي</td>
+            </tr>
+        </table>
+
+        <!-- منطقة التواقيع -->
+        <div style="margin-top: 50px; display: flex; justify-content: space-between;">
+            <div style="text-align: center; width: 200px;">
+                <p>توقيع المحاسب</p>
+                <p>.......................</p>
+            </div>
+            <div style="text-align: center; width: 200px;">
+                <p>ختم المتجر</p>
+                <div style="height: 80px; border: 1px dashed #ccc;"></div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- جدول حركات الشراء -->
-<div class="card-flat mb-4">
-    <div class="card-header">
-        <h5><i class="fa fa-truck ml-2"></i>سجل حركات الشراء والتوريد</h5>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="report-table">
-                <thead>
-                    <tr>
-                        <th>رقم الحركة</th>
-                        <th>اسم المنتج</th>
-                        <th>الكمية الموردة</th>
-                        <th>قيمة الحركة الكلية</th>
-                        <th>المدفوع فوراً</th>
-                        <th>المتبقي ذمة</th>
-                        <th>تاريخ الحركة</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if ($buys_result && $buys_result->num_rows > 0): ?>
-                        <?php while ($b_row = $buys_result->fetch_assoc()): ?>
-                            <tr>
-                                <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($b_row['buyid']); ?></td>
-                                <td class="font-weight-bold"><?php echo htmlspecialchars($b_row['name']); ?></td>
-                                <td><?php echo htmlspecialchars($b_row['quantity']); ?></td>
-                                <td><?php echo number_format($b_row['buy_price'], 2); ?></td>
-                                <td class="text-success"><?php echo number_format($b_row['pushtosupp'], 2); ?></td>
-                                <td class="text-danger font-weight-bold"><?php echo number_format($b_row['total_d'], 2); ?></td>
-                                <td><?php echo htmlspecialchars($b_row['buys_date']); ?></td>
-                            </tr>
-                        <?php endwhile; ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="7" class="text-center text-muted p-3">لا يوجد سجل مشتريات من هذا المورد.</td>
-                        </tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<!-- جدول سندات الصرف / التسديدات للمورد -->
-<div class="card-flat">
-    <div class="card-header">
-        <h5><i class="fa fa-money ml-2"></i>سجل مبالغ التسديدات (سندات الصرف)</h5>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="report-table">
-                <thead>
-                    <tr>
-                        <th>رقم السند</th>
-                        <th>المبلغ المسدد</th>
-                        <th>البيان / الملاحظات</th>
-                        <th>تاريخ السند</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if ($bush_result && $bush_result->num_rows > 0): ?>
-                        <?php while ($bu_row = $bush_result->fetch_assoc()): ?>
-                            <tr>
-                                <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($bu_row['bush_id']); ?></td>
-                                <td class="text-success font-weight-bold"><?php echo number_format($bu_row['bush_price'], 2); ?></td>
-                                <td class="text-right pr-4"><?php echo htmlspecialchars($bu_row['remark']); ?></td>
-                                <td><?php echo htmlspecialchars($bu_row['bush_date']); ?></td>
-                            </tr>
-                        <?php endwhile; ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="4" class="text-center text-muted p-3">لا يوجد سجل تسديدات مسجل لهذا المورد.</td>
-                        </tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<?php
-require_once($dir_prefix . 'includes/footer.php');
-?>
+<?php require_once($dir_prefix . 'includes/footer.php'); ?>

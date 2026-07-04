@@ -40,7 +40,7 @@ if (isset($_POST['btn']) && !empty($_POST['start_date'])) {
     $row5 = $conn->query($sql5)->fetch_assoc();
     $total_sales_cash = isset($row5['total_sales_cash']) ? floatval($row5['total_sales_cash']) : 0.0;
 
-    $sql6 = "SELECT SUM(buy_price) as total_purchases FROM purchase_items WHERE buys_date='$selected_date'";
+    $sql6 = "SELECT COALESCE(SUM(p.total),0) - COALESCE(SUM(pr.refund_amount),0) as total_purchases FROM purchases p LEFT JOIN (SELECT purchase_id, SUM(refund_amount) as refund_amount FROM purchase_returns WHERE status='active' AND return_date='$selected_date' GROUP BY purchase_id) pr ON pr.purchase_id = p.id WHERE p.date='$selected_date'";
     $row6 = $conn->query($sql6)->fetch_assoc();
     $total_purchases = isset($row6['total_purchases']) ? floatval($row6['total_purchases']) : 0.0;
 
@@ -56,8 +56,28 @@ if (isset($_POST['btn']) && !empty($_POST['start_date'])) {
     $rr = $conn->query($ss)->fetch_assoc();
     $total_discounts = isset($rr['total_discounts']) ? floatval($rr['total_discounts']) : 0.0;
 
-    $net_profit = $profit_before_discount - $total_discounts;
-    $net_cash_balance = ($total_receipts + $total_sales_cash) - $total_expenses;
+    // جلب تفاصيل مرتجعات المبيعات لهذا التاريخ
+    $sql_returns = "SELECT * FROM sales_returns WHERE return_date = '$selected_date' AND status = 'active' ORDER BY id DESC";
+    $result_returns = $conn->query($sql_returns);
+
+    $sql_returns_sum = "SELECT SUM(refund_amount) as total_returns, SUM(profit_impact) as total_returns_profit_impact 
+                        FROM sales_returns WHERE return_date = '$selected_date' AND status = 'active'";
+    $row_returns_sum = $conn->query($sql_returns_sum)->fetch_assoc();
+    $total_returns = isset($row_returns_sum['total_returns']) ? floatval($row_returns_sum['total_returns']) : 0.0;
+    $total_returns_profit_impact = isset($row_returns_sum['total_returns_profit_impact']) ? abs(floatval($row_returns_sum['total_returns_profit_impact'])) : 0.0;
+
+    // حساب المرتجعات النقدية التي صرفت من الصندوق لتعديل صافي التدفق النقدي
+    $sql_cash_returns = "SELECT SUM(refund_amount) as total_cash_returns 
+                         FROM sales_returns 
+                         WHERE return_date = '$selected_date' 
+                           AND refund_method = 'cash' 
+                           AND refund_source = 'box' 
+                           AND status = 'active'";
+    $row_cash_returns = $conn->query($sql_cash_returns)->fetch_assoc();
+    $total_cash_returns = isset($row_cash_returns['total_cash_returns']) ? floatval($row_cash_returns['total_cash_returns']) : 0.0;
+
+    $net_profit = $profit_before_discount - $total_discounts - $total_returns_profit_impact;
+    $net_cash_balance = ($total_receipts + $total_sales_cash) - $total_expenses - $total_cash_returns;
 }
 ?>
 <title>الحركة اليومية حسب التاريخ - تكنولوجيا فون</title>
@@ -74,11 +94,11 @@ if (isset($_POST['btn']) && !empty($_POST['start_date'])) {
     <div class="col-md-6 text-left">
         <?php if ($has_results): ?>
             <button onclick="window.print()" class="btn-flat btn-flat-info btn-sm ml-2" style="background-color: var(--accent-info); color:#fff;">
-                <i class="fa fa-print ml-1"></i>طباعة الحركة اليومية
+                <i class="bi bi-printer ml-1"></i>طباعة الحركة اليومية
             </button>
         <?php endif; ?>
         <a href="daily.php" class="btn-flat btn-flat-success btn-sm ml-2 text-decoration-none">
-            <i class="fa fa-line-chart ml-1"></i>حركة اليوم الحالية
+            <i class="bi bi-calendar ml-1"></i>حركة اليوم الحالية
         </a>
         <a href="../home.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
             <i class="fa fa-arrow-left ml-1"></i>العودة للرئيسية
@@ -111,64 +131,6 @@ if (isset($_POST['btn']) && !empty($_POST['start_date'])) {
 </div>
 
 <?php if ($has_results): ?>
-    <!-- ملخص الصندوق والربح للحركة المبحوثة -->
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="stat-card mb-3">
-                <div class="stat-info">
-                    <h6>التدفق النقدي الصافي لهذا اليوم</h6>
-                    <h3><?php echo number_format($net_cash_balance, 2); ?> ر.ي</h3>
-                </div>
-                <div class="stat-icon">
-                    <i class="fa fa-archive text-info"></i>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="stat-card success mb-3">
-                <div class="stat-info">
-                    <h6>صافي أرباح العمليات لهذا اليوم</h6>
-                    <h3><?php echo number_format($net_profit, 2); ?> ر.ي</h3>
-                </div>
-                <div class="stat-icon">
-                    <i class="fa fa-line-chart text-success"></i>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- جدول حركة الحسابات الإجمالية -->
-    <div class="card-flat mb-4">
-        <div class="card-header bg-light">
-            <h5 class="font-weight-bold text-dark mb-0"><i class="fa fa-calculator ml-2"></i>خلاصة التدفق النقدي بتاريخ: <?php echo htmlspecialchars($selected_date); ?></h5>
-        </div>
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="report-table mb-0">
-                    <thead>
-                        <tr>
-                            <th>المقبوض نقداً (من المبيعات)</th>
-                            <th>سندات القبض المستلمة</th>
-                            <th>قيمة المشتريات الإجمالية</th>
-                            <th>المصروفات وسندات الصرف</th>
-                            <th>الخصومات الممنوحة</th>
-                            <th>صافي التغير المالي لليوم</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td class="text-success font-weight-bold">+<?php echo number_format($total_sales_cash, 2); ?></td>
-                            <td class="text-success font-weight-bold">+<?php echo number_format($total_receipts, 2); ?></td>
-                            <td class="text-danger font-weight-bold"><?php echo number_format($total_purchases, 2); ?></td>
-                            <td class="text-danger font-weight-bold">-<?php echo number_format($total_expenses, 2); ?></td>
-                            <td class="text-warning"><?php echo number_format($total_discounts, 2); ?></td>
-                            <td class="font-weight-bold text-primary" style="font-size: 1.15rem;"><?php echo number_format($net_cash_balance, 2); ?> ر.ي</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
 
     <!-- تفاصيل الحركات -->
     <div class="row">
@@ -366,6 +328,122 @@ if (isset($_POST['btn']) && !empty($_POST['start_date'])) {
                         </table>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <!-- مرتجعات المبيعات اليوم -->
+        <div class="col-12">
+            <div class="card-flat mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="text-secondary"><i class="fa fa-reply ml-2"></i>مرتجع المبيعات لهذا اليوم</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="report-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>رقم المرتجع</th>
+                                    <th>رقم الفاتورة</th>
+                                    <th>اسم المنتج</th>
+                                    <th>الكمية المرتجعة</th>
+                                    <th>القيمة المستردة</th>
+                                    <th>طريقة الاسترداد</th>
+                                    <th>السبب</th>
+                                    <th>المستخدم</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if ($result_returns && $result_returns->num_rows > 0): ?>
+                                    <?php while ($rows_ret = $result_returns->fetch_assoc()): ?>
+                                        <tr>
+                                            <td>#<?php echo htmlspecialchars($rows_ret['id']); ?></td>
+                                            <td class="font-weight-bold text-secondary">#<?php echo htmlspecialchars($rows_ret['sales_id']); ?></td>
+                                            <td class="font-weight-bold"><?php echo htmlspecialchars($rows_ret['product_name']); ?></td>
+                                            <td><?php echo htmlspecialchars($rows_ret['quantity']); ?></td>
+                                            <td class="text-danger font-weight-bold"><?php echo number_format($rows_ret['refund_amount'], 2); ?></td>
+                                            <td>
+                                                <?php if ($rows_ret['refund_method'] === 'cash'): ?>
+                                                    <span class="badge badge-success" style="background-color: var(--accent-success); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px;">نقدي (<?php echo ($rows_ret['refund_source'] === 'box') ? 'من الصندوق' : 'من المبيعات'; ?>)</span>
+                                                <?php else: ?>
+                                                    <span class="badge badge-warning" style="background-color: var(--accent-warning); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px;">آجل (خصم مديونية)</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-right pr-4"><?php echo htmlspecialchars($rows_ret['reason']); ?></td>
+                                            <td><?php echo htmlspecialchars($rows_ret['user']); ?></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="8" class="text-center text-muted py-3">لا توجد عمليات مرتجعات مبيعات في هذا اليوم.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ملخص الصندوق والربح للحركة المبحوثة -->
+    <div class="row mb-4 mt-4">
+        <div class="col-md-6">
+            <div class="stat-card mb-3">
+                <div class="stat-info">
+                    <h6>التدفق النقدي الصافي لهذا اليوم</h6>
+                    <h3><?php echo number_format($net_cash_balance, 2); ?> ر.ي</h3>
+                </div>
+                <div class="stat-icon">
+                    <i class="fa fa-archive text-info"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="stat-card success mb-3">
+                <div class="stat-info">
+                    <h6>صافي أرباح العمليات لهذا اليوم</h6>
+                    <h3><?php echo number_format($net_profit, 2); ?> ر.ي</h3>
+                </div>
+                <div class="stat-icon">
+                    <i class="fa fa-line-chart text-success"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- جدول حركة الحسابات الإجمالية -->
+    <div class="card-flat mb-4">
+        <div class="card-header bg-light">
+            <h5 class="font-weight-bold text-dark mb-0"><i class="fa fa-calculator ml-2"></i>خلاصة التدفق النقدي بتاريخ: <?php echo htmlspecialchars($selected_date); ?></h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="report-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>المقبوض نقداً (من المبيعات)</th>
+                            <th>سندات القبض المستلمة</th>
+                            <th>قيمة المشتريات الإجمالية</th>
+                            <th>المصروفات وسندات الصرف</th>
+                            <th>الخصومات الممنوحة</th>
+                            <th>المرتجع النقدي من الصندوق</th>
+                            <th>صافي التغير المالي لليوم</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="text-success font-weight-bold">+<?php echo number_format($total_sales_cash, 2); ?></td>
+                            <td class="text-success font-weight-bold">+<?php echo number_format($total_receipts, 2); ?></td>
+                            <td class="text-danger font-weight-bold"><?php echo number_format($total_purchases, 2); ?></td>
+                            <td class="text-danger font-weight-bold">-<?php echo number_format($total_expenses, 2); ?></td>
+                            <td class="text-warning"><?php echo number_format($total_discounts, 2); ?></td>
+                            <td class="text-danger font-weight-bold">-<?php echo number_format($total_cash_returns, 2); ?></td>
+                            <td class="font-weight-bold text-primary" style="font-size: 1.15rem;"><?php echo number_format($net_cash_balance, 2); ?> ر.ي</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

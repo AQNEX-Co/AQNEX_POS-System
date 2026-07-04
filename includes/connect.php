@@ -1,23 +1,16 @@
 <?php
-// تعطيل الاستثناءات التلقائية لـ mysqli لتفادي توقف الصفحة وعرض تفاصيل حساسة عند فشل الاتصال
-mysqli_report(MYSQLI_REPORT_OFF);
+// تضمين البنية الجديدة للتهيئة قبل إعداد الاتصال
+require_once(__DIR__ . '/../app/Core/Bootstrap.php');
+\AQNEX\Core\Bootstrap::initialize();
 
-$servername = "localhost";
-$username = "root";
-$password = "";
-$dbname = "aq_pos";
+// تحميل إعدادات الاتصال من البنية المهيكلة
+require_once(__DIR__ . '/../app/Config/Database.php');
 
-// إنشاء الاتصال
-$conn = new mysqli($servername, $username, $password, $dbname, 3307);
-
-// التحقق من الاتصال
-if ($conn->connect_error) {
-    die("فشل الاتصال بقاعدة البيانات: " . $conn->connect_error);
+$conn = \AQNEX\Config\Database::createMysqli();
+if (!$conn) {
+    die('فشل الاتصال بقاعدة البيانات. يرجى التحقق من إعدادات الاتصال.');
 }
 
-// ضبط الترميز للغة العربية
-$conn->set_charset("utf8mb4");
-
-// تضمين النواة الأمنية والتحقق من التراخيص
+// تضمين النواة الأمنية الحالية للحفاظ على آلية التفعيل كما هي
 require_once(__DIR__ . '/../core/bootstrap.php');
 ?>

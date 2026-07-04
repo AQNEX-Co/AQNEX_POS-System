@@ -4,17 +4,11 @@ require_once($dir_prefix . 'includes/auth.php');
 require_once($dir_prefix . 'includes/connect.php');
 
 if (isset($_GET['id'])) {
-    $supp_name = $conn->real_escape_string($_GET['id']);
+    $supp_id = intval($_GET['id']);
     
-    // تنفيذ الاستعلامات لحذف المورد والمشتريات والمدفوعات الخاصة به
-    $sql1 = "DELETE FROM Suppliers WHERE supp_name='$supp_name'";
-    $conn->query($sql1);
-    
-    $sql2 = "DELETE FROM purchase_items WHERE supp_name='$supp_name'";
-    $conn->query($sql2);
-    
-    $sql3 = "DELETE FROM supplier_payments WHERE supp_name='$supp_name'";
-    $conn->query($sql3);
+    // تحويل حالة الحذف إلى 1 (Soft Delete) للمحافظة على السجلات التاريخية والمشتريات
+    $sql = "UPDATE Suppliers SET d_s = '1' WHERE supp_id = $supp_id";
+    $conn->query($sql);
 }
 
 header('Location: index.php');

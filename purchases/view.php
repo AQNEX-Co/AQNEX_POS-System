@@ -32,8 +32,15 @@ $exchange_rate = isset($invoice['exchange_rate']) ? doubleval($invoice['exchange
 if ($exchange_rate <= 0) $exchange_rate = 1.0;
 $total_original = $total_base / $exchange_rate;
 
-$sql_items = "SELECT * FROM purchase_items WHERE buys_date = '" . $conn->real_escape_string($build_date) . "' AND supp_name = '" . $conn->real_escape_string($supplier_name) . "'";
+// جلب بنود الفاتورة - أولاً بـ purchase_id (الأحدث)، وإلا بالتاريخ+المورد (للبيانات القديمة)
+$sql_items = "SELECT * FROM purchase_items WHERE purchase_id = $invoice_id";
 $result_items = $conn->query($sql_items);
+// Fallback للبيانات القديمة التي لا تحتوي على purchase_id
+if (!$result_items || $result_items->num_rows == 0) {
+    $sql_items = "SELECT * FROM purchase_items WHERE buys_date = '" . $conn->real_escape_string($build_date) . "' AND supp_name = '" . $conn->real_escape_string($supplier_name) . "'";
+    $result_items = $conn->query($sql_items);
+}
+
 
 $settings_res = $conn->query("SELECT * FROM settings WHERE id = 1");
 $settings = $settings_res ? $settings_res->fetch_assoc() : null;
@@ -45,60 +52,65 @@ $currency = $settings ? $settings['currency'] : 'ريال يمني';
 <title>فاتورة مشتريات #<?php echo $invoice_id; ?> - <?php echo htmlspecialchars($store_name); ?></title>
 
 <style>
+@page { size: A4 portrait; margin: 20mm; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #fff; color: #0f172a; }
 @media print {
-    body { background:#fff !important; color:#000 !important; margin:0 !important; padding:0 !important; font-size:11pt !important; }
+    body { margin:0; padding:0; }
     .no-print { display:none !important; }
-    #content { padding:0 !important; margin:0 !important; }
-    .wrapper { display:block !important; }
-    #sidebar { display:none !important; }
-    .card-flat { border:none !important; background:transparent !important; }
-    .card-body { padding:0 !important; }
-    .inv-table th { background:#1e293b !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .inv-header { border-bottom:2px solid #000 !important; }
+    html, body { width: 210mm; }
+    .inv-box { margin: 0; padding: 0; border: none; }
+    .inv-table thead { display: table-header-group; }
+    .inv-table tfoot { display: table-footer-group; }
+    .inv-table tr { page-break-inside: avoid; page-break-after: auto; }
+    .inv-header { border-bottom: 1px solid #000; }
 }
 @media screen {
-    .inv-box { max-width:950px; margin:20px auto; background:#fff; padding:30px; border:1px solid #e2e8f0; }
+    .inv-box { max-width: 820px; margin: 20px auto; background: #fff; padding: 24px; border: 1px solid #d1d5db; }
 }
-.inv-header { padding-bottom:15px; margin-bottom:20px; border-bottom:2px solid #1e293b; }
-.inv-store-name { font-size:1.6rem; font-weight:700; color:#0f172a; }
-.inv-store-sub { font-size:0.88rem; color:#64748b; margin:2px 0; }
-.inv-title-box h2 { font-size:1.4rem; font-weight:700; color:#0f172a; margin:0; text-align:left; }
-.inv-title-box .inv-num { font-size:1rem; color:#0369a1; font-weight:600; margin:4px 0 0 0; text-align:left; }
-.inv-title-box .inv-date { font-size:0.85rem; color:#64748b; text-align:left; }
-.inv-info-section { background:#f8fafc; border:1px solid #e2e8f0; padding:12px 16px; margin-bottom:20px; }
-.inv-info-row { display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; }
-.inv-info-item { font-size:0.9rem; }
-.inv-info-item span { font-weight:700; }
-.inv-table { width:100%; border-collapse:collapse; margin-bottom:20px; }
-.inv-table th { background:#1e293b; color:#fff; padding:10px 12px; font-size:0.88rem; font-weight:600; text-align:center; border:1px solid #1e293b; }
-.inv-table td { padding:9px 12px; font-size:0.88rem; border:1px solid #e2e8f0; text-align:center; vertical-align:middle; }
-.inv-table tbody tr:nth-child(even) { background:#f8fafc; }
-.inv-table td:first-child { text-align:center; color:#64748b; }
-.inv-table td:nth-child(2) { text-align:right; font-weight:600; }
-.totals-box { width:300px; margin-right:auto; border:1px solid #e2e8f0; }
-.totals-box table { width:100%; border-collapse:collapse; }
-.totals-box table tr td { padding:8px 12px; font-size:0.9rem; border-bottom:1px solid #e2e8f0; }
-.totals-box table tr:last-child td { border-bottom:none; }
-.totals-box .tot-label { text-align:right; color:#475569; }
-.totals-box .tot-value { text-align:left; font-weight:700; }
-.totals-box .tot-grand { background:#1e293b; color:#fff; font-size:1.05rem; }
-.inv-footer { text-align:center; border-top:1px solid #e2e8f0; margin-top:30px; padding-top:15px; color:#64748b; font-size:0.85rem; }
+.inv-header { padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid #334155; }
+.inv-store-name { font-size: 1.7rem; font-weight: 700; letter-spacing: 0.02em; }
+.inv-store-sub { font-size: 0.9rem; color: #475569; margin: 2px 0; }
+.inv-title-box h2 { font-size: 1.45rem; font-weight: 700; margin: 0; text-align: left; }
+.inv-title-box .inv-num, .inv-title-box .inv-date { font-size: 0.95rem; color: #0f172a; margin: 4px 0 0; }
+.inv-info-section { background: #f8fafc; border: 1px solid #e2e8f0; padding: 14px 16px; margin-bottom: 20px; }
+.inv-info-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
+.inv-info-item { font-size: 0.95rem; line-height: 1.6; }
+.inv-info-item span { font-weight: 700; }
+.inv-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+.inv-table th, .inv-table td { border: 1px solid #d1d5db; padding: 10px 12px; }
+.inv-table thead th { background: #f1f5f9; color: #0f172a; font-weight: 700; }
+.inv-table td { color: #0f172a; }
+.inv-table tbody tr:nth-child(even) { background: transparent; }
+.inv-table td:first-child { text-align: center; width: 6%; }
+.inv-table td:nth-child(2) { text-align: right; }
+.inv-table td:nth-child(3), .inv-table td:nth-child(4), .inv-table td:nth-child(5) { text-align: center; }
+.inv-summary-bottom { width: 100%; max-width: 430px; margin-top: 10px; }
+.inv-summary-bottom table { width: 100%; border-collapse: collapse; }
+.inv-summary-bottom td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 0.95rem; }
+.inv-summary-bottom tr:last-child td { border-bottom: none; }
+.inv-summary-bottom .label { text-align: right; color: #475569; }
+.inv-summary-bottom .value { text-align: left; font-weight: 700; }
+.inv-summary-bottom .grand-total .value { color: #0f172a; font-size: 1rem; }
+.inv-footer { text-align: center; border-top: 1px solid #e2e8f0; margin-top: 24px; padding-top: 14px; color: #475569; font-size: 0.9rem; }
+.inv-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.inv-actions .buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn-plain { background: #f8fafc; border: 1px solid #cbd5e1; color: #0f172a; padding: 8px 14px; text-decoration: none; font-size: 0.95rem; border-radius: 6px; display: inline-block; }
+.btn-plain:hover { background: #e2e8f0; }
 </style>
 
 <div class="card-flat">
-    <div class="card-header no-print">
-        <h5><?php echo get_icon('purchases', 'ml-2'); ?> فاتورة مشتريات #<?php echo $invoice_id; ?></h5>
-        <div>
-            <button onclick="window.print()" class="btn-flat btn-flat-success btn-sm ml-2">
-                <?php echo get_icon('print', 'ml-1'); ?> طباعة
-            </button>
-            <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none ml-2">
-                <?php echo get_icon('logout', 'ml-1'); ?> عودة
-            </a>
-        </div>
-    </div>
     <div class="card-body">
         <div class="inv-box">
+            <div class="inv-actions no-print">
+                <div style="font-size:1rem; font-weight:700;">فاتورة مشتريات #<?php echo $invoice_id; ?></div>
+                <div class="buttons">
+                    <button onclick="window.print()" class="btn-plain">طباعة</button>
+                    <?php if (in_array($_SESSION['SESS_LAST_NAME'], ['admin'], true)): ?>
+                    <a href="edit.php?id=<?php echo $invoice_id; ?>" class="btn-plain">تعديل</a>
+                    <?php endif; ?>
+                    <a href="index.php" class="btn-plain">عودة</a>
+                </div>
+            </div>
             <!-- الترويسة -->
             <div class="inv-header">
                 <div class="row align-items-center">
@@ -146,15 +158,28 @@ $currency = $settings ? $settings['currency'] : 'ريال يمني';
                     $calc_total = 0;
                     $calc_paid = 0;
                     $calc_remaining = 0;
+                    // جلب إجمالي المرتجعات لهذه الفاتورة
+                    $res_total_ret = $conn->query("SELECT COALESCE(SUM(refund_amount),0) AS total_ret FROM purchase_returns WHERE purchase_id = $invoice_id AND status='active'");
+                    $total_ret_row = $res_total_ret ? $res_total_ret->fetch_assoc() : ['total_ret' => 0];
+                    $total_returns = doubleval($total_ret_row['total_ret']);
+
                     if ($result_items && $result_items->num_rows > 0):
                         while ($item = $result_items->fetch_assoc()):
                             $item_total_base = doubleval($item['buy_price']);
                             $item_paid_base = doubleval($item['pushtosupp']);
                             $item_remaining_base = doubleval($item['total_d']);
-                            $item_total_orig = $item_total_base / $exchange_rate;
-                            $item_paid_orig = $item_paid_base / $exchange_rate;
-                            $item_remaining_orig = $item_remaining_base / $exchange_rate;
-                            $qty = intval($item['quantity']);
+
+                            // حساب المردودات لهذا البند (مطابقة بالاسم داخل نفس الفاتورة)
+                            $ret_res = $conn->query("SELECT COALESCE(SUM(quantity),0) AS ret_qty, COALESCE(SUM(refund_amount),0) AS ret_amount FROM purchase_returns WHERE purchase_id = $invoice_id AND product_name='" . $conn->real_escape_string($item['name']) . "' AND status='active'");
+                            $ret_row = $ret_res ? $ret_res->fetch_assoc() : ['ret_qty' => 0, 'ret_amount' => 0];
+                            $ret_qty = intval($ret_row['ret_qty']);
+                            $ret_amount = doubleval($ret_row['ret_amount']);
+
+                            $item_total_orig = ($item_total_base - $ret_amount) / $exchange_rate;
+                            $item_paid_orig = max(0, $item_paid_base - $ret_amount) / $exchange_rate;
+                            $item_remaining_orig = max(0, $item_remaining_base - $ret_amount) / $exchange_rate;
+
+                            $qty = max(0, intval($item['quantity']) - $ret_qty);
                             $unit_price = $qty > 0 ? ($item_total_orig / $qty) : 0;
                             $calc_total += $item_total_orig;
                             $calc_paid += $item_paid_orig;
@@ -162,7 +187,7 @@ $currency = $settings ? $settings['currency'] : 'ريال يمني';
                     ?>
                     <tr>
                         <td><?php echo $num++; ?></td>
-                        <td><?php echo htmlspecialchars($item['name']); ?></td>
+                        <td><?php echo htmlspecialchars($item['name']); ?><?php if ($ret_qty > 0) echo ' <small class="text-danger">(مرتجع: ' . $ret_qty . ')</small>'; ?></td>
                         <td><?php echo $qty; ?></td>
                         <td><?php echo number_format($unit_price, 2); ?></td>
                         <td style="font-weight:700;"><?php echo number_format($item_total_orig, 2); ?></td>
@@ -173,32 +198,36 @@ $currency = $settings ? $settings['currency'] : 'ريال يمني';
                 </tbody>
             </table>
 
-            <!-- المجاميع -->
-            <div class="row">
-                <div class="col-md-7">
-                    <?php if (!empty($remark)): ?>
-                    <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:12px; font-size:0.88rem;">
-                        <strong>ملاحظات:</strong> <?php echo nl2br(htmlspecialchars($remark)); ?>
-                    </div>
-                    <?php endif; ?>
+            <!-- المجاميع (تقرير رسمي أسفل الفاتورة) -->
+            <div class="inv-summary-bottom" style="margin-top:20px;">
+                <?php if (!empty($remark)): ?>
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:12px; font-size:0.88rem; margin-bottom:12px;">
+                    <strong>ملاحظات:</strong> <?php echo nl2br(htmlspecialchars($remark)); ?>
                 </div>
-                <div class="col-md-5">
-                    <div class="totals-box">
-                        <table>
-                            <tr><td class="tot-label">إجمالي الفاتورة:</td><td class="tot-value"><?php echo number_format($calc_total, 2); ?> <?php echo $currency_code; ?></td></tr>
-                            <tr><td class="tot-label">المدفوع للمورد:</td><td class="tot-value" style="color:#0f766e;"><?php echo number_format($calc_paid, 2); ?> <?php echo $currency_code; ?></td></tr>
-                            <?php if ($calc_remaining > 0): ?>
-                            <tr><td class="tot-label">المتبقي (مديونية):</td><td class="tot-value" style="color:#be123c;"><?php echo number_format($calc_remaining, 2); ?> <?php echo $currency_code; ?></td></tr>
-                            <?php endif; ?>
-                            <?php if ($currency_code !== 'YER'): ?>
-                            <tr class="tot-grand">
-                                <td class="tot-label" style="color:#fff;">المكافئ بالريال:</td>
-                                <td class="tot-value" style="color:#93c5fd;"><?php echo number_format($total_base, 2); ?> ر.ي</td>
-                            </tr>
-                            <?php endif; ?>
-                        </table>
-                    </div>
-                </div>
+                <?php endif; ?>
+
+                <table style="width:100%; border-collapse:collapse;">
+                    <tbody>
+                        <tr>
+                            <td style="text-align:right; padding:8px 12px; border-top:2px solid #e2e8f0;">إجمالي الفاتورة</td>
+                            <td style="text-align:left; padding:8px 12px; border-top:2px solid #e2e8f0; font-weight:700;"><?php echo number_format($calc_total, 2); ?> <?php echo $currency_code; ?></td>
+                        </tr>
+                        <tr>
+                            <td style="text-align:right; padding:8px 12px;">المدفوع للمورد</td>
+                            <td style="text-align:left; padding:8px 12px; color:#0f766e; font-weight:700;"><?php echo number_format($calc_paid, 2); ?> <?php echo $currency_code; ?></td>
+                        </tr>
+                        <tr>
+                            <td style="text-align:right; padding:8px 12px;">المتبقي (مديونية)</td>
+                            <td style="text-align:left; padding:8px 12px; color:#be123c; font-weight:700;"><?php echo number_format($calc_remaining, 2); ?> <?php echo $currency_code; ?></td>
+                        </tr>
+                        <?php if ($currency_code !== 'YER'): ?>
+                        <tr>
+                            <td style="text-align:right; padding:8px 12px;">المكافئ بالريال</td>
+                            <td style="text-align:left; padding:8px 12px; font-weight:700; color:#93c5fd;"><?php echo number_format($total_base, 2); ?> ر.ي</td>
+                        </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
 
             <div class="inv-footer">

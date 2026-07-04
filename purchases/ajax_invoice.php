@@ -15,6 +15,30 @@ if (!isset($_SESSION['SESS_MEMBER_ID'])) {
 
 require_once(__DIR__ . '/../includes/connect.php');
 
+// جلب قائمة فواتير المشتريات للبحث (Lookup)
+if (isset($_GET['action']) && $_GET['action'] === 'list') {
+    $search_term = $conn->real_escape_string($_GET['search'] ?? '');
+    $sql = "SELECT id, supp_name, total, date FROM purchases WHERE 1=1";
+    if (!empty($search_term)) {
+        $sql .= " AND (id LIKE '%$search_term%' OR supp_name LIKE '%$search_term%')";
+    }
+    $sql .= " ORDER BY id DESC LIMIT 50";
+    $res = $conn->query($sql);
+    $list = [];
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $list[] = [
+                'id' => intval($row['id']),
+                'supp_name' => $row['supp_name'] ?: 'مورد عام',
+                'total' => doubleval($row['total']),
+                'date' => $row['date']
+            ];
+        }
+    }
+    echo json_encode(['invoices' => $list], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 $invoice_id = intval($_GET['invoice_id'] ?? 0);
 if ($invoice_id <= 0) {
     echo json_encode(['error' => 'رقم فاتورة غير صالح']);
@@ -22,9 +46,9 @@ if ($invoice_id <= 0) {
 }
 
 // جلب الفاتورة الرئيسية
-$res_inv = $conn->query("SELECT p.*, s.supp_daain
+ $res_inv = $conn->query("SELECT p.*, s.supp_daain, s.supp_id as supplier_id
                           FROM purchases p
-                          LEFT JOIN suppliers s ON p.supp_name = s.supp_name
+                          LEFT JOIN suppliers s ON p.supp_name = s.supp_name AND s.d_s = 0
                           WHERE p.id = $invoice_id
                           LIMIT 1");
 

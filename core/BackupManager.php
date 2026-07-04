@@ -54,9 +54,22 @@ class BackupManager {
         }
 
         // 2. ضغط قاعدة البيانات وملفات المرفقات (uploads) في ملف ZIP واحد
+        if (!extension_loaded('zip') || !class_exists('\ZipArchive')) {
+            return [
+                'status' => false,
+                'message' => 'امتداد PHP ZipArchive غير مفعل. الرجاء تفعيل extension=zip في php.ini ثم إعادة تشغيل Apache.'
+            ];
+        }
+
         $zip = new \ZipArchive();
-        if ($zip->open($zipPath, \ZipArchive::CREATE) === TRUE) {
-            $zip->addFile($sqlPath, basename($sqlPath));
+        if ($zip->open($zipPath, \ZipArchive::CREATE) !== TRUE) {
+            return [
+                'status' => false,
+                'message' => 'فشل إنشاء ملف ZIP. تأكد من أن مجلد backups قابل للكتابة وأن امتداد zip مفعل.'
+            ];
+        }
+
+        $zip->addFile($sqlPath, basename($sqlPath));
             
             // إضافة ملفات uploads
             $uploadsDir = str_replace('\\', '/', realpath(__DIR__ . '/../')) . '/uploads/';
@@ -86,7 +99,6 @@ class BackupManager {
             $stmt->execute();
 
             return ['status' => true, 'filename' => basename($zipPath), 'size' => $fileSize];
-        }
 
         return ['status' => false, 'message' => 'فشل إنشاء ملف الـ ZIP المضغوط.'];
     }

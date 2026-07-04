@@ -4,8 +4,13 @@ $module = 'customers';
 require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'cashier']);
-// جلب جميع العملاء الذين لم يتم حذفهم (d_s = 0)
-$sql = "SELECT * FROM customers WHERE d_s = '0' ORDER BY cust_id DESC";
+// جلب جميع العملاء الذين لم يتم حذفهم (d_s = 0) مع رصيدهم الفعلي في اليومية
+$sql = "SELECT c.*, 
+          (SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE debit_entity_type = 'customer' AND debit_entity_id = c.cust_id) -
+          (SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE credit_entity_type = 'customer' AND credit_entity_id = c.cust_id) AS real_balance
+        FROM customers c 
+        WHERE c.d_s = '0' 
+        ORDER BY c.cust_id DESC";
 $result = $conn->query($sql);
 ?>
 <title>إدارة العملاء</title>
@@ -58,15 +63,18 @@ $result = $conn->query($sql);
                         <?php while ($row = $result->fetch_assoc()): ?>
                             <tr>
                                 <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($row['cust_name']); ?></td>
-                                <td class="text-success font-weight-bold"><?php echo number_format($row['cust_daain'], 2); ?></td>
-                                <td class="text-danger font-weight-bold"><?php echo number_format($row['cust_madeen'], 2); ?></td>
+                                <td class="text-success font-weight-bold"><?php echo number_format($row['real_balance'] < 0 ? abs($row['real_balance']) : 0, 2); ?></td>
+                                <td class="text-danger font-weight-bold"><?php echo number_format($row['real_balance'] > 0 ? $row['real_balance'] : 0, 2); ?></td>
                                 <td><?php echo htmlspecialchars($row['phone']); ?></td>
                                 <td><?php echo htmlspecialchars($row['sale_date']); ?></td>
                                 <td class="no-print">
                                     <a href="ledger.php?id=<?php echo $row['cust_id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 ml-1 text-decoration-none" title="كشف حساب">
                                         <i class="bi bi-journal-text ml-1"></i>كشف حساب
                                     </a>
-                                    <a href="delete.php?id=<?php echo urlencode($row['cust_name']); ?>" onclick="return confirm('هل أنت متأكد من حذف هذا العميل وجميع سجلاته؟')" class="btn-flat btn-flat-danger btn-sm py-1 px-2 ml-1 text-decoration-none" title="مسح">
+                                    <a href="edit.php?id=<?php echo $row['cust_id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 ml-1 text-decoration-none">
+                                        <?php echo get_icon('edit', 'ml-1'); ?> تعديل
+                                    </a>
+                                    <a href="delete.php?id=<?php echo $row['cust_id']; ?>" onclick="return confirm('هل أنت متأكد من حذف هذا العميل؟')" class="btn-flat btn-flat-danger btn-sm py-1 px-2 ml-1 text-decoration-none" title="مسح">
                                         <i class="fa fa-trash ml-1"></i>مسح
                                     </a>
                                     <?php if (!empty($row['phone'])): ?>

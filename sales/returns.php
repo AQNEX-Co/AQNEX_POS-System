@@ -9,20 +9,8 @@ $settings = $global_settings;
 $error = '';
 $success = '';
 $saved_return_id = 0;
-
-// ==========================================
-// دالة تسجيل قيد محاسبي
-// ==========================================
-function post_journal($conn, $ref_type, $ref_id, $debit, $credit, $amount, $desc, $user, $curr='YER', $rate=1.0, $foreign=0) {
-    $debit  = $conn->real_escape_string($debit);
-    $credit = $conn->real_escape_string($credit);
-    $desc   = $conn->real_escape_string($desc);
-    $user   = $conn->real_escape_string($user);
-    $curr   = $conn->real_escape_string($curr);
-    $conn->query("INSERT INTO accounting_journal
-        (ref_type, ref_id, account_debit, account_credit, amount, description, currency_code, exchange_rate, amount_foreign, user)
-        VALUES ('$ref_type', $ref_id, '$debit', '$credit', $amount, '$desc', '$curr', $rate, $foreign, '$user')");
-}
+$journal_entries = [];
+$box_deduction_details = [];
 
 // ==========================================
 // معالجة تسجيل مرتجع
@@ -32,15 +20,20 @@ if (isset($_POST['btn_save_return'])) {
     $product_id    = intval($_POST['product_id']);
     $p_name        = $conn->real_escape_string(trim($_POST['product_name']));
     $qty           = intval($_POST['qty_return']);
-    $unit_price    = doubleval($_POST['unit_price_yer']);   // بالريال اليمني دائماً
+    $unit_price    = doubleval($_POST['unit_price_yer']);
     $buy_price     = doubleval($_POST['buy_price_yer']);
-    $refund_amount = $qty * $unit_price;                    // احتساب المبلغ الكلي
+    $refund_amount = $qty * $unit_price;
     $reason        = $conn->real_escape_string(trim($_POST['reason']));
     $return_date   = $conn->real_escape_string($_POST['return_date']);
     $user_name     = $conn->real_escape_string($_SESSION['SESS_FIRST_NAME']);
-    $profit_impact = ($unit_price - $buy_price) * $qty;    // تأثير على الربح
+    $profit_impact = ($unit_price - $buy_price) * $qty;
     $refund_method = $_POST['refund_method'] === 'credit' ? 'credit' : 'cash';
-    $refund_source = (isset($_POST['refund_source']) && $_POST['refund_source'] === 'box') ? 'box' : 'sales';
+    
+    // تحديد مصدر الخصم: box (من الصندوق مباشرة) أو sales (من مبيعات اليوم)
+    $refund_source = isset($_POST['refund_source']) ? $_POST['refund_source'] : 'box';
+    if (!in_array($refund_source, ['box', 'sales'])) {
+        $refund_source = 'box';
+    }
 
     $active_box_id = get_user_box_id($conn, $_SESSION['SESS_MEMBER_ID']);
     $box_name = get_box_name($conn, $active_box_id);
@@ -50,18 +43,30 @@ if (isset($_POST['btn_save_return'])) {
     } elseif ($sales_id <= 0) {
         $error = 'الرجاء تحديد فاتورة المبيعات الأصلية أولاً.';
     } else {
-        // التحقق من الكمية المتاحة للإرجاع
-        $res_chk = $conn->query("SELECT COALESCE(SUM(quantity),0) AS ret FROM sales_returns WHERE sales_id=$sales_id AND product_id=$product_id AND status='active'");
-        $already_ret = $res_chk ? intval($res_chk->fetch_assoc()['ret']) : 0;
+        $conn->begin_transaction();
+        try {
+            // التحقق من الكمية المتاحة للإرجاع
+            $res_chk = $conn->query("SELECT COALESCE(SUM(quantity),0) AS ret FROM sales_returns WHERE sales_id=$sales_id AND product_id=$product_id AND status='active'");
+            $already_ret = $res_chk ? intval($res_chk->fetch_assoc()['ret']) : 0;
 
-        $res_orig = $conn->query("SELECT quantity FROM sales_items WHERE sales_id=$sales_id AND id=$product_id LIMIT 1");
-        $orig_qty = $res_orig ? intval($res_orig->fetch_assoc()['quantity']) : 0;
-        $can_return = $orig_qty - $already_ret;
+            $res_orig = $conn->query("SELECT quantity FROM sales_items WHERE sales_id=$sales_id AND id=$product_id LIMIT 1");
+            $orig_qty = $res_orig ? intval($res_orig->fetch_assoc()['quantity']) : 0;
+            $can_return = $orig_qty - $already_ret;
 
-        if ($qty > $can_return) {
-            $error = "لا يمكن إرجاع {$qty} وحدة. الكمية المتاحة للإرجاع: {$can_return} وحدة فقط (الكمية الأصلية: {$orig_qty} وحدة).";
-        } else {
-            // 1. إدراج سجل المرتجع مع الصندوق وطريقة الاسترداد ومصدر الخصم
+            if ($qty > $can_return) {
+                throw new Exception("لا يمكن إرجاع {$qty} وحدة. الكمية المتاحة للإرجاع: {$can_return} وحدة فقط.");
+            }
+
+            // التحقق من رصيد الصندوق إذا كان الخصم منه مباشرة
+            $box_balance_before = 0;
+            if ($refund_method === 'cash' && $refund_source === 'box' && $refund_amount > 0) {
+                $box_balance_before = get_box_balance($conn, $active_box_id);
+                if ($box_balance_before < $refund_amount) {
+                    throw new Exception("رصيد الصندوق الحالي (" . number_format($box_balance_before, 2) . " ر.ي) أقل من مبلغ الاسترداد (" . number_format($refund_amount, 2) . " ر.ي). يرجى اختيار مصدر آخر (مبيعات اليوم) أو إضافة رصيد للصندوق.");
+                }
+            }
+
+            // 1. إدراج سجل المرتجع
             $sql_ins = "INSERT INTO sales_returns
                 (sales_id, product_id, product_name, quantity, unit_price, refund_amount,
                  original_unit_price, original_buy_price, profit_impact, reason, return_date, user, status, box_id, refund_method, refund_source)
@@ -70,60 +75,153 @@ if (isset($_POST['btn_save_return'])) {
                  $unit_price, $buy_price, -$profit_impact, '$reason', '$return_date', '$user_name', 'active', $active_box_id, '$refund_method', '$refund_source')";
 
             if (!$conn->query($sql_ins)) {
-                $error = 'فشل تسجيل المرتجع: ' . $conn->error;
-            } else {
-                $saved_return_id = $conn->insert_id;
-
-                // 2. إعادة الكمية للمخزن
-                $conn->query("UPDATE products SET quantity = quantity + $qty WHERE id = $product_id");
-
-                // 3. سجل حركة المخزن
-                $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
-                              SELECT id, name, 'manual', $qty, quantity, 'مرتجع بيع فاتورة #{$sales_id} - {$reason}', '$user_name'
-                              FROM products WHERE id = $product_id LIMIT 1");
-
-                // 4. خصم المبلغ من الخزينة أو العميل
-                $res_sale = $conn->query("SELECT cust_name FROM sales WHERE id=$sales_id LIMIT 1");
-                $sale_row = $res_sale ? $res_sale->fetch_assoc() : null;
-                $customer_name = $sale_row ? $sale_row['cust_name'] : 'عميل نقدي';
-
-                if ($refund_method === 'cash') {
-                    // تحديث رصيد الصندوق فقط إذا كان الخصم من الصندوق مباشرة
-                    if ($refund_source === 'box' && $refund_amount > 0) {
-                        update_box_balance($conn, $active_box_id, $refund_amount, 'discount', "مرتجع بيع فاتورة #{$sales_id} - {$p_name}", $return_date);
-                    }
-                    // تعديل إجمالي المدفوع النقدي في الفاتورة الأصلية في كل الأحوال
-                    $conn->query("UPDATE sales SET
-                        total  = GREATEST(0, total  - $refund_amount),
-                        prifet = prifet - $profit_impact
-                        WHERE id = $sales_id");
-                        
-                    // قيد محاسبي للمرتجع النقدي
-                    $credit_acc = ($refund_source === 'box') ? 'الصندوق - ' . $box_name : 'المبيعات';
-                    post_journal_entry($conn, 'return', $saved_return_id, 'المردودات (مردودات المبيعات)', $credit_acc, $refund_amount, "مرتجع مبيعات نقداً #{$sales_id} - {$p_name} (مصدر الخصم: " . ($refund_source === 'box' ? 'الصندوق' : 'مبيعات اليوم') . ")", $user_name, $active_box_id);
-                } else {
-                    // خصم من المديونية للعميل
-                    if ($refund_amount > 0 && !empty($customer_name) && $customer_name !== 'عميل نقدي') {
-                        $cust_esc = $conn->real_escape_string($customer_name);
-                        $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $refund_amount) WHERE cust_name='$cust_esc'");
-                    }
-                    // تعديل إجمالي المتبقي (المديونية) في الفاتورة الأصلية
-                    $conn->query("UPDATE sales SET
-                        remaining_total = GREATEST(0, remaining_total - $refund_amount),
-                        prifet          = prifet - $profit_impact
-                        WHERE id = $sales_id");
-                        
-                    // قيد محاسبي للمرتجع الآجل
-                    post_journal_entry($conn, 'return', $saved_return_id, 'المردودات (مردودات المبيعات)', 'الذمم المدينة - ' . $customer_name, $refund_amount, "مرتجع مبيعات آجل (خصم دين) #{$sales_id} - {$p_name}", $user_name, $active_box_id);
-                }
-
-                // قيد إعادة تكلفة المبيعات للمخزن
-                if ($buy_price * $qty > 0) {
-                    post_journal_entry($conn, 'return', $saved_return_id, 'المخزون / البضاعة', 'تكلفة البضاعة المباعة (مصروف)', $buy_price * $qty, "إعادة تكلفة مرتجع مبيعات #{$saved_return_id} للمخزون", $user_name, $active_box_id);
-                }
-
-                $success = "✓ تم تسجيل مرتجع {$qty} وحدة من \"{$p_name}\" بنجاح! طريقة الرد: " . ($refund_method === 'cash' ? 'نقداً من الصندوق' : 'خصم من مديونية العميل') . ". المبلغ: " . number_format($refund_amount, 2) . " ر.ي";
+                throw new Exception('فشل تسجيل المرتجع: ' . $conn->error);
             }
+            $saved_return_id = $conn->insert_id;
+
+            // تحديد عامل تحويل الوحدة
+            $conv_factor = 1.0;
+            if (preg_match('/\(([^)]+)\)/', $p_name, $matches)) {
+                $unit_name = trim($matches[1]);
+                $unit_res = $conn->query("SELECT conversion_factor FROM product_units WHERE product_id = $product_id AND unit_name = '" . $conn->real_escape_string($unit_name) . "' LIMIT 1");
+                if ($unit_res && $unit_res->num_rows > 0) {
+                    $conv_factor = doubleval($unit_res->fetch_assoc()['conversion_factor']);
+                    if ($conv_factor <= 0) $conv_factor = 1.0;
+                }
+            }
+            $base_qty = $qty * $conv_factor;
+
+            // 2. إعادة الكمية للمخزن
+            if (!$conn->query("UPDATE products SET quantity = quantity + $base_qty, total = quantity * buy_price WHERE id = $product_id")) {
+                throw new Exception("فشل تحديث المخزون: " . $conn->error);
+            }
+
+            // 3. سجل حركة المخزن
+            if (!$conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
+                          SELECT id, name, 'sale_return', $base_qty, quantity, 'مرتجع بيع فاتورة #{$sales_id} - {$reason}', '$user_name'
+                          FROM products WHERE id = $product_id LIMIT 1")) {
+                throw new Exception("فشل تسجيل حركة المخزن: " . $conn->error);
+            }
+
+            // 4. خصم المبلغ من الخزينة أو العميل
+            $res_sale = $conn->query("SELECT cust_name FROM sales WHERE id=$sales_id LIMIT 1");
+            $sale_row = $res_sale ? $res_sale->fetch_assoc() : null;
+            $customer_name = $sale_row ? $sale_row['cust_name'] : 'عميل نقدي';
+
+            if ($refund_method === 'cash') {
+                // خصم مباشر من الصندوق أو من مبيعات اليوم
+                if ($refund_source === 'box' && $refund_amount > 0) {
+                    // الخصم المباشر من الصندوق
+                    $update_result = update_box_balance($conn, $active_box_id, $refund_amount, 'discount', "مرتجع بيع فاتورة #{$sales_id} - {$p_name}", $return_date);
+                    
+                    if (!$update_result) {
+                        throw new Exception("فشل خصم المبلغ من الصندوق. يرجى المحاولة مرة أخرى.");
+                    }
+                    
+                    $box_balance_after = get_box_balance($conn, $active_box_id);
+                    
+                    $box_deduction_details = [
+                        'box_name' => $box_name,
+                        'box_id' => $active_box_id,
+                        'amount_deducted' => $refund_amount,
+                        'balance_before' => $box_balance_before,
+                        'balance_after' => $box_balance_after,
+                        'description' => "مرتجع بيع فاتورة #{$sales_id} - {$p_name}"
+                    ];
+                    
+                    $journal_entries[] = [
+                        'type' => 'box_deduction',
+                        'description' => 'خصم مباشر من الصندوق',
+                        'box_name' => $box_name,
+                        'amount' => $refund_amount,
+                        'balance_before' => $box_balance_before,
+                        'balance_after' => $box_balance_after
+                    ];
+                }
+                // تسجيل القيد المحاسبي: مردودات المبيعات (مدين) / الصندوق (دائن)
+                $credit_acc = 'الصندوق - ' . $box_name;
+                $debit_acc = 'مردودات المبيعات';
+                
+                if (!post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, $credit_acc, $refund_amount, 
+                    "مرتجع مبيعات نقداً فاتورة #{$sales_id} - {$p_name} | الكمية: {$qty} | السعر: " . number_format($unit_price, 2) . " | المصدر: " . ($refund_source === 'box' ? 'الصندوق (خصم مباشر)' : 'مبيعات اليوم'), 
+                    $user_name, $active_box_id, 'YER', 1.0, null)) {
+                    throw new Exception("فشل تسجيل قيد المرتجع النقدي");
+                }
+                
+                $journal_entries[] = [
+                    'type' => 'journal',
+                    'description' => 'قيد مرتجع نقدي',
+                    'debit' => $debit_acc,
+                    'credit' => $credit_acc,
+                    'amount' => $refund_amount,
+                    'details' => "فاتورة #{$sales_id} | منتج: {$p_name} | كمية: {$qty}"
+                ];
+            } else {
+                // خصم من مديونية العميل
+                if ($refund_amount > 0 && !empty($customer_name) && $customer_name !== 'عميل نقدي') {
+                    $cust_esc = $conn->real_escape_string($customer_name);
+                    $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $refund_amount) WHERE cust_name='$cust_esc'");
+                    
+                    $journal_entries[] = [
+                        'type' => 'customer_deduction',
+                        'description' => 'خصم من مديونية العميل',
+                        'customer' => $customer_name,
+                        'amount' => $refund_amount
+                    ];
+                }
+                
+                // تحديث إجمالي المتبقي في الفاتورة الأصلية
+                if (!$conn->query("UPDATE sales SET remaining_total = GREATEST(0, remaining_total - $refund_amount) WHERE id = $sales_id")) {
+                    throw new Exception("فشل تعديل الفاتورة الأصلية: " . $conn->error);
+                }
+                
+                // تسجيل القيد المحاسبي
+                $debit_acc = 'مردودات المبيعات';
+                $credit_acc = 'الذمم المدينة - ' . $customer_name;
+                
+                if (!post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, $credit_acc, $refund_amount, 
+                    "مرتجع مبيعات آجل (خصم دين) فاتورة #{$sales_id} - {$p_name} | الكمية: {$qty} | السعر: " . number_format($unit_price, 2), 
+                    $user_name, $active_box_id, 'YER', 1.0, null)) {
+                    throw new Exception("فشل تسجيل قيد المرتجع الآجل");
+                }
+                
+                $journal_entries[] = [
+                    'type' => 'journal',
+                    'description' => 'قيد مرتجع آجل',
+                    'debit' => $debit_acc,
+                    'credit' => $credit_acc,
+                    'amount' => $refund_amount,
+                    'details' => "فاتورة #{$sales_id} | عميل: {$customer_name}"
+                ];
+            }
+
+            // 5. قيد تكلفة البضاعة المرجعة
+            $cost_amount = $buy_price * $qty;
+            if ($cost_amount > 0) {
+                $debit_acc = 'المخزون / البضاعة';
+                $credit_acc = 'تكلفة البضاعة المباعة';
+                
+                if (!post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, $credit_acc, $cost_amount, 
+                    "إعادة تكلفة مرتجع مبيعات #{$saved_return_id} للمخزون | المنتج: {$p_name} | الكمية: {$qty} | تكلفة الوحدة: " . number_format($buy_price, 2), 
+                    $user_name, $active_box_id, 'YER', 1.0, null)) {
+                    throw new Exception("فشل تسجيل قيد تكلفة البضاعة المرجعة");
+                }
+                
+                $journal_entries[] = [
+                    'type' => 'journal',
+                    'description' => 'قيد تكلفة البضاعة المرجعة',
+                    'debit' => $debit_acc,
+                    'credit' => $credit_acc,
+                    'amount' => $cost_amount,
+                    'details' => "إعادة {$qty} وحدة للمخزن"
+                ];
+            }
+            $conn->commit();
+            echo "<script>window.location='view.php?id=$sales_id&send_wa=2';</script>";
+            exit;
+        } catch (Exception $e) {
+            $conn->rollback();
+            $error = $e->getMessage();
         }
     }
 }
@@ -137,66 +235,105 @@ if (isset($_GET['cancel_ret']) && is_numeric($_GET['cancel_ret'])) {
     $ret_row = $res_ret ? $res_ret->fetch_assoc() : null;
 
     if ($ret_row) {
-        $conn->query("UPDATE sales_returns SET status='cancelled' WHERE id=$ret_id");
-        
-        $qty           = intval($ret_row['quantity']);
-        $product_id    = intval($ret_row['product_id']);
-        $refund        = doubleval($ret_row['refund_amount']);
-        $profit_imp    = doubleval($ret_row['profit_impact']);
-        $s_id          = intval($ret_row['sales_id']);
-        $refund_method = $ret_row['refund_method'];
-        $box_id        = intval($ret_row['box_id']);
-        $box_name      = get_box_name($conn, $box_id);
-        $uname         = $conn->real_escape_string($_SESSION['SESS_FIRST_NAME']);
-
-        // جلب اسم العميل
-        $res_sale = $conn->query("SELECT cust_name FROM sales WHERE id=$s_id LIMIT 1");
-        $sale_row = $res_sale ? $res_sale->fetch_assoc() : null;
-        $customer_name = $sale_row ? $sale_row['cust_name'] : 'عميل نقدي';
-
-        // خصم الكمية من المخزن مجدداً
-        $conn->query("UPDATE products SET quantity = quantity - $qty WHERE id=$product_id AND quantity >= $qty");
-
-        if ($refund_method === 'cash') {
-            $refund_source = $ret_row['refund_source'];
-            // إعادة المبلغ للصندوق فقط إذا كان الخصم الأصلي من الصندوق
-            if ($refund_source === 'box') {
-                update_box_balance($conn, $box_id, $refund, 'addition', "إلغاء مرتجع بيع #{$ret_id}", $today_date);
+        $conn->begin_transaction();
+        try {
+            if (!$conn->query("UPDATE sales_returns SET status='cancelled' WHERE id=$ret_id")) {
+                throw new Exception("فشل تحديث حالة المرتجع");
             }
-            // استعادة إجمالي الفاتورة المدفوع في كل الأحوال
-            $conn->query("UPDATE sales SET total = total + $refund, prifet = prifet + (-$profit_imp) WHERE id=$s_id");
-            // قيد عكسي
-            $credit_acc = ($refund_source === 'box') ? 'الصندوق - ' . $box_name : 'المبيعات';
-            post_journal_entry($conn, 'return', $ret_id, $credit_acc, 'المردودات (مردودات المبيعات)', $refund, "إلغاء مرتجع بيع نقدي #{$ret_id}", $uname, $box_id);
-        } else {
-            // إعادة مديونية العميل
-            if (!empty($customer_name) && $customer_name !== 'عميل نقدي') {
-                $cust_esc = $conn->real_escape_string($customer_name);
-                $conn->query("UPDATE customers SET cust_madeen = cust_madeen + $refund WHERE cust_name='$cust_esc'");
+            
+            $qty           = intval($ret_row['quantity']);
+            $product_id    = intval($ret_row['product_id']);
+            $refund        = doubleval($ret_row['refund_amount']);
+            $s_id          = intval($ret_row['sales_id']);
+            $refund_method = $ret_row['refund_method'];
+            $box_id        = intval($ret_row['box_id']);
+            $box_name      = get_box_name($conn, $box_id);
+            $uname         = $conn->real_escape_string($_SESSION['SESS_FIRST_NAME']);
+
+            $res_sale = $conn->query("SELECT cust_name FROM sales WHERE id=$s_id LIMIT 1");
+            $sale_row = $res_sale ? $res_sale->fetch_assoc() : null;
+            $customer_name = $sale_row ? $sale_row['cust_name'] : 'عميل نقدي';
+
+            $conv_factor = 1.0;
+            if (preg_match('/\(([^)]+)\)/', $ret_row['product_name'], $matches)) {
+                $unit_name = trim($matches[1]);
+                $unit_res = $conn->query("SELECT conversion_factor FROM product_units WHERE product_id = $product_id AND unit_name = '" . $conn->real_escape_string($unit_name) . "' LIMIT 1");
+                if ($unit_res && $unit_res->num_rows > 0) {
+                    $conv_factor = doubleval($unit_res->fetch_assoc()['conversion_factor']);
+                    if ($conv_factor <= 0) $conv_factor = 1.0;
+                }
             }
-            // استعادة إجمالي المتبقي (المديونية)
-            $conn->query("UPDATE sales SET remaining_total = remaining_total + $refund, prifet = prifet + (-$profit_imp) WHERE id=$s_id");
-            // قيد عكسي
-            post_journal_entry($conn, 'return', $ret_id, 'الذمم المدينة - ' . $customer_name, 'المردودات (مردودات المبيعات)', $refund, "إلغاء مرتجع بيع آجل #{$ret_id}", $uname, $box_id);
-        }
+            $base_qty = $qty * $conv_factor;
 
-        // قيد عكسي لتكلفة المبيعات
-        $res_ret_detail = $conn->query("SELECT original_buy_price FROM sales_returns WHERE id=$ret_id LIMIT 1");
-        $buy_price_val = ($res_ret_detail && $row = $res_ret_detail->fetch_assoc()) ? doubleval($row['original_buy_price']) : 0;
-        if ($buy_price_val * $qty > 0) {
-            post_journal_entry($conn, 'return', $ret_id, 'تكلفة البضاعة المباعة (مصروف)', 'المخزون / البضاعة', $buy_price_val * $qty, "إلغاء قيد تكلفة مرتجع مبيعات #{$ret_id}", $uname, $box_id);
-        }
+            if (!$conn->query("UPDATE products SET quantity = quantity - $base_qty, total = quantity * buy_price WHERE id=$product_id AND quantity >= $base_qty")) {
+                throw new Exception("فشل إعادة خصم كمية المرتجع من المخزن");
+            }
 
-        $success = 'تم إلغاء المرتجع #' . $ret_id . ' بنجاح.';
+            if ($refund_method === 'cash') {
+                $refund_source = $ret_row['refund_source'];
+                $today_date = date("Y-m-d H:i:s");
+                
+                if ($refund_source === 'box') {
+                    update_box_balance($conn, $box_id, $refund, 'addition', "إلغاء مرتجع بيع #{$ret_id}", $today_date);
+                }
+                
+                $debit_acc = ($refund_source === 'box') ? 'الصندوق - ' . $box_name : 'المبيعات';
+                $credit_acc = 'مردودات المبيعات';
+                
+                if (!post_journal_entry($conn, 'return', $ret_id, $debit_acc, $credit_acc, $refund, 
+                    "إلغاء مرتجع بيع نقدي #{$ret_id} - عكس القيد الأصلي", 
+                    $uname, $box_id, 'YER', 1.0, null)) {
+                    throw new Exception("فشل تسجيل قيد إلغاء المرتجع النقدي");
+                }
+            } else {
+                if (!empty($customer_name) && $customer_name !== 'عميل نقدي') {
+                    $cust_esc = $conn->real_escape_string($customer_name);
+                    $conn->query("UPDATE customers SET cust_madeen = cust_madeen + $refund WHERE cust_name='$cust_esc'");
+                }
+                
+                if (!$conn->query("UPDATE sales SET remaining_total = remaining_total + $refund WHERE id=$s_id")) {
+                    throw new Exception("فشل استعادة مديونية الفاتورة الأصلية");
+                }
+                
+                $debit_acc = 'الذمم المدينة - ' . $customer_name;
+                $credit_acc = 'مردودات المبيعات';
+                
+                if (!post_journal_entry($conn, 'return', $ret_id, $debit_acc, $credit_acc, $refund, 
+                    "إلغاء مرتجع بيع آجل #{$ret_id} - عكس القيد الأصلي", 
+                    $uname, $box_id, 'YER', 1.0, null)) {
+                    throw new Exception("فشل تسجيل قيد إلغاء المرتجع الآجل");
+                }
+            }
+
+            $res_ret_detail = $conn->query("SELECT original_buy_price FROM sales_returns WHERE id=$ret_id LIMIT 1");
+            $detail_row = ($res_ret_detail && $res_ret_detail->num_rows > 0) ? $res_ret_detail->fetch_assoc() : null;
+            $buy_price_val = $detail_row ? doubleval($detail_row['original_buy_price']) : 0;
+            $cost_amount = $buy_price_val * $qty;
+            
+            if ($cost_amount > 0) {
+                $debit_acc = 'تكلفة البضاعة المباعة';
+                $credit_acc = 'المخزون / البضاعة';
+                
+                if (!post_journal_entry($conn, 'return', $ret_id, $debit_acc, $credit_acc, $cost_amount, 
+                    "إلغاء قيد تكلفة مرتجع مبيعات #{$ret_id}", 
+                    $uname, $box_id, 'YER', 1.0, null)) {
+                    throw new Exception("فشل تسجيل قيد إلغاء تكلفة البضاعة المرجعة");
+                }
+            }
+
+            $conn->commit();
+            $success = 'تم إلغاء المرتجع #' . $ret_id . ' بنجاح وعكس جميع القيود المحاسبية.';
+        } catch (Exception $e) {
+            $conn->rollback();
+            $error = $e->getMessage();
+        }
     }
 }
 
-// جلب آخر الفواتير للبحث السريع
 $recent_invoices = [];
 $res_inv = $conn->query("SELECT id, cust_name, total, build_date FROM sales WHERE delete_status=0 ORDER BY id DESC LIMIT 200");
 if ($res_inv) while($r = $res_inv->fetch_assoc()) $recent_invoices[] = $r;
 
-// جلب سجل المرتجعات الكامل
 $all_returns = [];
 $res_all_ret = $conn->query("SELECT sr.*, s.build_date as sale_date, s.cust_name
                               FROM sales_returns sr
@@ -207,7 +344,6 @@ if ($res_all_ret) while($r = $res_all_ret->fetch_assoc()) $all_returns[] = $r;
 <title>مردودات المبيعات - <?php echo htmlspecialchars($settings['store_name'] ?? 'النظام'); ?></title>
 
 <style>
-/* ===== Receipt Print Styles ===== */
 @media print {
     #sidebar, .navbar-top, .no-print, .btn-flat { display: none !important; }
     #content { margin: 0 !important; padding: 0 !important; }
@@ -222,25 +358,147 @@ if ($res_all_ret) while($r = $res_all_ret->fetch_assoc()) $all_returns[] = $r;
 .can-return { color: var(--accent-success); font-weight: bold; }
 .no-return  { color: #ccc; }
 .qty-input-inline { width: 70px !important; text-align: center; }
+
+.journal-entries-section {
+    background: #f8f9fa;
+    border: 2px solid #28a745;
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 20px;
+}
+.journal-entries-section h5 {
+    color: #28a745;
+    font-weight: 700;
+    margin-bottom: 15px;
+    border-bottom: 2px solid #28a745;
+    padding-bottom: 10px;
+}
+.journal-table {
+    width: 100%;
+    background: #fff;
+    border-collapse: collapse;
+}
+.journal-table th {
+    background: #28a745;
+    color: #fff;
+    padding: 10px;
+    text-align: center;
+    font-weight: 700;
+}
+.journal-table td {
+    padding: 10px;
+    border: 1px solid #dee2e6;
+    text-align: center;
+}
+.journal-table .debit {
+    color: #dc3545;
+    font-weight: 700;
+}
+.journal-table .credit {
+    color: #28a745;
+    font-weight: 700;
+}
+
+.box-deduction-box {
+    background: #fff3cd;
+    border: 2px solid #ffc107;
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 15px;
+}
+.box-deduction-box h6 {
+    color: #856404;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+.box-balance-change {
+    font-size: 1.1rem;
+    font-weight: 700;
+    padding: 8px;
+    border-radius: 4px;
+}
+.box-balance-change.before {
+    background: #e2e3e5;
+    color: #383d41;
+}
+.box-balance-change.after {
+    background: #d4edda;
+    color: #155724;
+}
 </style>
 
 <?php if (!empty($success) && $saved_return_id > 0):
-    // عرض إيصال المرتجع مباشرة
     $res_ret_view = $conn->query("SELECT sr.*, s.cust_name, s.build_date as sale_date FROM sales_returns sr LEFT JOIN sales s ON sr.sales_id=s.id WHERE sr.id=$saved_return_id LIMIT 1");
     $ret_view = $res_ret_view ? $res_ret_view->fetch_assoc() : null;
 ?>
-<!-- ===== إيصال المرتجع (يظهر فوراً بعد الحفظ) ===== -->
 <div class="alert alert-success rounded-0 mb-3 no-print">
-    <?php echo $success; ?>
+    <strong><?php echo $success; ?></strong>
     <button onclick="window.print()" class="btn-flat btn-flat-primary btn-sm mr-3">
-        <!-- <i class="fa fa-print ml-1"></i> طباعة الإيصال (أو اضغط Enter) -->
-          <?php echo get_icon('print', 'ml-1'); ?>  
+        <?php echo get_icon('print', 'ml-1'); ?>  
     </button>
     <a href="returns.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none mr-2">إدارة المردودات</a>
     <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">قائمة المبيعات</a>
 </div>
 
-<!-- إيصال المرتجع للطباعة -->
+<?php if (!empty($box_deduction_details)): ?>
+<div class="box-deduction-box no-print">
+    <h6><i class="fa fa-money-bill-wave ml-2"></i> تفاصيل الخصم المباشر من الصندوق</h6>
+    <table class="table table-sm table-bordered bg-white">
+        <tr>
+            <th style="width: 30%;">اسم الصندوق:</th>
+            <td><strong><?php echo htmlspecialchars($box_deduction_details['box_name']); ?></strong></td>
+        </tr>
+        <tr>
+            <th>الرصيد قبل الخصم:</th>
+            <td class="box-balance-change before"><?php echo number_format($box_deduction_details['balance_before'], 2); ?> ر.ي</td>
+        </tr>
+        <tr>
+            <th>المبلغ المخصوم:</th>
+            <td class="text-danger font-weight-bold" style="font-size: 1.2rem;">- <?php echo number_format($box_deduction_details['amount_deducted'], 2); ?> ر.ي</td>
+        </tr>
+        <tr>
+            <th>الرصيد بعد الخصم:</th>
+            <td class="box-balance-change after"><?php echo number_format($box_deduction_details['balance_after'], 2); ?> ر.ي</td>
+        </tr>
+        <tr>
+            <th>الوصف:</th>
+            <td><?php echo htmlspecialchars($box_deduction_details['description']); ?></td>
+        </tr>
+    </table>
+</div>
+<?php endif; ?>
+
+<?php if (!empty($journal_entries)): ?>
+<div class="journal-entries-section no-print">
+    <h5><i class="fa fa-book ml-2"></i> القيود المحاسبية المُنشأة</h5>
+    
+    <table class="journal-table">
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 30%;">نوع القيد</th>
+                <th style="width: 25%;">الحساب المدين</th>
+                <th style="width: 25%;">الحساب الدائن</th>
+                <th style="width: 15%;">المبلغ (ر.ي)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php $entry_num = 1; foreach ($journal_entries as $entry): ?>
+                <?php if ($entry['type'] === 'journal'): ?>
+                <tr>
+                    <td><?php echo $entry_num++; ?></td>
+                    <td class="text-right font-weight-bold"><?php echo htmlspecialchars($entry['description']); ?></td>
+                    <td class="text-right debit"><?php echo htmlspecialchars($entry['debit']); ?></td>
+                    <td class="text-right credit"><?php echo htmlspecialchars($entry['credit']); ?></td>
+                    <td class="font-weight-bold"><?php echo number_format($entry['amount'], 2); ?></td>
+                </tr>
+                <?php endif; ?>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php endif; ?>
+
 <div class="receipt-print" id="returnReceipt" style="display:block; border: 1px solid #333; max-width:350px; margin: 0 auto; padding: 15px; font-family: 'Courier New', monospace; direction: rtl;">
     <div style="text-align:center; border-bottom: 2px dashed #333; padding-bottom:10px; margin-bottom:10px;">
         <h4 style="margin:0; font-weight:bold;"><?php echo htmlspecialchars($settings['store_name'] ?? 'المتجر'); ?></h4>
@@ -265,18 +523,18 @@ if ($res_all_ret) while($r = $res_all_ret->fetch_assoc()) $all_returns[] = $r;
             <td>المبلغ المسترد:</td>
             <td style="text-align:left;"><?php echo number_format($ret_view['refund_amount'], 2); ?> ر.ي</td>
         </tr>
+        <tr><td>طريقة الاسترداد:</td><td style="text-align:left;"><?php echo $ret_view['refund_method'] === 'cash' ? ($ret_view['refund_source'] === 'box' ? 'نقداً من الصندوق (خصم مباشر)' : 'خصم من مبيعات اليوم') : 'خصم من المديونية'; ?></td></tr>
         <tr><td>السبب:</td><td style="text-align:left; font-size:0.8rem;"><?php echo htmlspecialchars($ret_view['reason']); ?></td></tr>
         <tr><td>أمين الصندوق:</td><td style="text-align:left;"><?php echo htmlspecialchars($ret_view['user']); ?></td></tr>
     </table>
     <?php endif; ?>
 
     <div style="text-align:center; border-top: 2px dashed #333; padding-top:8px; font-size:0.8rem;">
-        تم استرداد المبلغ نقداً — <?php echo htmlspecialchars($settings['receipt_footer'] ?? ''); ?>
+        تم الاسترداد — <?php echo htmlspecialchars($settings['receipt_footer'] ?? ''); ?>
     </div>
 </div>
 
 <script>
-// طباعة تلقائية بالضغط على Enter
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { e.preventDefault(); window.print(); }
 });
@@ -288,13 +546,12 @@ document.addEventListener('keydown', function(e) {
 <div class="alert alert-danger rounded-0 mb-4"><?php echo htmlspecialchars($error); ?></div>
 <?php endif; ?>
 
-<!-- ===== رأس الصفحة ===== -->
 <div class="row mb-3 no-print">
     <div class="col-md-7">
         <h3 class="text-secondary font-weight-bold mb-1">
             <i class="fa fa-undo ml-2 text-primary"></i> إدارة مردودات المبيعات
         </h3>
-        <p class="text-muted small mb-0">ابحث عن فاتورة البيع، حدد المنتج المرتجع، وسيحتسب المبلغ تلقائياً.</p>
+        <p class="text-muted small mb-0">ابحث عن فاتورة البيع، حدد المنتج المرتجع، وسيتم خصم المبلغ مباشرة من الصندوق.</p>
     </div>
     <div class="col-md-5 text-left">
         <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none ml-2">
@@ -307,7 +564,6 @@ document.addEventListener('keydown', function(e) {
 </div>
 
 <div class="row no-print">
-    <!-- ===== نموذج تسجيل المرتجع ===== -->
     <div class="col-lg-6 mb-4">
         <div class="card-flat ret-card">
             <div class="card-header" style="background: var(--secondary); color: #fff;">
@@ -315,7 +571,6 @@ document.addEventListener('keydown', function(e) {
             </div>
             <div class="card-body">
 
-                <!-- بحث الفاتورة -->
                 <div class="form-group mb-3">
                     <label class="font-weight-bold text-secondary mb-1">
                         <i class="fa fa-search ml-1"></i> رقم فاتورة البيع *
@@ -329,10 +584,9 @@ document.addEventListener('keydown', function(e) {
                             </button>
                         </div>
                     </div>
-                    <small class="text-muted">اضغط Enter أو زر بحث لتحميل بنود الفاتورة</small>
+                    <small class="text-muted">اضغط Enter أو زر بحث لتحميل بنود الفاتورة , اضغط زر F2 لاظهار فواتير المبيعات</small>
                 </div>
 
-                <!-- معلومات الفاتورة -->
                 <div id="invoiceInfo" style="display:none;" class="alert alert-info rounded-0 p-2 mb-3">
                     <div class="row">
                         <div class="col-6"><strong>فاتورة #:</strong> <span id="invNum">-</span></div>
@@ -342,7 +596,6 @@ document.addEventListener('keydown', function(e) {
                     </div>
                 </div>
 
-                <!-- جدول منتجات الفاتورة -->
                 <div id="invoiceItemsSection" style="display:none;">
                     <label class="font-weight-bold text-secondary mb-2">
                         <i class="fa fa-list ml-1"></i> اختر المنتج المرتجع
@@ -364,7 +617,6 @@ document.addEventListener('keydown', function(e) {
                     </div>
                 </div>
 
-                <!-- نموذج المرتجع -->
                 <form method="POST" id="returnForm">
                     <input type="hidden" name="sales_id"       id="ret_sales_id" value="0">
                     <input type="hidden" name="product_id"     id="ret_product_id" value="0">
@@ -373,7 +625,6 @@ document.addEventListener('keydown', function(e) {
                     <input type="hidden" name="buy_price_yer"  id="ret_buy_price" value="0">
 
                     <div id="returnFormFields" style="display:none;">
-                        <!-- المنتج المحدد -->
                         <div class="alert alert-secondary rounded-0 p-2 mb-3" id="selectedProductInfo">
                             <i class="fa fa-cube ml-1"></i>
                             المنتج المحدد: <strong id="selectedProductLabel">-</strong>
@@ -395,10 +646,23 @@ document.addEventListener('keydown', function(e) {
 
                         <div class="form-group mb-3">
                             <label class="font-weight-bold text-secondary mb-1">طريقة رد المبلغ *</label>
-                            <select name="refund_method" id="refund_method" class="form-control rounded-0" required>
-                                <option value="cash" selected>إرجاع نقدي من الصندوق</option>
+                            <select name="refund_method" id="refund_method" class="form-control rounded-0" required onchange="toggleRefundSource()">
+                                <option value="cash" selected>إرجاع نقدي (خصم مباشر)</option>
                                 <option value="credit" id="refund_credit_opt">خصم من مديونية الحساب (للعملاء الآجل)</option>
                             </select>
+                        </div>
+
+                        <div class="form-group mb-3" id="refundSourceSection">
+                            <label class="font-weight-bold text-secondary mb-1">مصدر الخصم *</label>
+                            <select name="refund_source" id="refund_source" class="form-control rounded-0" required>
+                                <option value="box" selected>من الصندوق مباشرة (خصم فوري)</option>
+                                <option value="sales">من مبيعات اليوم (لا يؤثر على رصيد الصندوق)</option>
+                            </select>
+                            <small class="text-info">
+                                <i class="fa fa-info-circle ml-1"></i>
+                                <strong>من الصندوق مباشرة:</strong> يتم خصم المبلغ فوراً من رصيد الصندوق الحالي<br>
+                                <strong>من مبيعات اليوم:</strong> يتم خصم المبلغ من إجمالي مبيعات اليوم ولا يؤثر على الصندوق
+                            </small>
                         </div>
 
                         <div class="form-group mb-3">
@@ -419,8 +683,18 @@ document.addEventListener('keydown', function(e) {
                                    value="<?php echo date('Y-m-d'); ?>" required>
                         </div>
 
+                        <div class="alert alert-warning rounded-0 p-2 mb-3">
+                            <strong><i class="fa fa-info-circle ml-1"></i> ملاحظات هامة:</strong>
+                            <ul class="mb-0 mt-2 small">
+                                <li>سيتم خصم المبلغ من الصندوق مباشرة عند اختيار "من الصندوق مباشرة"</li>
+                                <li>سيتم إنشاء قيود محاسبية دقيقة ومتوازنة تلقائياً</li>
+                                <li>سيتم تحديث المخزون ومديونية العميل تلقائياً</li>
+                                <li>لا يمكن التراجع عن العملية بعد التأكيد إلا من خلال إلغاء المرتجع</li>
+                            </ul>
+                        </div>
+
                         <button type="submit" name="btn_save_return" class="btn-flat btn-flat-primary btn-block py-2">
-                            <i class="fa fa-check ml-1"></i> تأكيد المرتجع وتحديث المخزون
+                            <i class="fa fa-check ml-1"></i> تأكيد المرتجع وخصم المبلغ من الصندوق
                         </button>
                     </div>
                 </form>
@@ -428,9 +702,7 @@ document.addEventListener('keydown', function(e) {
         </div>
     </div>
 
-    <!-- ===== سجل المردودات + المردودات السابقة للفاتورة ===== -->
     <div class="col-lg-6 mb-4">
-        <!-- مردودات الفاتورة المحددة -->
         <div id="invoiceReturnsSection" style="display:none;" class="card-flat mb-3">
             <div class="card-header bg-warning">
                 <h6 class="mb-0 font-weight-bold text-dark"><i class="fa fa-history ml-1"></i> مردودات سابقة لهذه الفاتورة</h6>
@@ -452,7 +724,6 @@ document.addEventListener('keydown', function(e) {
             </div>
         </div>
 
-        <!-- سجل كل المردودات -->
         <div class="card-flat">
             <div class="card-header">
                 <h5><i class="fa fa-list ml-2"></i> سجل المردودات الكامل</h5>
@@ -499,7 +770,7 @@ document.addEventListener('keydown', function(e) {
                             <td class="no-print">
                                 <?php if ($r['status'] === 'active'): ?>
                                 <a href="returns.php?cancel_ret=<?php echo $r['id']; ?>"
-                                   onclick="return confirm('هل تريد إلغاء هذا المرتجع؟ سيتم عكس جميع العمليات.')"
+                                   onclick="return confirm('هل تريد إلغاء هذا المرتجع؟ سيتم عكس جميع العمليات والقيود المحاسبية.')"
                                    class=" btn-sm py-1 px-2 text-decoration-none">
                                     <i class="bi bi-x-circle text-danger"  title="الغاء المرتجع"></i>
                                 </a>
@@ -515,14 +786,23 @@ document.addEventListener('keydown', function(e) {
     </div>
 </div>
 
-<!-- ===== JavaScript ===== -->
 <script>
 const recentInvoices = <?php echo json_encode($recent_invoices, JSON_UNESCAPED_UNICODE); ?>;
 
-// البحث بالضغط على Enter في حقل الرقم
 document.getElementById('invoiceSearchInput').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { e.preventDefault(); searchInvoice(); }
 });
+
+function toggleRefundSource() {
+    const method = document.getElementById('refund_method').value;
+    const sourceSection = document.getElementById('refundSourceSection');
+    
+    if (method === 'credit') {
+        sourceSection.style.display = 'none';
+    } else {
+        sourceSection.style.display = 'block';
+    }
+}
 
 function searchInvoice() {
     const invId = parseInt(document.getElementById('invoiceSearchInput').value);
@@ -531,10 +811,8 @@ function searchInvoice() {
         return;
     }
 
-    // إعادة تعيين الحقول
     resetReturnForm();
 
-    // جلب بيانات الفاتورة عبر AJAX
     fetch(`ajax_invoice.php?invoice_id=${invId}`)
         .then(r => r.json())
         .then(data => {
@@ -554,7 +832,6 @@ function displayInvoiceData(data) {
     const items = data.items;
     const prevReturns = data.returns_history || [];
 
-    // عرض معلومات الفاتورة
     document.getElementById('invNum').textContent   = '#' + inv.id;
     document.getElementById('invCust').textContent  = inv.cust_name || 'عميل نقدي';
     document.getElementById('invDate').textContent  = inv.build_date;
@@ -562,7 +839,6 @@ function displayInvoiceData(data) {
     document.getElementById('ret_sales_id').value   = inv.id;
     document.getElementById('invoiceInfo').style.display = 'block';
 
-    // التحكم في خيار خصم المديونية بناء على اسم العميل
     const isCashCust = !inv.cust_name || inv.cust_name === 'عميل نقدي';
     const optCredit = document.getElementById('refund_credit_opt');
     const selectMethod = document.getElementById('refund_method');
@@ -572,8 +848,8 @@ function displayInvoiceData(data) {
     } else {
         optCredit.disabled = false;
     }
+    toggleRefundSource();
 
-    // عرض جدول المنتجات
     const tbody = document.getElementById('invoiceItemsBody');
     tbody.innerHTML = '';
 
@@ -604,7 +880,6 @@ function displayInvoiceData(data) {
 
     document.getElementById('invoiceItemsSection').style.display = 'block';
 
-    // مردودات سابقة لهذه الفاتورة
     const prevBody = document.getElementById('prevReturnsBody');
     prevBody.innerHTML = '';
     if (prevReturns.length > 0) {
@@ -643,7 +918,6 @@ function selectProduct(productId, productName, unitPrice, buyPrice, maxQty) {
     document.getElementById('returnFormFields').style.display = 'block';
     calcReturnAmount();
 
-    // تمييز الصف المحدد
     document.querySelectorAll('#invoiceItemsTable tr').forEach(r => r.classList.remove('table-active'));
     event.target.closest('tr').classList.add('table-active');
 }
@@ -686,6 +960,128 @@ function escHtml(str) {
     d.textContent = str;
     return d.innerHTML;
 }
+</script>
+
+<div class="modal fade mt-3" id="invoiceListModal" tabindex="-1" role="dialog" aria-labelledby="invoiceListModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content rounded-0">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title font-weight-bold" id="invoiceListModalLabel">
+                    <i class="fa fa-list ml-2"></i> نافذة اختيار فاتورة مبيعات اليوم
+                </h5>
+                <button type="button" class="close text-white rounded" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true" class="p-2">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group mb-3 text-right">
+                    <label class="font-weight-bold text-secondary mb-1">ابحث باسم العميل أو رقم الفاتورة:</label>
+                    <input type="text" id="modalInvoiceSearchInput" class="form-control rounded-0 font-weight-bold text-right" placeholder="ابحث...">
+                </div>
+                <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
+                    <table class="table-flat mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 15%;">رقم الفاتورة</th>
+                                <th>العميل</th>
+                                <th style="width: 25%;">التاريخ</th>
+                                <th style="width: 20%;">الإجمالي (ر.ي)</th>
+                                <th style="width: 15%;" class="text-center">تحديد</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modalInvoicesTableBody">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted p-3">جاري تحميل الفواتير...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'F2') {
+        e.preventDefault();
+        openInvoiceLookupModal();
+    }
+});
+
+function openInvoiceLookupModal() {
+    if (typeof $ !== 'undefined' && $.fn.modal) {
+        $('#invoiceListModal').modal('show');
+    } else {
+        var modal = document.getElementById('invoiceListModal');
+        if (modal) {
+            modal.classList.add('show');
+            modal.style.display = 'block';
+            document.body.classList.add('modal-open');
+            var backdrop = document.createElement('div');
+            backdrop.className = 'modal-backdrop fade show';
+            document.body.appendChild(backdrop);
+        }
+    }
+    loadModalInvoices('');
+}
+
+function loadModalInvoices(search) {
+    const tbody = document.getElementById('modalInvoicesTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">جاري البحث...</td></tr>';
+    
+    fetch(`ajax_invoice.php?action=list&search=${encodeURIComponent(search)}`)
+        .then(r => r.json())
+        .then(data => {
+            tbody.innerHTML = '';
+            const list = data.invoices || [];
+            if (list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">لم يتم العثور على أي فواتير مطابقة</td></tr>';
+                return;
+            }
+            list.forEach(inv => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="font-weight-bold">#${inv.id}</td>
+                    <td class="text-right font-weight-bold text-secondary">${escHtml(inv.cust_name)}</td>
+                    <td class="small">${inv.date}</td>
+                    <td class="font-weight-bold">${formatNum(inv.total)}</td>
+                    <td class="text-center">
+                        <button type="button" class="btn-flat btn-flat-primary btn-sm py-1 px-2" onclick="selectModalInvoice(${inv.id})">
+                            <i class="bi bi-check-square"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(err => {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger p-3">فشل جلب البيانات: ${err.message}</td></tr>`;
+        });
+}
+
+function selectModalInvoice(id) {
+    document.getElementById('invoiceSearchInput').value = id;
+    
+    if (typeof $ !== 'undefined' && $.fn.modal) {
+        $('#invoiceListModal').modal('hide');
+    } else {
+        var modal = document.getElementById('invoiceListModal');
+        if (modal) {
+            modal.classList.remove('show');
+            modal.style.display = 'none';
+            document.body.classList.remove('modal-open');
+            var backdrops = document.querySelectorAll('.modal-backdrop');
+            backdrops.forEach(b => b.remove());
+        }
+    }
+    
+    searchInvoice();
+}
+
+document.getElementById('modalInvoiceSearchInput').addEventListener('input', function() {
+    loadModalInvoices(this.value);
+});
 </script>
 
 <?php require_once($dir_prefix . 'includes/footer.php'); ?>

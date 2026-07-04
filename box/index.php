@@ -96,6 +96,31 @@ if ($is_admin && isset($_POST['btn_edit_box'])) {
     }
 }
 
+// معالجة ترحيل مبيعات الصندوق من قائمة الصناديق
+if (isset($_POST['btn_quick_transfer']) && isset($_POST['box_id_to_transfer'])) {
+    $box_id_val = intval($_POST['box_id_to_transfer']);
+    // التحقق من الصلاحيات
+    if (!$is_admin && $box_id_val !== get_user_box_id($conn, $active_user_id)) {
+        $error = 'غير مصرح لك بترحيل مبيعات صناديق أخرى.';
+    } else {
+        $user_display = $_SESSION['SESS_FIRST_NAME'];
+        $transferred = transfer_sales_to_box($conn, $box_id_val, $user_display);
+        if ($transferred !== false && $transferred > 0) {
+            $success = "✓ تم ترحيل مبيعات معلقة بمبلغ " . number_format($transferred, 2) . " ر.ي بنجاح إلى الصندوق!";
+            // تحديث قيم الصفحة
+            $res_boxes = $conn->query($sql_boxes);
+            $boxes = [];
+            if ($res_boxes) {
+                while($row = $res_boxes->fetch_assoc()) $boxes[] = $row;
+            }
+        } elseif ($transferred === 0.0) {
+            $error = "لا توجد مبيعات معلقة للترحيل.";
+        } else {
+            $error = "حدث خطأ أثناء محاولة ترحيل المبيعات.";
+        }
+    }
+}
+
 // ==========================================
 // 3. حركة يدوية (سحب أو إيداع)
 // ==========================================
@@ -247,10 +272,22 @@ if ($is_admin) {
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($boxes as $box): ?>
+                            <?php foreach ($boxes as $box): 
+                                    $bx_id = intval($box['box_id']);
+                                    $sql_p_box = "SELECT COALESCE(SUM(total), 0) as pending_sales FROM sales WHERE box_id = $bx_id AND is_transferred_to_box = 0 AND delete_status = 0";
+                                    $res_p_box = $conn->query($sql_p_box);
+                                    $pending_sales = ($res_p_box) ? floatval($res_p_box->fetch_assoc()['pending_sales']) : 0;
+                                 ?>
                                 <tr>
                                     <td class="font-weight-bold text-secondary">#<?php echo $box['box_id']; ?></td>
-                                    <td class="font-weight-bold text-dark text-right pr-4"><?php echo htmlspecialchars($box['name']); ?></td>
+                                    <td class="font-weight-bold text-dark text-right pr-4">
+                                        <?php echo htmlspecialchars($box['name']); ?>
+                                        <?php if ($pending_sales > 0): ?>
+                                            <span class="badge badge-warning text-dark font-weight-bold ml-2 no-print" title="مبيعات معلقة لم تُرحل للصندوق">
+                                                معلق: <?php echo number_format($pending_sales, 0); ?>
+                                            </span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td class="text-secondary"><?php echo $box['username'] ? htmlspecialchars($box['username']) : '<span class="text-muted">عام (غير مخصص)</span>'; ?></td>
                                     <td class="font-weight-bold text-primary" style="font-size: 1.1rem;"><?php echo number_format($box['mony'], 2); ?></td>
                                     <td>
@@ -261,6 +298,14 @@ if ($is_admin) {
                                         <?php endif; ?>
                                     </td>
                                     <td class="no-print">
+                                        <?php if ($pending_sales > 0): ?>
+                                            <form method="POST" style="display:inline-block;" class="m-0">
+                                                <input type="hidden" name="box_id_to_transfer" value="<?php echo $box['box_id']; ?>">
+                                                <button type="submit" name="btn_quick_transfer" class="btn btn-warning btn-sm rounded-0 py-1 px-2 text-dark font-weight-bold ml-1" title="ترحيل المبيعات المعلقة فوراً">
+                                                    <i class="bi bi-reply-all ml-1"></i> ترحيل المبيعات
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
                                         <a href="close.php?box_id=<?php echo $box['box_id']; ?>" class="btn btn-success btn-sm rounded-0 py-1 px-2 text-decoration-none ml-1">
                                             <i class="bi bi-safe2 ml-1"></i> إقفال الوردية والترحيل
                                         </a>
@@ -307,13 +352,13 @@ if ($is_admin) {
                     <!-- نوع الحركة -->
                     <div class="form-group mb-3 text-center">
                         <label class="font-weight-bold d-block text-right mb-2">نوع الحركة:</label>
-                        <div class="custom-control custom-radio custom-control-inline mx-2">
-                            <input type="radio" id="type_add" name="type" class="custom-control-input" value="addition" required>
-                            <label class="custom-control-label text-success font-weight-bold" for="type_add">إيداع / إضافة</label>
+                        <div class="form-check form-check-inline mx-2">
+                            <input class="form-check-input" type="radio" name="type" id="type_add" value="addition" required>
+                            <label class="form-check-label text-success font-weight-bold mr-4" for="type_add">إيداع / إضافة</label>
                         </div>
-                        <div class="custom-control custom-radio custom-control-inline mx-2">
-                            <input type="radio" id="type_sub" name="type" class="custom-control-input" value="discount" required>
-                            <label class="custom-control-label text-danger font-weight-bold" for="type_sub">سحب / خصم</label>
+                        <div class="form-check form-check-inline mx-2">
+                            <input class="form-check-input" type="radio" name="type" id="type_sub" value="discount" required>
+                            <label class="form-check-label text-danger font-weight-bold mr-4" for="type_sub">سحب / خصم</label>
                         </div>
                     </div>
 
