@@ -758,6 +758,8 @@ if ($res_curr) {
                 </div>
             </div>
 
+            <div id="creditLimitWarning" class="alert alert-warning d-none mb-3 text-right" dir="rtl"></div>
+
             <div class="table-responsive">
                 <table class="table-flat" id="itemsTable">
                     <thead>
@@ -803,6 +805,7 @@ if ($res_curr) {
                             </td>
                             <td>
                                 <input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="1" required>
+                                <span class="row-stock-warning text-danger font-weight-bold d-none" style="font-size:0.75rem; display:block; margin-top:4px; text-align:center;"></span>
                             </td>
                             <td>
                                 <input type="number" step="any" name="unit_price[]" class="form-control price-input text-center rounded-0" required>
@@ -1020,6 +1023,7 @@ function toggleSalesInvoiceType(val) {
             boxSection.classList.add('d-none');
         }
     }
+    checkRealTimeWarnings();
 }
 
 function toggleSalesWalletSection(val) {
@@ -1120,6 +1124,7 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById("grandPaidDisplay").value = totalPaid.toFixed(2);
         document.getElementById("grandRemainingDisplay").textContent = totalRemaining.toFixed(2);
         document.getElementById("grandProfitDisplay").value = totalProfit.toFixed(2);
+        checkRealTimeWarnings();
     }
 
     function updateAccountingGuide() {
@@ -1152,6 +1157,47 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById("acc_discount_credit").value = totalDiscount.toFixed(2);
         document.getElementById("acc_cogs").value = totalCost.toFixed(2);
         document.getElementById("acc_cogs_credit").value = totalCost.toFixed(2);
+    }
+
+    function checkRealTimeWarnings() {
+        const customerSelect = document.getElementById("select2");
+        const customerName = customerSelect ? customerSelect.value : "";
+        const remainingSpan = document.getElementById("grandRemainingDisplay");
+        const remainingTotal = remainingSpan ? parseFloat(remainingSpan.textContent) || 0 : 0;
+        
+        const warningDiv = document.getElementById("creditLimitWarning");
+        if (warningDiv) {
+            if (customerName && customerName !== "عميل نقدي" && currentCustomerDetails.id > 0 && remainingTotal > 0) {
+                const newBalance = currentCustomerDetails.balance + remainingTotal;
+                if (newBalance > currentCustomerDetails.credit_limit) {
+                    warningDiv.innerHTML = `⚠️ <strong>تجاوز حد الدين للعميل:</strong> مديونية العميل بعد هذه الفاتورة (${newBalance.toFixed(2)} ر.ي) ستتجاوز الحد الائتماني المسموح به (${currentCustomerDetails.credit_limit.toFixed(2)} ر.ي).`;
+                    warningDiv.classList.remove("d-none");
+                } else {
+                    warningDiv.classList.add("d-none");
+                }
+            } else {
+                warningDiv.classList.add("d-none");
+            }
+        }
+
+        // Stock level warning for each row
+        document.querySelectorAll(".item-row").forEach(row => {
+            const qtyInput = row.querySelector(".quantity-input");
+            const stockInput = row.querySelector(".stock-qty");
+            const nameInput = row.querySelector(".product-search-input");
+            const rowWarning = row.querySelector(".row-stock-warning");
+            if (qtyInput && stockInput && rowWarning) {
+                const qty = parseInt(qtyInput.value) || 0;
+                const stock = parseInt(stockInput.value) || 0;
+                const name = nameInput ? nameInput.value : "";
+                if (qty > stock && stock >= 0 && qty > 0 && name !== "") {
+                    rowWarning.textContent = `⚠️ تجاوز المخزون (${stock})`;
+                    rowWarning.classList.remove("d-none");
+                } else {
+                    rowWarning.classList.add("d-none");
+                }
+            }
+        });
     }
 
     addItemBtn.addEventListener("click", function() {
@@ -1757,6 +1803,7 @@ document.addEventListener("DOMContentLoaded", function() {
                         credit_limit: data.credit_limit,
                         balance: data.balance
                     };
+                    checkRealTimeWarnings();
                 }
             })
             .catch(err => console.error("Error fetching customer details:", err));
@@ -1835,6 +1882,21 @@ document.addEventListener("DOMContentLoaded", function() {
                 isValid = false;
             }
         }
+        
+        let hasWarnings = false;
+        document.querySelectorAll(".row-stock-warning").forEach(span => {
+            if (!span.classList.contains("d-none")) hasWarnings = true;
+        });
+        const warningDiv = document.getElementById("creditLimitWarning");
+        if (warningDiv && !warningDiv.classList.contains("d-none")) {
+            hasWarnings = true;
+        }
+        
+        if (hasWarnings) {
+            alert("يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            isValid = false;
+        }
+
         if (!isValid) {
             e.preventDefault();
             return false;

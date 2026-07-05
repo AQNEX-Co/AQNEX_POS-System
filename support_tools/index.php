@@ -15,6 +15,76 @@ if (!is_string($auth) || !hash_equals($support_token, $auth)) {
     exit;
 }
 
+// تصدير قاعدة البيانات بصيغة SQL
+if (isset($_GET['act']) && $_GET['act'] === 'export_db') {
+    if (ob_get_level()) {
+        ob_end_clean();
+    }
+    $backup_name = 'aqnex_pos_backup_' . date('Y-m-d_H-i-s') . '.sql';
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . $backup_name . '"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    echo "-- AQNEX POS Database Backup\n";
+    echo "-- Generated: " . date('Y-m-d H:i:s') . "\n";
+    echo "-- --------------------------------------------------------\n\n";
+
+    echo "SET FOREIGN_KEY_CHECKS = 0;\n";
+    echo "SET NAMES utf8mb4;\n\n";
+
+    $tables = [];
+    $result = $conn->query("SHOW TABLES");
+    if ($result) {
+        while ($row = $result->fetch_row()) {
+            $tables[] = $row[0];
+        }
+    }
+
+    foreach ($tables as $table) {
+        echo "-- --------------------------------------------------------\n";
+        echo "-- Structure for table `$table`\n";
+        echo "-- --------------------------------------------------------\n\n";
+
+        $create_res = $conn->query("SHOW CREATE TABLE `$table`");
+        if ($create_res) {
+            $create_row = $create_res->fetch_row();
+            $create_sql = $create_row[1];
+            $create_sql = preg_replace('/CREATE TABLE/i', 'CREATE TABLE IF NOT EXISTS', $create_sql);
+            echo $create_sql . ";\n\n";
+        }
+
+        $data_res = $conn->query("SELECT * FROM `$table`");
+        if ($data_res) {
+            $fields_info = $data_res->fetch_fields();
+            $columns = [];
+            foreach ($fields_info as $field) {
+                $columns[] = "`" . $field->name . "`";
+            }
+            $columns_str = implode(', ', $columns);
+
+            while ($row = $data_res->fetch_assoc()) {
+                $values = [];
+                foreach ($fields_info as $field) {
+                    $val = $row[$field->name];
+                    if ($val === null) {
+                        $values[] = "NULL";
+                    } else {
+                        $escaped = $conn->real_escape_string($val);
+                        $values[] = "'" . $escaped . "'";
+                    }
+                }
+                $values_str = implode(', ', $values);
+                echo "REPLACE INTO `$table` ($columns_str) VALUES ($values_str);\n";
+            }
+            echo "\n";
+        }
+    }
+
+    echo "SET FOREIGN_KEY_CHECKS = 1;\n";
+    exit;
+}
+
 $adminerPath = __DIR__ . '/adminer.php';
 $use_adminer = intval($_GET['use_adminer'] ?? 0);
 if ($use_adminer === 1 && file_exists($adminerPath)) {
@@ -61,7 +131,7 @@ if (!empty($crud_act)) {
         $pk_esc = $conn->real_escape_string($crud_pk);
         $val_esc = $conn->real_escape_string($crud_val);
         if ($conn->query("DELETE FROM `$table_esc` WHERE `$pk_esc` = '$val_esc'")) {
-            header("Location: index.php?auth=" . urlencode($auth) . "&msg=deleted");
+            header("Location: index.php?auth=" . urlencode($auth) . "&msg=deleted&tbl=" . urlencode($crud_table));
             exit;
         } else {
             $crud_msg = "خطأ أثناء الحذف: " . $conn->error;
@@ -119,7 +189,7 @@ if (!empty($crud_act)) {
         }
         $update_str = implode(', ', $updates);
         if ($conn->query("UPDATE `$table_esc` SET $update_str WHERE `$pk_esc` = '$val_esc'")) {
-            header("Location: index.php?auth=" . urlencode($auth) . "&msg=updated");
+            header("Location: index.php?auth=" . urlencode($auth) . "&msg=updated&tbl=" . urlencode($crud_table));
             exit;
         } else {
             $crud_msg = "خطأ أثناء التحديث: " . $conn->error;
@@ -139,7 +209,7 @@ if (!empty($crud_act)) {
         $cols_str = implode(', ', $cols);
         $vals_str = implode(', ', $vals);
         if ($conn->query("INSERT INTO `$table_esc` ($cols_str) VALUES ($vals_str)")) {
-            header("Location: index.php?auth=" . urlencode($auth) . "&msg=added");
+            header("Location: index.php?auth=" . urlencode($auth) . "&msg=added&tbl=" . urlencode($crud_table));
             exit;
         } else {
             $crud_msg = "خطأ أثناء الإضافة: " . $conn->error;
@@ -148,6 +218,9 @@ if (!empty($crud_act)) {
 }
 
 $query = $_POST['sql_query'] ?? '';
+if (empty($query) && isset($_GET['tbl'])) {
+    $query = "SELECT * FROM `" . $conn->real_escape_string($_GET['tbl']) . "` LIMIT 50;";
+}
 $query_result = null;
 $query_error = '';
 
@@ -287,6 +360,8 @@ if ($res_t) {
             resize: vertical;
             font-size: 0.95rem;
             outline: none;
+            direction: ltr;
+            text-align: left;
         }
         textarea.sql-input:focus {
             border-color: var(--accent);
@@ -388,9 +463,18 @@ if ($res_t) {
         <button class="btn-quick" onclick="setQuery('SELECT SUM(mony) FROM treasury;')">رصيد الصناديق الكلي</button>
         <button class="btn-quick" onclick="setQuery('SELECT * FROM inventory_log ORDER BY id DESC LIMIT 50;')">سجل حركة المخزون الأخير</button>
         <a href="index.php?auth=<?php echo urlencode($auth); ?>&use_adminer=1" class="btn-quick" style="text-decoration: none; background-color: var(--accent); color: var(--bg-primary); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">🔧 تشغيل لوحة التحكم الكلاسيكية (Adminer)</a>
+        <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=export_db" class="btn-quick" style="text-decoration: none; background-color: var(--success); color: var(--bg-primary); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">📥 تصدير قاعدة البيانات (.sql)</a>
+        <a href="../home.php" class="btn-quick" style="text-decoration: none; background-color: var(--danger); color: var(--text-main); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">🚪 العودة للنظام (خروج)</a>
     </div>
 
     <div class="editor-container">
+        <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;" dir="ltr">
+            <button type="button" class="btn-quick" onclick="insertSqlTemplate('select')" style="background-color: rgba(56, 189, 248, 0.1); border-color: var(--accent); color: var(--accent); font-weight: bold;">SELECT</button>
+            <button type="button" class="btn-quick" onclick="insertSqlTemplate('create')" style="background-color: rgba(16, 185, 129, 0.1); border-color: var(--success); color: var(--success); font-weight: bold;">CREATE TABLE</button>
+            <button type="button" class="btn-quick" onclick="insertSqlTemplate('insert')" style="background-color: rgba(245, 158, 11, 0.1); border-color: #f59e0b; color: #f59e0b; font-weight: bold;">INSERT</button>
+            <button type="button" class="btn-quick" onclick="insertSqlTemplate('update')" style="background-color: rgba(59, 130, 246, 0.1); border-color: #3b82f6; color: #3b82f6; font-weight: bold;">UPDATE</button>
+            <button type="button" class="btn-quick" onclick="insertSqlTemplate('delete')" style="background-color: rgba(239, 68, 68, 0.1); border-color: var(--danger); color: var(--danger); font-weight: bold;">DELETE</button>
+        </div>
         <form method="POST" id="queryForm">
             <textarea class="sql-input" name="sql_query" id="sql_query" placeholder="اكتب استعلام SQL هنا... (مثال: SELECT * FROM products LIMIT 10)"><?php echo htmlspecialchars($query); ?></textarea>
             <div style="text-align: left; margin-top: 10px;">
@@ -575,6 +659,21 @@ function loadTableQuery(tableName) {
 function setQuery(sql) {
     document.getElementById('sql_query').value = sql;
     document.getElementById('queryForm').submit();
+}
+function insertSqlTemplate(type) {
+    let sql = '';
+    if (type === 'select') {
+        sql = "SELECT * FROM `products` WHERE id = 1 LIMIT 10;";
+    } else if (type === 'create') {
+        sql = "CREATE TABLE IF NOT EXISTS `new_table` (\n  `id` INT AUTO_INCREMENT PRIMARY KEY,\n  `name` VARCHAR(255) NOT NULL,\n  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+    } else if (type === 'insert') {
+        sql = "INSERT INTO `products` (`name`, `quantity`, `sale_price`, `catid`, `date`) \nVALUES ('منتج جديد', 10, 1500.00, 1, NOW());";
+    } else if (type === 'update') {
+        sql = "UPDATE `products` SET `quantity` = 20, `sale_price` = 1600.00 \nWHERE `id` = 1;";
+    } else if (type === 'delete') {
+        sql = "DELETE FROM `products` WHERE `id` = 1;";
+    }
+    document.getElementById('sql_query').value = sql;
 }
 </script>
 

@@ -88,33 +88,45 @@ try {
         }
     }
 
-    // 5. حذف بنود الفاتورة من purchase_items
+    // 5. أرشفة السجلات التاريخية والقيود إلى جداول التاريخ (History)
+    $conn->query("INSERT INTO purchases_history SELECT * FROM purchases WHERE id = $invoice_id");
+    if ($matched_by_purchase_id) {
+        $conn->query("INSERT INTO purchase_items_history SELECT * FROM purchase_items WHERE purchase_id = $invoice_id");
+    } else {
+        $inv_date_esc = $conn->real_escape_string($inv_date);
+        $inv_supp_esc = $conn->real_escape_string($inv_supplier);
+        $conn->query("INSERT INTO purchase_items_history SELECT * FROM purchase_items WHERE buys_date = '$inv_date_esc' AND supp_name = '$inv_supp_esc'");
+    }
+    $conn->query("INSERT INTO purchase_returns_history SELECT * FROM purchase_returns WHERE purchase_id = $invoice_id");
+    $conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE (ref_type = 'purchase' AND ref_id = $invoice_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id))");
+    $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE (ref_type = 'purchase' AND ref_id = $invoice_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id))");
+
+    // 6. حذف بنود الفاتورة من purchase_items
     if ($matched_by_purchase_id) {
         $conn->query("DELETE FROM purchase_items WHERE purchase_id = $invoice_id");
     } else {
         $conn->query("DELETE FROM purchase_items WHERE buys_date = '" . $conn->real_escape_string($inv_date) . "' AND supp_name = '" . $conn->real_escape_string($inv_supplier) . "'");
     }
 
-    // 6. حذف قيود المردودات المرتبطة قبل حذف سجلات المردودات
+    // 7. حذف سجلات المردودات والقيود والنشطة من الجداول الفعالة
     $conn->query("DELETE FROM journal_entries WHERE ref_type = 'return' AND ref_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id)");
     $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'return' AND ref_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id)");
     $conn->query("DELETE FROM purchase_returns WHERE purchase_id = $invoice_id");
     $conn->query("DELETE FROM journal_entries WHERE ref_type = 'purchase' AND ref_id = $invoice_id");
     $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'purchase' AND ref_id = $invoice_id");
 
-    // 7. عكس مديونية المورد - إنقاص المتبقي الذي كانت هذه الفاتورة أضافته
-    //    (هذا هو الجزء الذي كان مفقوداً ويسبب بقاء "مديونية" بعد حذف الفاتورة)
+    // 8. عكس مديونية المورد - إنقاص المتبقي الذي كانت هذه الفاتورة أضافته
     if (!empty($inv_supplier) && $total_remaining_base > 0) {
         $inv_supplier_esc = $conn->real_escape_string($inv_supplier);
         $conn->query("UPDATE suppliers SET supp_daain = GREATEST(0, supp_daain - $total_remaining_base) WHERE supp_name = '$inv_supplier_esc'");
     }
 
-    // 7. استرجاع المبلغ المدفوع إلى الصندوق إذا كانت الفاتورة قد خُصمت منه أصلاً
+    // 9. استرجاع المبلغ المدفوع إلى الصندوق إذا كانت الفاتورة قد خُصمت منه أصلاً
     if ($box_paid_base > 0 && $inv_box_id > 0) {
         $conn->query("UPDATE treasury SET mony = mony + $box_paid_base WHERE box_id = $inv_box_id");
     }
 
-    // 8. حذف الفاتورة الرئيسية
+    // 10. حذف الفاتورة الرئيسية
     $conn->query("DELETE FROM purchases WHERE id = $invoice_id");
 
     $conn->commit();

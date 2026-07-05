@@ -29,7 +29,14 @@ if (isset($_GET['id'])) {
             // 2. خصم القيمة من الصندوق المالي المناسب
             update_box_balance($conn, $box_id, $amount, 'discount', "إلغاء سند قبض رقم #$qid للعميل $cust_name", date('Y-m-d'));
             
-            // 3. حذف القيود اليومية المحاسبية
+            // 3. أرشفة السند والقيود إلى التاريخ (History)
+            if (!$conn->query("INSERT INTO receipts_history SELECT * FROM receipts WHERE qid = $qid") ||
+                !$conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE ref_type = 'receipt' AND ref_id = $qid") ||
+                !$conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE ref_type = 'receipt' AND ref_id = $qid")) {
+                throw new Exception("فشل أرشفة السند والقيود إلى التاريخ");
+            }
+            
+            // 4. حذف القيود اليومية المحاسبية من الجداول الفعالة
             if (!$conn->query("DELETE FROM journal_entries WHERE ref_type = 'receipt' AND ref_id = $qid")) {
                 throw new Exception("فشل حذف القيود اليومية");
             }
@@ -37,7 +44,7 @@ if (isset($_GET['id'])) {
                 throw new Exception("فشل حذف قيود اليومية القديمة");
             }
             
-            // 4. حذف السند
+            // 5. حذف السند من الجدول الفعال
             $sql_del = "DELETE FROM receipts WHERE qid = $qid";
             if (!$conn->query($sql_del)) {
                 throw new Exception("فشل حذف السند");

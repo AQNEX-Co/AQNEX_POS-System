@@ -245,6 +245,7 @@ if (isset($_POST['btn_update'])) {
 
             // 1.4 حذف القيود المحاسبية القديمة
             $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'sale' AND ref_id = $invoice_id");
+            $conn->query("DELETE FROM journal_entries WHERE ref_type = 'sale' AND ref_id = $invoice_id");
 
             // 1.5 حذف بنود الفاتورة القديمة
             $conn->query("DELETE FROM sales_items WHERE sales_id = $invoice_id");
@@ -770,6 +771,7 @@ $products_json = '[]';
             </div>
 
             <!-- جدول المنتجات -->
+            <div id="creditLimitWarning" class="alert alert-warning d-none mb-3 text-right" dir="rtl"></div>
             <div class="table-responsive">
                 <table class="table-flat" id="itemsTable">
                     <thead>
@@ -852,6 +854,7 @@ $products_json = '[]';
                                 </td>
                                 <td>
                                     <input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="<?php echo intval($item['quantity']); ?>" required>
+                                    <span class="row-stock-warning text-danger font-weight-bold d-none" style="font-size:0.75rem; display:block; margin-top:4px; text-align:center;"></span>
                                 </td>
                                 <td>
                                     <input type="number" step="any" name="unit_price[]" class="form-control price-input text-center rounded-0" value="<?php echo number_format($unit_price_orig, 2, '.', ''); ?>" required>
@@ -900,7 +903,10 @@ $products_json = '[]';
                                     </div>
                                 </td>
                                 <td><input type="text" class="form-control stock-qty text-center bg-light rounded-0" readonly value="0"></td>
-                                <td><input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="1" required></td>
+                                <td>
+                                    <input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="1" required>
+                                    <span class="row-stock-warning text-danger font-weight-bold d-none" style="font-size:0.75rem; display:block; margin-top:4px; text-align:center;"></span>
+                                </td>
                                 <td><input type="number" step="any" name="unit_price[]" class="form-control price-input text-center rounded-0" required></td>
                                 <td><input type="text" class="form-control total-input text-center bg-light rounded-0" readonly value="0"></td>
                                 <td><input type="number" step="any" name="paid_amount[]" class="form-control paid-input text-center rounded-0" value="0"></td>
@@ -1041,6 +1047,7 @@ const availableProducts = <?php echo $products_json; ?>;
 const isSerialModuleEnabled = <?php echo is_module_enabled('serial_imei_tracking') ? 'true' : 'false'; ?>;
 const isExpiryModuleEnabled = <?php echo is_module_enabled('expiry_tracking') ? 'true' : 'false'; ?>;
 const currentInvoiceId = <?php echo $invoice_id; ?>;
+const oldRemainingTotal = <?php echo doubleval($invoice['remaining_total']); ?>;
 
 let salesFormDirty = false;
 let salesFormSubmitting = false;
@@ -1186,6 +1193,7 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById("grandPaidDisplay").value = totalPaid.toFixed(2);
         document.getElementById("grandRemainingDisplay").textContent = totalRemaining.toFixed(2);
         document.getElementById("grandProfitDisplay").value = totalProfit.toFixed(2);
+        checkRealTimeWarnings();
     }
 
     function updateAccountingGuide() {
@@ -1218,6 +1226,51 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById("acc_discount_credit").value = totalDiscount.toFixed(2);
         document.getElementById("acc_cogs").value = totalCost.toFixed(2);
         document.getElementById("acc_cogs_credit").value = totalCost.toFixed(2);
+    }
+
+    function checkRealTimeWarnings() {
+        const customerSelect = document.getElementById("select2");
+        const customerName = customerSelect ? customerSelect.value : "";
+        const remainingSpan = document.getElementById("grandRemainingDisplay");
+        const remainingTotal = remainingSpan ? parseFloat(remainingSpan.textContent) || 0 : 0;
+        
+        const warningDiv = document.getElementById("creditLimitWarning");
+        if (warningDiv) {
+            if (customerName && customerName !== "عميل نقدي" && currentCustomerDetails.id > 0 && remainingTotal > 0) {
+                const newBalance = currentCustomerDetails.balance - oldRemainingTotal + remainingTotal;
+                if (newBalance > currentCustomerDetails.credit_limit) {
+                    warningDiv.innerHTML = `⚠️ <strong>تجاوز حد الدين للعميل:</strong> مديونية العميل بعد تعديل هذه الفاتورة (${newBalance.toFixed(2)} ر.ي) ستتجاوز الحد الائتماني المسموح به (${currentCustomerDetails.credit_limit.toFixed(2)} ر.ي).`;
+                    warningDiv.classList.remove("d-none");
+                } else {
+                    warningDiv.classList.add("d-none");
+                }
+            } else {
+                warningDiv.classList.add("d-none");
+            }
+        }
+
+        // Stock level warning for each row
+        document.querySelectorAll(".item-row").forEach(row => {
+            const qtyInput = row.querySelector(".quantity-input");
+            const stockInput = row.querySelector(".stock-qty");
+            const nameInput = row.querySelector(".product-search-input");
+            const rowWarning = row.querySelector(".row-stock-warning");
+            if (qtyInput && stockInput && rowWarning) {
+                const qty = parseInt(qtyInput.value) || 0;
+                const stock = parseInt(stockInput.value) || 0;
+                const name = nameInput ? nameInput.value : "";
+                
+                const originalQty = parseInt(row.getAttribute("data-original-qty")) || 0;
+                const actualAvailable = stock + originalQty;
+                
+                if (qty > actualAvailable && actualAvailable >= 0 && qty > 0 && name !== "") {
+                    rowWarning.textContent = `⚠️ تجاوز المخزون (${actualAvailable})`;
+                    rowWarning.classList.remove("d-none");
+                } else {
+                    rowWarning.classList.add("d-none");
+                }
+            }
+        });
     }
 
     // جعل الدوال عامة
@@ -1699,6 +1752,7 @@ document.addEventListener("DOMContentLoaded", function() {
                         credit_limit: data.credit_limit,
                         balance: data.balance
                     };
+                    checkRealTimeWarnings();
                 }
             });
     }
@@ -1758,6 +1812,25 @@ document.addEventListener("DOMContentLoaded", function() {
                 isValid = false;
             }
         });
+
+        if (!isValid) {
+            e.preventDefault();
+            return false;
+        }
+
+        let hasWarnings = false;
+        document.querySelectorAll(".row-stock-warning").forEach(span => {
+            if (!span.classList.contains("d-none")) hasWarnings = true;
+        });
+        const warningDiv = document.getElementById("creditLimitWarning");
+        if (warningDiv && !warningDiv.classList.contains("d-none")) {
+            hasWarnings = true;
+        }
+        
+        if (hasWarnings) {
+            alert("يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            isValid = false;
+        }
 
         if (!isValid) {
             e.preventDefault();

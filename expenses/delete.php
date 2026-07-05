@@ -17,19 +17,33 @@ if (isset($_GET['id'])) {
         $old_price = doubleval($expense['sprice']);
         $box_id = intval($expense['box_id']);
         $expense_type = $conn->real_escape_string($expense['st']);
+        $expense_date = $conn->real_escape_string($expense['sdate']);
         
-        // 1. إعادة المبلغ المخصوم إلى الصندوق المالي
-        update_box_balance($conn, $box_id, $old_price, 'addition', "إلغاء سند صرف رقم #$sid - بند $expense_type", date('Y-m-d'));
-        
-        // 2. حذف القيد اليومي المحاسبي
-        $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'expense' AND ref_id = $sid");
-        
-        // 3. حذف من جدول المصاريف الموازي
-        $conn->query("DELETE FROM expenses WHERE m_date = '{$expense['sdate']}' AND sname = '$expense_type' AND m_price = $old_price LIMIT 1");
-        
-        // 4. حذف السند
-        $sql = "DELETE FROM treasury_expenses WHERE sid = $sid";
-        $conn->query($sql);
+        $conn->begin_transaction();
+        try {
+            // 1. إعادة المبلغ المخصوم إلى الصندوق المالي
+            update_box_balance($conn, $box_id, $old_price, 'addition', "إلغاء سند صرف رقم #$sid - بند $expense_type", date('Y-m-d'));
+            
+            // 2. أرشفة السجلات والقيود اليومية المحاسبية إلى جداول التاريخ (History)
+            $conn->query("INSERT INTO treasury_expenses_history SELECT * FROM treasury_expenses WHERE sid = $sid");
+            $conn->query("INSERT INTO expenses_history SELECT * FROM expenses WHERE m_date = '$expense_date' AND sname = '$expense_type' AND m_price = $old_price LIMIT 1");
+            $conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE ref_type = 'expense' AND ref_id = $sid");
+            $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE ref_type = 'expense' AND ref_id = $sid");
+            
+            // 3. حذف القيود المحاسبية من الجداول الفعالة (إصلاح قيد journal_entries المفقود)
+            $conn->query("DELETE FROM journal_entries WHERE ref_type = 'expense' AND ref_id = $sid");
+            $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'expense' AND ref_id = $sid");
+            
+            // 4. حذف من جدول المصاريف الموازي الفعال
+            $conn->query("DELETE FROM expenses WHERE m_date = '$expense_date' AND sname = '$expense_type' AND m_price = $old_price LIMIT 1");
+            
+            // 5. حذف السند الفعال
+            $conn->query("DELETE FROM treasury_expenses WHERE sid = $sid");
+            
+            $conn->commit();
+        } catch (Exception $e) {
+            $conn->rollback();
+        }
     }
 }
 

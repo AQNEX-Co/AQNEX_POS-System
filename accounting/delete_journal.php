@@ -26,6 +26,10 @@ if ($res && $res->num_rows > 0) {
     
     $conn->begin_transaction();
     try {
+        // أرشفة القيد المحاسبي للتاريخ (History)
+        $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE id = $journal_id");
+        $conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE ref_type = '$ref_type' AND ref_id = $ref_id AND account_debit = '$debit' AND account_credit = '$credit' AND amount = $amount");
+
         // Delete from accounting_journal
         $conn->query("DELETE FROM accounting_journal WHERE id = $journal_id");
         

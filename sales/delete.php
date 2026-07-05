@@ -2,6 +2,7 @@
 $dir_prefix = '../';
 require_once($dir_prefix . 'includes/connect.php');
 require_once($dir_prefix . 'includes/auth.php');
+require_once($dir_prefix . 'includes/accounting_helper.php');
 
 // Verify session and admin status before outputting any HTML to prevent "headers already sent" warning
 if (!\AQNEX\Services\AuthService::isAdmin()) {
@@ -57,22 +58,28 @@ try {
         $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $remaining_total) WHERE cust_name = '$cust_name'");
     }
 
-    // 4. حذف القيود المحاسبية المرتبطة بالمردودات قبل حذف السجلات
-    $conn->query("DELETE FROM journal_entries WHERE ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id)");
-    $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id)");
+    // 4. عكس تأثير الصندوق (خصم المبالغ المدفوعة نقداً)
+    $paid_amount = doubleval($sale['total'] ?? 0) - $remaining_total;
+    if ($paid_amount > 0) {
+        $box_id = intval($sale['box_id'] ?? 1);
+        if (!update_box_balance($conn, $box_id, $paid_amount, 'discount', "إلغاء فاتورة مبيعات رقم #$sale_id للعميل $cust_name", date('Y-m-d'))) {
+            throw new Exception("فشل تحديث رصيد الصندوق (قد يكون الرصيد غير كافٍ)");
+        }
+    }
 
-    // 5. حذف المردودات المرتبطة قبل حذف بنود الفاتورة
+    // 5. أرشفة السجلات التاريخية والقيود إلى جداول التاريخ (History)
+    $conn->query("INSERT INTO sales_history SELECT * FROM sales WHERE id = $sale_id");
+    $conn->query("INSERT INTO sales_items_history SELECT * FROM sales_items WHERE sales_id = $sale_id");
+    $conn->query("INSERT INTO sales_returns_history SELECT * FROM sales_returns WHERE sales_id = $sale_id");
+    $conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
+    $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
+
+    // 6. حذف السجلات والقيود المحاسبية من الجداول الفعالة
+    $conn->query("DELETE FROM journal_entries WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
+    $conn->query("DELETE FROM accounting_journal WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
     $conn->query("DELETE FROM sales_returns WHERE sales_id = $sale_id");
-
-    // 6. حذف بنود الفاتورة
     $conn->query("DELETE FROM sales_items WHERE sales_id = $sale_id");
-
-    // 7. حذف قيود الفاتورة الرئيسية
-    $conn->query("DELETE FROM journal_entries WHERE ref_type = 'sale' AND ref_id = $sale_id");
-    $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'sale' AND ref_id = $sale_id");
-
-    // 8. Soft Delete للفاتورة الرئيسية
-    $conn->query("UPDATE sales SET delete_status = 1 WHERE id = $sale_id");
+    $conn->query("DELETE FROM sales WHERE id = $sale_id");
 
     $conn->commit();
     header('Location: index.php?msg=deleted');

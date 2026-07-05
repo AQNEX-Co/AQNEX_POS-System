@@ -199,7 +199,7 @@ if (isset($_POST['btn_save_return'])) {
             $cost_amount = $buy_price * $qty;
             if ($cost_amount > 0) {
                 $debit_acc = 'المخزون / البضاعة';
-                $credit_acc = 'تكلفة البضاعة المباعة';
+                $credit_acc = 'تكلفة البضاعة المباعة (مصروف)';
                 
                 if (!post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, $credit_acc, $cost_amount, 
                     "إعادة تكلفة مرتجع مبيعات #{$saved_return_id} للمخزون | المنتج: {$p_name} | الكمية: {$qty} | تكلفة الوحدة: " . number_format($buy_price, 2), 
@@ -311,7 +311,7 @@ if (isset($_GET['cancel_ret']) && is_numeric($_GET['cancel_ret'])) {
             $cost_amount = $buy_price_val * $qty;
             
             if ($cost_amount > 0) {
-                $debit_acc = 'تكلفة البضاعة المباعة';
+                $debit_acc = 'تكلفة البضاعة المباعة (مصروف)';
                 $credit_acc = 'المخزون / البضاعة';
                 
                 if (!post_journal_entry($conn, 'return', $ret_id, $debit_acc, $credit_acc, $cost_amount, 
