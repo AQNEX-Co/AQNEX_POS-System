@@ -2,6 +2,7 @@
 $dir_prefix = '../';
 require_once($dir_prefix . 'includes/connect.php');
 require_once($dir_prefix . 'includes/auth.php');
+require_once($dir_prefix . 'includes/accounting_helper.php');
 
 // Verify session and admin status before outputting any HTML to prevent "headers already sent" warning
 if (!\AQNEX\Services\AuthService::isAdmin()) {
@@ -61,22 +62,26 @@ try {
         $box_paid_base = doubleval($row_box['paid']);
     }
 
-    // 3. استرجاع الكميات للمخزون (عكس الشراء: طرح البضاعة المشتراة وتحديث القيمة الكلية)
+    // 5. استرجاع الكميات للمخزون (عكس الشراء: طرح البضاعة المشتراة وتحديث القيمة الكلية)
     foreach ($items_rows as $item) {
         $qty = intval($item['quantity'] ?? 0);
         $item_name = trim((string)($item['name'] ?? ''));
-        $parts = explode(' ', $item_name, 2);
-        $product_id = intval($parts[0]);
+        if (empty($item_name)) continue;
 
-        if ($product_id > 0) {
+        $item_name_esc = $conn->real_escape_string($item_name);
+        // البحث عن المنتج بالاسم الفعلي بدلاً من الـ ID غير الدقيق
+        $prod_res = $conn->query("SELECT id FROM products WHERE name = '$item_name_esc' AND delete_status = 0 LIMIT 1");
+        if ($prod_res && $prod_res->num_rows > 0) {
+            $product_id = intval($prod_res->fetch_assoc()['id']);
             $conn->query("UPDATE products SET quantity = GREATEST(0, quantity - $qty), total = quantity * buy_price WHERE id = $product_id");
-        } elseif (!empty($item_name)) {
-            $item_name_esc = $conn->real_escape_string($item_name);
-            $conn->query("UPDATE products SET quantity = GREATEST(0, quantity - $qty), total = quantity * buy_price WHERE name = '$item_name_esc' LIMIT 1");
+            // إضافة سجل حركة مخزون عكسي
+            $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
+                          SELECT id, name, 'manual', -$qty, quantity, 'حذف فاتورة مشتريات رقم #$invoice_id', '" . $_SESSION['SESS_FIRST_NAME'] . "'
+                          FROM products WHERE id = $product_id LIMIT 1");
         }
     }
 
-    // 4. عكس تأثير المردودات المرتبطة بهذه الفاتورة إذا كانت موجودة (إضافة كمية المردودات الملغاة للمخزون)
+    // 6. عكس تأثير المردودات المرتبطة بهذه الفاتورة إذا كانت موجودة (إضافة كمية المردودات الملغاة للمخزون)
     $res_returns = $conn->query("SELECT product_id, quantity FROM purchase_returns WHERE purchase_id = $invoice_id AND status = 'active'");
     if ($res_returns) {
         while ($ret = $res_returns->fetch_assoc()) {
@@ -109,6 +114,7 @@ try {
     }
 
     // 7. حذف سجلات المردودات والقيود والنشطة من الجداول الفعالة
+    $conn->query("DELETE FROM accounting_journal_entries WHERE (source_type = 'purchase' AND source_id = $invoice_id) OR (source_type = 'return' AND source_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id))");
     $conn->query("DELETE FROM journal_entries WHERE ref_type = 'return' AND ref_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id)");
     $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'return' AND ref_id IN (SELECT id FROM purchase_returns WHERE purchase_id = $invoice_id)");
     $conn->query("DELETE FROM purchase_returns WHERE purchase_id = $invoice_id");
@@ -123,7 +129,7 @@ try {
 
     // 9. استرجاع المبلغ المدفوع إلى الصندوق إذا كانت الفاتورة قد خُصمت منه أصلاً
     if ($box_paid_base > 0 && $inv_box_id > 0) {
-        $conn->query("UPDATE treasury SET mony = mony + $box_paid_base WHERE box_id = $inv_box_id");
+        update_box_balance($conn, $inv_box_id, $box_paid_base, 'addition', "إلغاء دفعة فاتورة مشتريات رقم #$invoice_id بسبب حذف الفاتورة", $inv_date);
     }
 
     // 10. حذف الفاتورة الرئيسية

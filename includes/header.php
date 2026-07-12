@@ -10,8 +10,14 @@ $prefix = isset($dir_prefix) ? $dir_prefix : '';
 require_once(__DIR__ . '/connect.php');
 require_once(__DIR__ . '/../app/Services/AuthService.php');
 require_once(__DIR__ . '/../app/Services/SettingsService.php');
+require_once(__DIR__ . '/../app/Services/BranchService.php');
 require_once(__DIR__ . '/icons.php');
 require_once(__DIR__ . '/accounting_helper.php');
+
+$h_active_branch_id = \AQNEX\Services\BranchService::getCurrentBranchId();
+$h_active_warehouse_id = \AQNEX\Services\BranchService::getCurrentWarehouseId();
+$h_branches = \AQNEX\Services\BranchService::getAvailableBranches();
+$h_warehouses = \AQNEX\Services\BranchService::getWarehousesForBranch($h_active_branch_id);
 
 // حماية الصفحات باستثناء صفحة تسجيل الدخول ونسيان كلمة المرور
 $current_page = basename($_SERVER['PHP_SELF']);
@@ -369,8 +375,17 @@ try {
                     <span class="topbar-brand-name"><?php echo !empty($global_settings['store_name']) ? htmlspecialchars($global_settings['store_name']) : 'AQNEX POS'; ?></span>
                     <!-- <span class="topbar-brand-sub">نظام إدارة المبيعات والمحاسبة</span> -->
                 </div>
+                
             </div>
-
+        <!-- اسم النظام وشعار الماركة -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <div style="width:28px;height:28px;background:linear-gradient(135deg,#1e293b,#334155);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <i class="bi bi-grid-3x3-gap-fill" style="color:#fff;font-size:.75rem;"></i>
+            </div>
+            <div>
+                <div style="font-weight:800;font-size:.82rem;color:#fff;letter-spacing:.04em;line-height:1.1;">AQNEX ERP</div>
+            </div>
+        </div>
             <!-- الجانب الأوسط: التاريخ والوقت المباشر -->
             <div class="topbar-datetime">
 
@@ -385,6 +400,90 @@ try {
                     <i class="bi bi-calendar3"></i>
                 </div>
             </div>
+
+            <!-- الجانب الأوسط المساعد: مبدل الفروع والمستودعات -->
+            <div class="topbar-branch-selector no-print" style="display: flex; gap: 10px; align-items: center; margin-left: auto; margin-right: 20px;">
+                <!-- الفرع -->
+                <div style="display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 2px 8px; gap: 4px;">
+                    <i class="bi bi-building" style="color: #38bdf8; font-size: 13px;"></i>
+                    <select id="topbar-select-branch" style="background: transparent; color: #fff; border: none; font-size: 12px; font-weight: bold; outline: none; cursor: pointer; padding: 3px 6px;">
+                        <?php foreach ($h_branches as $branch): ?>
+                            <option value="<?php echo $branch['id']; ?>" <?php echo ($branch['id'] == $h_active_branch_id) ? 'selected' : ''; ?> style="background: #0f172a; color: #fff;">
+                                <?php echo htmlspecialchars($branch['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <!-- المستودع -->
+                <div style="display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 2px 8px; gap: 4px;">
+                    <i class="bi bi-box-seam" style="color: #fbbf24; font-size: 13px;"></i>
+                    <select id="topbar-select-warehouse" style="background: transparent; color: #fff; border: none; font-size: 12px; font-weight: bold; outline: none; cursor: pointer; padding: 3px 6px;">
+                        <?php foreach ($h_warehouses as $wh): ?>
+                            <option value="<?php echo $wh['id']; ?>" <?php echo ($wh['id'] == $h_active_warehouse_id) ? 'selected' : ''; ?> style="background: #0f172a; color: #fff;">
+                                <?php echo htmlspecialchars($wh['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                var branchSelect = document.getElementById('topbar-select-branch');
+                var whSelect = document.getElementById('topbar-select-warehouse');
+
+                if (branchSelect) {
+                    branchSelect.addEventListener('change', function() {
+                        var branchId = this.value;
+                        var formData = new URLSearchParams();
+                        formData.append('branch_id', branchId);
+                        
+                        fetch('<?php echo $prefix; ?>ajax/switch_branch.php', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: formData.toString()
+                        })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            if (data.status === 'success') {
+                                window.location.reload();
+                            } else {
+                                alert(data.message);
+                            }
+                        })
+                        .catch(function(err) {
+                            console.error(err);
+                        });
+                    });
+                }
+
+                if (whSelect) {
+                    whSelect.addEventListener('change', function() {
+                        var whId = this.value;
+                        var formData = new URLSearchParams();
+                        formData.append('warehouse_id', whId);
+                        
+                        fetch('<?php echo $prefix; ?>ajax/switch_branch.php', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: formData.toString()
+                        })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            if (data.status === 'success') {
+                                window.location.reload();
+                            } else {
+                                alert(data.message);
+                            }
+                        })
+                        .catch(function(err) {
+                            console.error(err);
+                        });
+                    });
+                }
+            });
+            </script>
 
             <!-- الجانب الأيسر: بيانات المستخدم + تسجيل خروج -->
             <div class="topbar-user-area">

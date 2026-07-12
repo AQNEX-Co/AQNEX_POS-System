@@ -222,6 +222,8 @@ if ($is_admin) {
 ?>
 <title>إدارة الصناديق والحسابات النقدية - AQNEX POS</title>
 
+<div class="page-inner">
+
 <div class="row no-print mb-4">
     <div class="col-md-6">
         <h3 class="text-secondary font-weight-bold">
@@ -548,6 +550,7 @@ function openEditModal(box) {
 </script>
 <?php endif; ?>
 
+</div><!-- end .page-inner -->
 <?php
 require_once($dir_prefix . 'includes/footer.php');
 ?>

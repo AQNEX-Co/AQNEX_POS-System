@@ -31,6 +31,7 @@ if (isset($_GET['id'])) {
             $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE ref_type = 'expense' AND ref_id = $sid");
             
             // 3. حذف القيود المحاسبية من الجداول الفعالة (إصلاح قيد journal_entries المفقود)
+            $conn->query("DELETE FROM accounting_journal_entries WHERE source_type = 'expense' AND source_id = $sid");
             $conn->query("DELETE FROM journal_entries WHERE ref_type = 'expense' AND ref_id = $sid");
             $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'expense' AND ref_id = $sid");
             

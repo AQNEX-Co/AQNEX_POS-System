@@ -3,108 +3,141 @@ $dir_prefix = '../';
 $module = 'purchases';
 $no_print_header = true;
 require_once($dir_prefix . 'includes/header.php');
-check_permission(['admin', 'inventory', 'cashier']);
+check_permission(['admin', 'cashier']);
 
 $settings = $global_settings;
 $error = '';
 $success = '';
 $saved_return_id = 0;
-$today_date = date('Y-m-d');
+
+$active_box_id = get_user_box_id($conn, $_SESSION['SESS_MEMBER_ID']);
+$box_name = get_box_name($conn, $active_box_id);
+$user_name = $_SESSION['SESS_FIRST_NAME'];
 
 // ==========================================
-// معالجة تسجيل مرتجع مشتريات
+// معالجة تسجيل مرتجع مشتريات (متعدد الأصناف)
 // ==========================================
 if (isset($_POST['btn_save_return'])) {
     $purchase_id   = intval($_POST['purchase_id']);
-    $product_id    = intval($_POST['product_id']);
-    $p_name        = $conn->real_escape_string(trim($_POST['product_name']));
-    $qty           = intval($_POST['qty_return']);
-    $unit_price    = doubleval($_POST['unit_price_yer']);   // بالريال اليمني
-    $refund_amount = $qty * $unit_price;
     $reason        = $conn->real_escape_string(trim($_POST['reason']));
     $return_date   = $conn->real_escape_string($_POST['return_date']);
-    $user_name     = $conn->real_escape_string($_SESSION['SESS_FIRST_NAME']);
     $refund_method = $_POST['refund_method'] === 'credit' ? 'credit' : 'cash';
-    $refund_source = (isset($_POST['refund_source']) && $_POST['refund_source'] === 'box') ? 'box' : 'purchases';
+    $refund_source = 'box'; // استرداد نقدي للصندوق مباشرة
 
-    $active_box_id = get_user_box_id($conn, $_SESSION['SESS_MEMBER_ID']);
-    $box_name = get_box_name($conn, $active_box_id);
+    // جلب بيانات الفاتورة الأصلية للمقارنة
+    $pur_res = $conn->query("SELECT * FROM purchases WHERE id = $purchase_id LIMIT 1");
+    $pur_row = $pur_res ? $pur_res->fetch_assoc() : null;
 
-    // جلب تفاصيل الفاتورة
-    $res_pur = $conn->query("SELECT * FROM purchases WHERE id = $purchase_id LIMIT 1");
-    $pur_row = $res_pur ? $res_pur->fetch_assoc() : null;
+    $product_ids = isset($_POST['product_ids']) ? $_POST['product_ids'] : [];
+    $product_names = isset($_POST['product_names']) ? $_POST['product_names'] : [];
+    $qty_returns = isset($_POST['qty_returns']) ? $_POST['qty_returns'] : [];
+    $unit_prices = isset($_POST['unit_prices']) ? $_POST['unit_prices'] : [];
+    $unit_names = isset($_POST['unit_names']) ? $_POST['unit_names'] : [];
 
-    if ($qty <= 0 || $product_id <= 0 || empty($p_name)) {
-        $error = 'الرجاء تحديد المنتج والكمية المرتجعة بشكل صحيح.';
-    } elseif ($purchase_id <= 0 || !$pur_row) {
+    if ($purchase_id <= 0 || !$pur_row) {
         $error = 'الرجاء تحديد فاتورة المشتريات الأصلية أولاً.';
+    } elseif (empty($product_ids)) {
+        $error = 'لا توجد بنود قابلة للإرجاع.';
     } else {
         $supplier_name = $pur_row['supp_name'];
         $currency_code = $pur_row['currency_code'] ?? 'YER';
         $exchange_rate = doubleval($pur_row['exchange_rate'] ?? 1.0);
         if ($exchange_rate <= 0) $exchange_rate = 1.0;
 
-        // التحقق من الكمية المتوفرة في المخزن لهذا المنتج
-        $res_prod = $conn->query("SELECT quantity FROM products WHERE id = $product_id LIMIT 1");
-        $prod_qty = $res_prod ? intval($res_prod->fetch_assoc()['quantity']) : 0;
+        $conn->begin_transaction();
+        try {
+            $has_processed = false;
+            $total_refund_amount = 0;
 
-        // التحقق من الكمية الممكن إرجاعها من هذه الفاتورة
-        $res_chk = $conn->query("SELECT COALESCE(SUM(quantity),0) AS ret FROM purchase_returns WHERE purchase_id=$purchase_id AND product_id=$product_id AND status='active'");
-        $already_ret = $res_chk ? intval($res_chk->fetch_assoc()['ret']) : 0;
+            $count = count($product_ids);
+            for ($i = 0; $i < $count; $i++) {
+                $product_id = intval($product_ids[$i]);
+                $p_name = trim($product_names[$i]);
+                $qty = intval($qty_returns[$i]);
+                $unit_price = doubleval($unit_prices[$i]); // سعر البند بالفاتورة (YER)
+                $unit_name = isset($unit_names[$i]) ? trim($unit_names[$i]) : 'الوحدة الأساسية';
+                if (empty($unit_name)) $unit_name = 'الوحدة الأساسية';
 
-        // جلب الكمية المشتراة في الفاتورة الأصلية
-        $res_orig = $conn->query("SELECT quantity FROM purchase_items WHERE purchase_id = $purchase_id AND name = '" . $conn->real_escape_string($p_name) . "' LIMIT 1");
-        $orig_qty = $res_orig ? intval($res_orig->fetch_assoc()['quantity']) : 0;
-        $can_return = $orig_qty - $already_ret;
+                if ($qty <= 0) continue;
 
-        if ($qty > $can_return) {
-            $error = "لا يمكن إرجاع {$qty} وحدة. المتبقي القابل للإرجاع من الفاتورة: {$can_return} وحدة (الكمية المشتراة: {$orig_qty} وحدة).";
-        } elseif ($qty > $prod_qty) {
-            $error = "لا يمكن إرجاع {$qty} وحدة. الكمية المتوفرة حالياً في المخزن هي {$prod_qty} وحدة فقط.";
-        } else {
-            // البدء في المعاملة المالية وقيد المرتجع
-            $conn->begin_transaction();
-            try {
+                $refund_amount = $qty * $unit_price;
+                $p_name_esc = $conn->real_escape_string($p_name);
+                $unit_name_esc = $conn->real_escape_string($unit_name);
+
+                // التحقق من الكمية المتوفرة في المخزن لهذا المنتج بالوحدة الأساسية
+                $res_prod = $conn->query("SELECT quantity FROM products WHERE id = $product_id LIMIT 1");
+                $prod_qty = $res_prod ? intval($res_prod->fetch_assoc()['quantity']) : 0;
+
+                // التحقق من الكمية الممكن إرجاعها من هذه الفاتورة
+                $res_chk = $conn->query("SELECT COALESCE(SUM(quantity),0) AS ret FROM purchase_returns WHERE purchase_id=$purchase_id AND product_id=$product_id AND status='active'");
+                $already_ret = $res_chk ? intval($res_chk->fetch_assoc()['ret']) : 0;
+
+                // جلب الكمية المشتراة في الفاتورة الأصلية
+                $p_name_store = $p_name;
+                if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية' && strpos($p_name_store, "($unit_name)") === false) {
+                    $p_name_store .= " ($unit_name)";
+                }
+                $p_name_store_esc = $conn->real_escape_string($p_name_store);
+                
+                $res_orig = $conn->query("SELECT quantity FROM purchase_items WHERE purchase_id = $purchase_id AND name = '$p_name_store_esc' LIMIT 1");
+                $orig_qty = $res_orig ? intval($res_orig->fetch_assoc()['quantity']) : 0;
+                $can_return = $orig_qty - $already_ret;
+
+                if ($qty > $can_return) {
+                    throw new Exception("لا يمكن إرجاع {$qty} وحدة من المنتج \"{$p_name}\". المتبقي القابل للإرجاع هو {$can_return} وحدة.");
+                }
+
+                // حساب كمية المرتجع بالوحدات الأساسية
+                $conv_factor = 1.0;
+                if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية') {
+                    $u_res = $conn->query("SELECT conversion_factor FROM product_units WHERE product_id = $product_id AND unit_name = '$unit_name_esc' LIMIT 1");
+                    if ($u_res && $u_res->num_rows > 0) {
+                        $conv_factor = doubleval($u_res->fetch_assoc()['conversion_factor']);
+                    }
+                }
+                $base_qty = $qty * $conv_factor;
+
+                if ($base_qty > $prod_qty) {
+                    throw new Exception("لا يمكن إرجاع الكمية المطلوبة من الصنف \"{$p_name}\". المتوفر بالمستودع حالياً هو {$prod_qty} وحدة أساسية (المطلوب سحبه: {$base_qty}).");
+                }
+
                 // 1. إدراج سجل المرتجع
                 $sql_ins = "INSERT INTO purchase_returns
                     (purchase_id, product_id, product_name, quantity, unit_price, refund_amount,
-                     reason, return_date, user, status, box_id, refund_method, refund_source, currency_code, exchange_rate)
+                     reason, return_date, user, status, box_id, refund_method, refund_source, currency_code, exchange_rate, unit_name)
                     VALUES
-                    ($purchase_id, $product_id, '$p_name', $qty, $unit_price, $refund_amount,
-                     '$reason', '$return_date', '$user_name', 'active', $active_box_id, '$refund_method', '$refund_source', '$currency_code', $exchange_rate)";
+                    ($purchase_id, $product_id, '$p_name_esc', $qty, $unit_price, $refund_amount,
+                     '$reason', '$return_date', '$user_name', 'active', $active_box_id, '$refund_method', '$refund_source', '$currency_code', $exchange_rate, '$unit_name_esc')";
                 
                 if (!$conn->query($sql_ins)) {
                     throw new Exception('فشل حفظ المرتجع: ' . $conn->error);
                 }
-                
                 $saved_return_id = $conn->insert_id;
 
-                 // 2. تخفيض الكمية في المخزن وتحديث القيمة الكلية
-                 if (!$conn->query("UPDATE products SET quantity = quantity - $qty, total = quantity * buy_price WHERE id = $product_id")) {
-                     throw new Exception('فشل تحديث كمية المنتج في المخزن: ' . $conn->error);
-                 }
+                // 2. تخفيض الكمية في المخزن وتحديث القيمة الكلية
+                if (!$conn->query("UPDATE products SET quantity = GREATEST(0, quantity - $base_qty), total = quantity * buy_price WHERE id = $product_id")) {
+                    throw new Exception('فشل تحديث كمية المنتج في المخزن: ' . $conn->error);
+                }
 
                 // 3. إضافة سجل حركة المخزن
                 if (!$conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
-                              SELECT id, name, 'manual', -$qty, quantity, 'مرتجع شراء فاتورة رقم #{$purchase_id} - {$reason}', '$user_name'
-                              FROM products WHERE id = $product_id LIMIT 1")) {
+                              VALUES ($product_id, '$p_name_esc', 'manual', -$base_qty, (SELECT quantity FROM products WHERE id = $product_id LIMIT 1), 'مرتجع شراء فاتورة رقم #{$purchase_id} - {$reason}', '$user_name')")) {
                     throw new Exception('فشل إضافة سجل حركة المخزون: ' . $conn->error);
                 }
 
-                // 4. استرداد المبلغ
+                // 4. استرداد المبلغ وتحديث فاتورة الشراء الأصلية
                 if ($refund_amount > 0) {
                     if (!$conn->query("UPDATE purchases SET total = GREATEST(0, total - $refund_amount), remaining_total = GREATEST(0, remaining_total - $refund_amount) WHERE id = $purchase_id")) {
                         throw new Exception('فشل تحديث إجمالي الفاتورة الأصلية: ' . $conn->error);
                     }
                 }
-                 // تم نقل تعديل الذمم الدائنة للمورد ليكون حصرياً في خيار الآجل (الكريديت) في الأسفل لمنع الازدواج المالي ولأن النقد لا يؤثر على حساب المورد المالي
 
                 if ($refund_method === 'cash') {
-                    if ($refund_source === 'box' && $refund_amount > 0) {
+                    if ($refund_amount > 0) {
                         update_box_balance($conn, $active_box_id, $refund_amount, 'addition', "مرتجع شراء فاتورة #{$purchase_id} - {$p_name}", $return_date);
                     }
                     
-                    $debit_acc = ($refund_source === 'box') ? 'الصندوق - ' . $box_name : 'المشتريات';
+                    $debit_acc = 'الصندوق - ' . $box_name;
                     if (!post_journal_entry($conn, 'return', $saved_return_id, $debit_acc, 'المخزون / البضاعة', $refund_amount, "مرتجع مشتريات نقداً #{$purchase_id} - {$p_name}", $user_name, $active_box_id)) {
                         throw new Exception('فشل تسجيل قيد مرتجع المشتريات نقداً');
                     }
@@ -120,13 +153,18 @@ if (isset($_POST['btn_save_return'])) {
                         throw new Exception('فشل تسجيل قيد مرتجع المشتريات آجل');
                     }
                 }
-
-                $conn->commit();
-                $success = "✓ تم تسجيل مرتجع شراء {$qty} وحدة من \"{$p_name}\" بنجاح! طريقة الرد: " . ($refund_method === 'cash' ? 'نقداً إلى الصندوق' : 'خصم من حساب المورد') . ". المبلغ: " . number_format($refund_amount, 2) . " ر.ي";
-            } catch (Exception $e) {
-                $conn->rollback();
-                $error = 'حدث خطأ أثناء معالجة المرتجع: ' . $e->getMessage();
+                $has_processed = true;
             }
+
+            if (!$has_processed) {
+                throw new Exception("الرجاء إدخال كمية مرتجعة أكبر من الصفر لصنف واحد على الأقل.");
+            }
+
+            $conn->commit();
+            $success = '✓ تم تسجيل مردود المشتريات وتحديث المخازن والحسابات بنجاح.';
+        } catch (Exception $e) {
+            $conn->rollback();
+            $error = 'فشل تسجيل المرتجع: ' . $e->getMessage();
         }
     }
 }
@@ -136,38 +174,49 @@ if (isset($_POST['btn_save_return'])) {
 // ==========================================
 if (isset($_GET['cancel_ret']) && is_numeric($_GET['cancel_ret'])) {
     $ret_id = intval($_GET['cancel_ret']);
-    $res_ret = $conn->query("SELECT * FROM purchase_returns WHERE id=$ret_id AND status='active' LIMIT 1");
+    $res_ret = $conn->query("SELECT * FROM purchase_returns WHERE id = $ret_id AND status = 'active' LIMIT 1");
     $ret_row = $res_ret ? $res_ret->fetch_assoc() : null;
 
     if ($ret_row) {
         $conn->begin_transaction();
         try {
-            if (!$conn->query("UPDATE purchase_returns SET status='cancelled' WHERE id=$ret_id")) {
-                throw new Exception("فشل تحديث حالة المرتجع");
+            if (!$conn->query("UPDATE purchase_returns SET status = 'cancelled' WHERE id = $ret_id")) {
+                throw new Exception("فشل إلغاء حركة المرتجع");
             }
-            
-            $qty           = intval($ret_row['quantity']);
-            $product_id    = intval($ret_row['product_id']);
-            $refund        = doubleval($ret_row['refund_amount']);
+
             $p_id          = intval($ret_row['purchase_id']);
+            $product_id    = intval($ret_row['product_id']);
+            $qty           = intval($ret_row['quantity']);
+            $refund        = doubleval($ret_row['refund_amount']);
             $refund_method = $ret_row['refund_method'];
             $box_id        = intval($ret_row['box_id']);
             $box_name      = get_box_name($conn, $box_id);
             $uname         = $conn->real_escape_string($_SESSION['SESS_FIRST_NAME']);
+            $today_date    = date("Y-m-d H:i:s");
 
-            // جلب اسم المورد
-            $res_pur = $conn->query("SELECT supp_name FROM purchases WHERE id=$p_id LIMIT 1");
-            $pur_row = $res_pur ? $res_pur->fetch_assoc() : null;
-            $supplier_name = $pur_row ? $pur_row['supp_name'] : '';
+            // جلب المورد الأصلي
+            $pur_check = $conn->query("SELECT supp_name FROM purchases WHERE id = $p_id LIMIT 1");
+            $supplier_name = $pur_check ? $pur_check->fetch_assoc()['supp_name'] : '';
 
-             // إعادة إضافة الكمية للمخزن وتحديث القيمة الكلية
-             if (!$conn->query("UPDATE products SET quantity = quantity + $qty, total = quantity * buy_price WHERE id=$product_id")) {
-                 throw new Exception("فشل إعادة الكمية للمخزن");
-             }
+            // حساب كمية المرتجع بالوحدات الأساسية لعكسها بالمستودع
+            $conv_factor = 1.0;
+            $unit_name = $ret_row['unit_name'];
+            if (!empty($unit_name)) {
+                $unit_res = $conn->query("SELECT conversion_factor FROM product_units WHERE product_id = $product_id AND unit_name = '" . $conn->real_escape_string($unit_name) . "' LIMIT 1");
+                if ($unit_res && $unit_res->num_rows > 0) {
+                    $conv_factor = doubleval($unit_res->fetch_assoc()['conversion_factor']);
+                }
+            }
+            $base_qty = $qty * $conv_factor;
+
+            // إعادة إضافة الكمية للمخزن وتحديث القيمة الكلية
+            if (!$conn->query("UPDATE products SET quantity = quantity + $base_qty, total = quantity * buy_price WHERE id=$product_id")) {
+                throw new Exception("فشل إعادة الكمية للمخزن");
+            }
 
             // سجل حركة المخزن
             if (!$conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
-                          SELECT id, name, 'manual', $qty, quantity, 'إلغاء مرتجع شراء #{$ret_id}', '$uname'
+                          SELECT id, name, 'manual', $base_qty, quantity, 'إلغاء مرتجع شراء #{$ret_id}', '$uname'
                           FROM products WHERE id = $product_id LIMIT 1")) {
                 throw new Exception("فشل إضافة سجل حركة المخزون");
             }
@@ -195,7 +244,6 @@ if (isset($_GET['cancel_ret']) && is_numeric($_GET['cancel_ret'])) {
                 }
             }
 
-             // تم إلغاء الكود المكرر لتعديل حساب المورد للمرتجع النقدي هنا لمنع الازدواج المحاسبي
             if (!$conn->query("UPDATE purchases SET total = total + $refund, remaining_total = remaining_total + $refund WHERE id = $p_id")) {
                 throw new Exception("فشل تحديث الفاتورة الأصلية");
             }
@@ -226,93 +274,25 @@ if ($res_all_ret) {
     while($r = $res_all_ret->fetch_assoc()) $all_returns[] = $r;
 }
 ?>
-<title>مردودات المشتريات - <?php echo htmlspecialchars($settings['store_name'] ?? 'النظام'); ?></title>
+<title>فاتورة مردودات المشتريات - تكنولوجيا فون</title>
 
 <style>
 @media print {
-    #sidebar, .navbar-top, .no-print, .btn-flat { display: none !important; }
+    #sidebar, .navbar-top, .no-print, .btn-flat, hr, .card-header { display: none !important; }
     #content { margin: 0 !important; padding: 0 !important; }
-    .receipt-print { display: block !important; }
     body { background: #fff !important; }
 }
-.receipt-print { display: none; }
-.invoice-items-table tr:hover { background: #f8f9fa; }
-.ret-card { border: 2px solid var(--secondary); }
-.search-invoice-input { font-size: 1.1rem; font-weight: bold; }
+.ret-card { border: 1px solid var(--border-color); }
+.search-invoice-input { font-size: 1.15rem; font-weight: bold; }
 .invoice-badge { padding: 3px 8px; font-size: 0.78rem; font-weight: bold; }
-.can-return { color: var(--accent-success); font-weight: bold; }
-.no-return  { color: #ccc; }
-.qty-input-inline { width: 70px !important; text-align: center; }
 </style>
 
-<?php if (!empty($success) && $saved_return_id > 0):
-    $res_ret_view = $conn->query("SELECT pr.*, p.supp_name, p.date as purchase_date FROM purchase_returns pr LEFT JOIN purchases p ON pr.purchase_id=p.id WHERE pr.id=$saved_return_id LIMIT 1");
-    $ret_view = $res_ret_view ? $res_ret_view->fetch_assoc() : null;
-?>
-<!-- ===== إيصال المرتجع للطباعة ===== -->
-<div class="alert alert-success rounded-0 mb-3 no-print">
-    <?php echo $success; ?>
-    <button onclick="window.print()" class="btn-flat btn-flat-primary btn-sm mr-3">
-          <?php echo get_icon('print', 'ml-1'); ?> طباعة إيصال المرتجع
-    </button>
-    <a href="returns.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none mr-2">إدارة المردودات</a>
-    <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">قائمة المشتريات</a>
-</div>
-
-<!-- إيصال المرتجع للطباعة -->
-<div class="receipt-print" id="returnReceipt" style="display:block; border: 1px solid #333; max-width:350px; margin: 0 auto; padding: 15px; font-family: 'Courier New', monospace; direction: rtl;">
-    <div style="text-align:center; border-bottom: 2px dashed #333; padding-bottom:10px; margin-bottom:10px;">
-        <h4 style="margin:0; font-weight:bold;"><?php echo htmlspecialchars($settings['store_name'] ?? 'المتجر'); ?></h4>
-        <small><?php echo htmlspecialchars($settings['address'] ?? ''); ?></small><br>
-        <small>ت: <?php echo htmlspecialchars($settings['phone'] ?? ''); ?></small>
-    </div>
-
-    <div style="text-align:center; background:#f0f0f0; padding:5px; margin-bottom:10px;">
-        <strong style="font-size:1.1rem;">إيصال مرتجع مشتريات</strong><br>
-        <small>رقم المرتجع: <strong>#<?php echo $saved_return_id; ?></strong></small>
-    </div>
-
-    <?php if ($ret_view): ?>
-    <table style="width:100%; font-size:0.85rem; margin-bottom:10px;">
-        <tr><td>فاتورة شراء أصلية:</td><td style="text-align:left;"><strong>#<?php echo $ret_view['purchase_id']; ?></strong></td></tr>
-        <tr><td>المورد:</td><td style="text-align:left;"><?php echo htmlspecialchars($ret_view['supp_name'] ?? '-'); ?></td></tr>
-        <tr><td>تاريخ المردود:</td><td style="text-align:left;"><?php echo htmlspecialchars($ret_view['return_date']); ?></td></tr>
-        <tr><td>المنتج:</td><td style="text-align:left;"><strong><?php echo htmlspecialchars($ret_view['product_name']); ?></strong></td></tr>
-        <tr><td>الكمية المرتجعة:</td><td style="text-align:left;"><?php echo intval($ret_view['quantity']); ?> وحدة</td></tr>
-        <tr><td>سعر الوحدة:</td><td style="text-align:left;"><?php echo number_format($ret_view['unit_price'], 2); ?> ر.ي</td></tr>
-        <tr style="font-size:1rem; font-weight:bold; border-top:2px solid #333;">
-            <td>المبلغ المسترد:</td>
-            <td style="text-align:left;"><?php echo number_format($ret_view['refund_amount'], 2); ?> ر.ي</td>
-        </tr>
-        <tr><td>السبب:</td><td style="text-align:left; font-size:0.8rem;"><?php echo htmlspecialchars($ret_view['reason']); ?></td></tr>
-        <tr><td>المسؤول:</td><td style="text-align:left;"><?php echo htmlspecialchars($ret_view['user']); ?></td></tr>
-    </table>
-    <?php endif; ?>
-
-    <div style="text-align:center; border-top: 2px dashed #333; padding-top:8px; font-size:0.8rem;">
-        <?php echo htmlspecialchars($settings['receipt_footer'] ?? ''); ?>
-    </div>
-</div>
-
-<script>
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') { e.preventDefault(); window.print(); }
-});
-</script>
-<hr class="my-4 no-print">
-<?php endif; ?>
-
-<?php if (!empty($error)): ?>
-<div class="alert alert-danger rounded-0 mb-4 no-print"><?php echo htmlspecialchars($error); ?></div>
-<?php endif; ?>
-
-<!-- ===== رأس الصفحة ===== -->
-<div class="row mb-3 no-print">
-    <div class="col-md-7">
+<div class="row no-print mb-4">
+    <div class="col-md-7 text-right">
         <h3 class="text-secondary font-weight-bold mb-1">
-            <i class="fa fa-undo ml-2 text-primary"></i> إدارة مردودات المشتريات
+            <i class="fa fa-undo ml-2 text-primary"></i> فاتورة مردودات المشتريات
         </h3>
-        <p class="text-muted small mb-0">ابحث عن فاتورة الشراء، حدد البنود المرتجعة للمورد، وسيحتسب المبلغ تلقائياً.</p>
+        <p class="text-muted small mb-0">أدخل رقم فاتورة المشتريات أو اضغط F2 للبحث عنها، ثم حدد الكميات المرتجعة لحفظ المردود للمورد.</p>
     </div>
     <div class="col-md-5 text-left">
         <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none ml-2">
@@ -324,177 +304,184 @@ document.addEventListener('keydown', function(e) {
     </div>
 </div>
 
-<div class="row no-print">
-    <!-- ===== نموذج تسجيل المرتجع ===== -->
-    <div class="col-lg-6 mb-4">
-        <div class="card-flat ret-card mt-5">
-            <div class="card-header" style="background: var(--secondary); color: #fff;">
-                <h5 class="mb-0 font-weight-bold"><i class="fa fa-undo ml-2"></i> تسجيل مرتجع شراء جديد</h5>
-            </div>
-            <div class="card-body">
+<?php if (!empty($success)): ?>
+    <div class="alert alert-success rounded-0 mb-4 text-right no-print"><?php echo htmlspecialchars($success); ?></div>
+<?php endif; ?>
+<?php if (!empty($error)): ?>
+    <div class="alert alert-danger rounded-0 mb-4 text-right no-print"><?php echo htmlspecialchars($error); ?></div>
+<?php endif; ?>
 
-                <!-- بحث الفاتورة -->
-                <div class="form-group mb-3">
-                    <label class="font-weight-bold text-secondary mb-1">
-                        <i class="fa fa-search ml-1"></i> رقم فاتورة الشراء *
-                    </label>
-                    <div class="input-group">
-                        <input type="number" id="invoiceSearchInput" class="form-control rounded-0 search-invoice-input"
-                               placeholder="أدخل رقم الفاتورة..." min="1">
-                        <div class="input-group-append">
-                            <button type="button" class="btn-flat btn-flat-primary px-3" onclick="searchInvoice()">
-                                <i class="fa fa-search ml-1"></i> بحث
-                            </button>
-                        </div>
-                    </div>
-                    <small class="text-muted">اضغط Enter أو زر بحث لتحميل البنود المشتراة  , اضغط زر F2 لاظهار فواتير المشتريات واختيار الفاتورة المطلوبة</small>
-                </div>
-
-                <!-- معلومات الفاتورة المجلوبة -->
-                <div id="invoiceInfo" style="display:none;" class="alert alert-info rounded-0 p-2 mb-3">
-                    <div class="row">
-                        <div class="col-6"><strong>فاتورة مشتريات #:</strong> <span id="invNum">-</span></div>
-                        <div class="col-6"><strong>المورد:</strong> <span id="invSupp">-</span></div>
-                        <div class="col-6"><strong>التاريخ:</strong> <span id="invDate">-</span></div>
-                        <div class="col-6"><strong>الإجمالي:</strong> <span id="invTotal">-</span></div>
-                    </div>
-                </div>
-
-                <!-- جدول منتجات الفاتورة -->
-                <div id="invoiceItemsSection" style="display:none;">
-                    <label class="font-weight-bold text-secondary mb-2">
-                        <i class="fa fa-list ml-1"></i> اختر المنتج المرتجع للمورد
-                    </label>
-                    <div class="table-responsive mb-3" style="max-height: 260px; overflow-y: auto; border: 1px solid #e2e8f0;">
-                        <table class="table-flat mb-0" id="invoiceItemsTable">
-                            <thead>
-                                <tr>
-                                    <th>المنتج</th>
-                                    <th style="width:12%;" class="text-center">المشتراة</th>
-                                    <th style="width:18%;" class="text-center">قابل للإرجاع</th>
-                                    <th style="width:16%;" class="text-center">سعر الشراء</th>
-                                    <th style="width:12%;" class="no-print text-center">تحديد</th>
-                                </tr>
-                            </thead>
-                            <tbody id="invoiceItemsBody">
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- نموذج المرتجع تفصيلياً -->
-                <form method="POST" id="returnForm">
-                    <input type="hidden" name="purchase_id"    id="ret_purchase_id" value="0">
-                    <input type="hidden" name="product_id"     id="ret_product_id" value="0">
-                    <input type="hidden" name="product_name"   id="ret_product_name" value="">
-                    <input type="hidden" name="unit_price_yer" id="ret_unit_price" value="0">
-
-                    <div id="returnFormFields" style="display:none;">
-                        <!-- المنتج المحدد -->
-                        <div class="alert alert-secondary rounded-0 p-2 mb-3" id="selectedProductInfo">
-                            <i class="fa fa-cube ml-1"></i>
-                            المنتج المحدد: <strong id="selectedProductLabel">-</strong>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6 form-group mb-3">
-                                <label class="font-weight-bold text-secondary mb-1">الكمية المرتجعة *</label>
-                                <input type="number" name="qty_return" id="ret_qty" class="form-control rounded-0 text-center font-weight-bold"
-                                       min="1" value="1" oninput="calcReturnAmount()">
-                                <small class="text-muted">الحد الأقصى: <span id="maxRetQty">0</span> وحدة</small>
-                            </div>
-                            <div class="col-md-6 form-group mb-3">
-                                <label class="font-weight-bold text-secondary mb-1">المبلغ المسترد (ر.ي)</label>
-                                <input type="text" id="ret_refund_display" class="form-control rounded-0 text-center font-weight-bold bg-light text-danger" readonly value="0.00">
-                                <small class="text-muted">يُحتسب تلقائياً × سعر الشراء الأصلي</small>
-                            </div>
-                        </div>
-
-                        <div class="form-group mb-3">
-                            <label class="font-weight-bold text-secondary mb-1">طريقة رد المبلغ من المورد *</label>
-                            <select name="refund_method" id="refund_method" class="form-control rounded-0" required>
-                                <option value="cash" selected>استلام نقدي إلى الصندوق</option>
-                                <option value="credit">خصم من حساب المورد (مديونية المورد)</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group mb-3">
-                            <label class="font-weight-bold text-secondary mb-1">سبب الإرجاع للمورد *</label>
-                            <select name="reason" class="form-control rounded-0" required>
-                                <option value="">-- اختر السبب --</option>
-                                <option value="منتج تالف / معيب من المصنع">منتج تالف / معيب من المصنع</option>
-                                <option value="شحنة خاطئة / لا تطابق المطلوب">شحنة خاطئة / لا تطابق المطلوب</option>
-                                <option value="انتهاء تاريخ الصلاحية أو الجودة">انتهاء تاريخ الصلاحية أو الجودة</option>
-                                <option value="فائض عن حاجة المستودع">فائض عن حاجة المستودع</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group mb-4">
-                            <label class="font-weight-bold text-secondary mb-1">تاريخ الاسترجاع</label>
-                            <input type="date" name="return_date" class="form-control rounded-0"
-                                   value="<?php echo date('Y-m-d'); ?>" required>
-                        </div>
-
-                        <button type="submit" name="btn_save_return" class="btn-flat btn-flat-primary btn-block py-2">
-                            <i class="fa fa-check ml-1"></i> تأكيد المرتجع للمورد وتحديث المخزون
+<form method="POST" id="returnForm" class="no-print">
+    <input type="hidden" name="purchase_id" id="ret_purchase_id" value="0">
+    
+    <!-- بطاقة الهيدر (تفاصيل الفاتورة مثل شاشة المشتريات تماماً) -->
+    <div class="card p-3 mb-4 text-right" dir="rtl">
+        <div class="row">
+            <!-- حقل رقم الفاتورة للبحث -->
+            <div class="col-md-3 mb-3">
+                <label class="form-label font-weight-bold text-secondary">رقم فاتورة المشتريات للبحث *</label>
+                <div class="input-group">
+                    <input type="number" id="invoiceSearchInput" class="form-control rounded-0 font-weight-bold text-center border-primary" style="font-size: 1.1rem;" placeholder="أدخل رقم الفاتورة...">
+                    <div class="input-group-append">
+                        <button type="button" class="btn btn-primary rounded-0 px-3" onclick="searchInvoice()">
+                            <i class="fa fa-search ml-1"></i> بحث
                         </button>
                     </div>
-                </form>
+                </div>
+                <small class="text-muted">اضغط <strong>F2</strong> لاختيار الفاتورة من القائمة.</small>
+            </div>
+
+            <!-- تاريخ المردود -->
+            <div class="col-md-2 mb-3">
+                <label class="form-label font-weight-bold text-secondary">تاريخ المردود</label>
+                <input type="date" name="return_date" class="form-control rounded-0 font-weight-bold text-center" value="<?php echo date('Y-m-d'); ?>" required>
+            </div>
+
+            <!-- المورد (تلقائي) -->
+            <div class="col-md-3 mb-3">
+                <label class="form-label font-weight-bold text-secondary">المورد</label>
+                <input type="text" id="invSuppDisplay" class="form-control rounded-0 font-weight-bold text-center bg-light" readonly value="-">
+            </div>
+
+            <!-- تاريخ الفاتورة الأصلي (تلقائي) -->
+            <div class="col-md-2 mb-3">
+                <label class="form-label font-weight-bold text-secondary">تاريخ الفاتورة</label>
+                <input type="text" id="invDateDisplay" class="form-control rounded-0 font-weight-bold text-center bg-light" readonly value="-">
+            </div>
+
+            <!-- الإجمالي الأصلي (تلقائي) -->
+            <div class="col-md-2 mb-3">
+                <label class="form-label font-weight-bold text-secondary">الإجمالي الأصلي</label>
+                <input type="text" id="invTotalDisplay" class="form-control rounded-0 font-weight-bold text-center bg-light text-primary" readonly value="-">
+            </div>
+        </div>
+
+        <!-- خيارات المردود (تظهر بعد تحميل الفاتورة) -->
+        <div class="row" id="refundOptionsRow" style="display:none; border-top: 1px solid #eee; padding-top: 15px;">
+            <!-- طريقة رد القيمة من المورد -->
+            <div class="col-md-4 mb-3">
+                <label class="form-label font-weight-bold text-secondary">طريقة رد القيمة من المورد *</label>
+                <select name="refund_method" id="refund_method" class="form-control rounded-0 font-weight-bold" required>
+                    <option value="cash" selected>استلام نقدي (تسليم فوري للصندوق)</option>
+                    <option value="credit">آجل (خصم من مديونية المورد)</option>
+                </select>
+            </div>
+
+            <!-- سبب الاسترجاع للمورد -->
+            <div class="col-md-4 mb-3">
+                <label class="form-label font-weight-bold text-secondary">سبب الاسترجاع للمورد *</label>
+                <select name="reason" class="form-control rounded-0 font-weight-bold" required>
+                    <option value="">-- اختر السبب --</option>
+                    <option value="منتج تالف / معيب من المصنع">منتج تالف / معيب من المصنع</option>
+                    <option value="شحنة خاطئة / لا تطابق المطلوب">شحنة خاطئة / لا تطابق المطلوب</option>
+                    <option value="انتهاء تاريخ الصلاحية أو الجودة">انتهاء تاريخ الصلاحية أو الجودة</option>
+                    <option value="فائض عن حاجة المستودع">فائض عن حاجة المستودع</option>
+                </select>
+            </div>
+
+            <!-- الصندوق المستلم إليه -->
+            <div class="col-md-4 mb-3">
+                <label class="form-label font-weight-bold text-secondary">الصندوق المستلم إليه</label>
+                <input type="text" class="form-control rounded-0 font-weight-bold text-center bg-light" readonly value="<?php echo htmlspecialchars($box_name); ?>">
             </div>
         </div>
     </div>
 
-    <!-- ===== سجل المردودات + المردودات السابقة للفاتورة ===== -->
-    <div class="col-lg-6 mb-4">
-        <!-- مردودات الفاتورة المحددة -->
-        <div id="invoiceReturnsSection" style="display:none;" class="card-flat mb-3">
-            <div class="card-header bg-warning">
-                <h6 class="mb-0 font-weight-bold text-dark"><i class="fa fa-history ml-1"></i> مردودات سابقة لهذه الفاتورة</h6>
+    <!-- جدول الأصناف مرئي وكامل العرض (يظهر بعد اختيار الفاتورة) -->
+    <div id="invoiceItemsSection" style="display:none;">
+        <div class="card-flat ret-card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0 text-dark font-weight-bold"><i class="fa fa-list ml-2 text-primary"></i> جدول الأصناف الفعلي بالفاتورة والكميات المسترجعة للمورد</h5>
             </div>
             <div class="card-body p-0">
-                <table class="table-flat mb-0" id="prevReturnsTable">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>المنتج</th>
-                            <th class="text-center">الكمية</th>
-                            <th>المسترد</th>
-                            <th class="text-center">إلغاء</th>
-                        </tr>
-                    </thead>
-                    <tbody id="prevReturnsBody">
-                    </tbody>
-                </table>
+                <div class="table-responsive">
+                    <table class="table-flat mb-0" id="invoiceItemsTable">
+                        <thead>
+                            <tr>
+                                <th>اسم الصنف والوصف</th>
+                                <th style="width: 12%;" class="text-center">الوحدة</th>
+                                <th style="width: 12%;" class="text-center">الكمية المشتراة</th>
+                                <th style="width: 15%;" class="text-center">القابلة للإرجاع</th>
+                                <th style="width: 15%;" class="text-center">سعر الشراء بالفاتورة</th>
+                                <th style="width: 15%;" class="text-center">كمية المرتجع</th>
+                                <th style="width: 15%;" class="text-center">إجمالي الارتجاع</th>
+                            </tr>
+                        </thead>
+                        <tbody id="invoiceItemsBody">
+                            <tr><td colspan="7" class="text-center text-muted p-4">الرجاء اختيار الفاتورة أولاً لعرض الأصناف</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
-        <!-- سجل كل مردودات المشتريات -->
-        <div class="card-flat">
-            <div class="card-header">
-                <h5><i class="fa fa-list ml-2"></i> سجل مردودات المشتريات الكامل</h5>
-                <small class="text-muted">آخر 150 مرتجع شراء</small>
+        <!-- الملخص المالي والاعتماد -->
+        <div class="row justify-content-end mb-4">
+            <div class="col-md-5">
+                <div class="card bg-light border-0 p-4 rounded-0 text-center">
+                    <h5 class="text-secondary font-weight-bold mb-3">الملخص المالي للمردودات</h5>
+                    <div style="font-size: 2rem;" class="font-weight-bold text-danger mb-3" id="grand_return_total_display">
+                        0.00 <span style="font-size: 1.1rem;">ر.ي</span>
+                    </div>
+                    <button type="submit" name="btn_save_return" class="btn-flat btn-flat-danger btn-block py-3 font-weight-bold" style="font-size: 1.15rem;">
+                        <i class="fa fa-check ml-2"></i> تأكيد وإعتماد الفاتورة للمورد
+                    </button>
+                </div>
             </div>
-            <div class="card-body p-0" style="max-height:430px; overflow-y:auto;">
-                <table class="table-flat mb-0">
-                    <thead>
-                        <tr>
-                            <th style="width:7%;">#</th>
-                            <th style="width:10%;">فاتورة</th>
-                            <th>المنتج</th>
-                            <th style="width:8%;" class="text-center">كمية</th>
-                            <th style="width:13%;">المسترد</th>
-                            <th style="width:10%;">الحالة</th>
-                            <th style="width:12%;">التاريخ</th>
-                            <th style="width:8%;" class="no-print">إلغاء</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (empty($all_returns)): ?>
-                        <tr><td colspan="8" class="text-center text-muted p-4">لا توجد مردودات مشتريات مسجلة بعد</td></tr>
-                        <?php else: ?>
+        </div>
+    </div>
+</form>
+
+<!-- سجل المردودات السابقة للفاتورة -->
+<div id="invoiceReturnsSection" style="display:none;" class="card-flat ret-card mt-4 no-print text-right">
+    <div class="card-header bg-warning">
+        <h6 class="mb-0 font-weight-bold text-dark"><i class="fa fa-history ml-2"></i> عمليات مردودات سابقة مسجلة على هذه الفاتورة</h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table-flat mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:10%;">رقم المرتجع</th>
+                        <th>الصنف</th>
+                        <th style="width:15%;" class="text-center">الكمية المرجعة</th>
+                        <th style="width:20%;">المبلغ المسترد</th>
+                        <th style="width:15%;" class="text-center">إجراء</th>
+                    </tr>
+                </thead>
+                <tbody id="prevReturnsBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- سجل مردودات المشتريات الكامل بالنظام -->
+<div class="card-flat ret-card mt-4 no-print text-right">
+    <div class="card-header bg-light">
+        <h5 class="mb-0 text-dark font-weight-bold"><i class="fa fa-history ml-2"></i> آخر عمليات مردودات المشتريات بالنظام</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table-flat border mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:8%;">رقم المرتجع</th>
+                        <th style="width:12%;">رقم الفاتورة الأصلية</th>
+                        <th>المنتج المرتجع والوصف</th>
+                        <th style="width:10%;" class="text-center">الكمية</th>
+                        <th style="width:15%;">المبلغ المسترد</th>
+                        <th style="width:10%;">الحالة</th>
+                        <th style="width:12%;">تاريخ الاسترجاع</th>
+                        <th style="width:10%;" class="no-print text-center">إلغاء المرتجع</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($all_returns)): ?>
+                        <tr><td colspan="8" class="text-center text-muted p-4">لا توجد عمليات مردودات مشتريات مسجلة بالنظام حالياً.</td></tr>
+                    <?php else: ?>
                         <?php foreach ($all_returns as $r): ?>
-                        <tr class="<?php echo $r['status']==='cancelled' ? 'text-muted' : ''; ?>"
-                            style="<?php echo $r['status']==='cancelled' ? 'opacity:0.6; text-decoration:line-through;' : ''; ?>">
+                        <tr class="<?php echo $r['status']==='cancelled' ? 'text-muted' : ''; ?>" style="<?php echo $r['status']==='cancelled' ? 'opacity:0.6; text-decoration:line-through;' : ''; ?>">
                             <td class="font-weight-bold text-secondary">#<?php echo $r['id']; ?></td>
                             <td>
                                 <a href="view.php?id=<?php echo $r['purchase_id']; ?>" class="text-primary font-weight-bold text-decoration-none">
@@ -503,7 +490,7 @@ document.addEventListener('keydown', function(e) {
                             </td>
                             <td class="small font-weight-bold"><?php echo htmlspecialchars($r['product_name']); ?></td>
                             <td class="text-center text-danger font-weight-bold"><?php echo $r['quantity']; ?></td>
-                            <td class="font-weight-bold"><?php echo number_format($r['refund_amount'], 2); ?></td>
+                            <td class="font-weight-bold"><?php echo number_format($r['refund_amount'], 2); ?> YER</td>
                             <td>
                                 <?php if ($r['status'] === 'active'): ?>
                                     <span class="badge badge-success invoice-badge">نشط</span>
@@ -512,28 +499,23 @@ document.addEventListener('keydown', function(e) {
                                 <?php endif; ?>
                             </td>
                             <td class="small"><?php echo htmlspecialchars($r['return_date']); ?></td>
-                            <td class="no-print">
+                            <td class="no-print text-center">
                                 <?php if ($r['status'] === 'active'): ?>
-                                <a href="returns.php?cancel_ret=<?php echo $r['id']; ?>"
-                                   onclick="return confirm('هل تريد إلغاء هذا المرتجع للمورد؟ سيتم إعادة البضاعة للمخزن وعكس الحركات المالية.')"
-                                   class=" btn-sm py-1 px-2 text-decoration-none">
-                                    <i class="bi bi-x-circle text-danger" title="إلغاء المرتجع"></i>
+                                <a href="returns.php?cancel_ret=<?php echo $r['id']; ?>" onclick="return confirm('هل تريد إلغاء هذا المرتجع للمورد؟ سيتم إعادة البضاعة للمخزن وعكس الحركات المالية.')" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none">
+                                    <i class="fa fa-times ml-1"></i> إلغاء
                                 </a>
                                 <?php endif; ?>
                             </td>
                         </tr>
                         <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                    <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
-<!-- ===== JavaScript ===== -->
 <script>
-// البحث بالضغط على Enter في حقل الرقم
 document.getElementById('invoiceSearchInput').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { e.preventDefault(); searchInvoice(); }
 });
@@ -545,9 +527,6 @@ function searchInvoice() {
         return;
     }
 
-    resetReturnForm();
-
-    // جلب بيانات الفاتورة عبر AJAX
     fetch(`ajax_invoice.php?invoice_id=${invId}`)
         .then(r => r.json())
         .then(data => {
@@ -567,61 +546,64 @@ function displayInvoiceData(data) {
     const items = data.items;
     const prevReturns = data.returns_history || [];
 
-    // عرض معلومات الفاتورة
-    document.getElementById('invNum').textContent   = '#' + inv.id;
-    document.getElementById('invSupp').textContent  = inv.supp_name || 'غير محدد';
-    document.getElementById('invDate').textContent  = inv.date;
-    document.getElementById('invTotal').textContent = formatNum(inv.total) + ' ر.ي';
+    // تعبئة حقول الهيدر التلقائية
     document.getElementById('ret_purchase_id').value = inv.id;
-    document.getElementById('invoiceInfo').style.display = 'block';
+    document.getElementById('invSuppDisplay').value = inv.supp_name || 'غير محدد';
+    document.getElementById('invDateDisplay').value = inv.date;
+    document.getElementById('invTotalDisplay').value = formatNum(inv.total) + ' YER';
 
-    // عرض جدول المنتجات
     const tbody = document.getElementById('invoiceItemsBody');
     tbody.innerHTML = '';
 
     if (items.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">لا توجد بنود في هذه الفاتورة</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted p-3">لا توجد بنود في هذه الفاتورة</td></tr>';
     } else {
         items.forEach(item => {
             const canReturn = item.can_return;
-            const disabledClass = canReturn <= 0 ? 'no-return' : 'can-return';
+            const disabledClass = canReturn <= 0 ? 'text-muted' : 'font-weight-bold text-success';
             const disabledAttr  = canReturn <= 0 ? 'disabled' : '';
 
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td class="font-weight-bold small">${escHtml(item.name)}</td>
-                <td class="text-center">${item.quantity}</td>
-                <td class="text-center ${disabledClass}">${canReturn > 0 ? canReturn + ' (المستودع: ' + item.current_stock + ')' : 'غير قابل للإرجاع'}</td>
-                <td class="text-center small">${formatNum(item.unit_price)}</td>
-                <td class="text-center no-print">
-                    <button type="button" class="btn-flat btn-primary btn-sm py-1 px-2" ${disabledAttr}
-                        onclick="selectProduct(${item.product_id}, '${escHtml(item.name)}', ${item.unit_price}, ${canReturn})">
-                        <i class="bi bi-check-square text-white" title="اختيار المنتج"></i> 
-                    </button>
+                <td class="font-weight-bold small text-right">
+                    ${escHtml(item.name)}
+                    <input type="hidden" name="product_ids[]" value="${item.product_id}">
+                    <input type="hidden" name="product_names[]" value="${escHtml(item.name)}">
+                    <input type="hidden" name="unit_prices[]" value="${item.unit_price}">
+                    <input type="hidden" name="unit_names[]" value="${escHtml(item.unit_name || 'الوحدة الأساسية')}">
                 </td>
+                <td class="text-center small">${escHtml(item.unit_name || 'الوحدة الأساسية')}</td>
+                <td class="text-center">${item.quantity}</td>
+                <td class="text-center ${disabledClass}">${canReturn}</td>
+                <td class="text-center small">${formatNum(item.unit_price)} YER</td>
+                <td class="text-center no-print">
+                    <input type="number" name="qty_returns[]" class="form-control text-center rounded-0 qty-return-input font-weight-bold"
+                           style="max-width: 90px; margin: 0 auto; height: 32px;"
+                           min="0" max="${canReturn}" value="0" ${disabledAttr}
+                           oninput="calcLineTotal(this, ${item.unit_price})">
+                </td>
+                <td class="text-center line-total-display font-weight-bold text-danger">0.00 YER</td>
             `;
             tbody.appendChild(tr);
         });
     }
 
+    document.getElementById('refundOptionsRow').style.display = 'flex';
     document.getElementById('invoiceItemsSection').style.display = 'block';
 
-    // عرض مردودات سابقة لهذه الفاتورة
     const prevBody = document.getElementById('prevReturnsBody');
     prevBody.innerHTML = '';
     if (prevReturns.length > 0) {
         prevReturns.forEach(r => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td class="text-secondary">#${r.id}</td>
+                <td class="text-secondary font-weight-bold">#${r.id}</td>
                 <td class="small">${escHtml(r.product)}</td>
                 <td class="text-center text-danger font-weight-bold">${r.qty}</td>
-                <td>${formatNum(r.refund)} ر.ي</td>
+                <td class="font-weight-bold">${formatNum(r.refund)} YER</td>
                 <td class="text-center">
-                    <a href="returns.php?cancel_ret=${r.id}"
-                       onclick="return confirm('إلغاء هذا المرتجع؟')"
-                       class=" btn-sm py-1 px-2 text-decoration-none">
-                        <i class="bi bi-x-circle text-danger" title="إلغاء المرتجع"></i>
+                    <a href="returns.php?cancel_ret=${r.id}" onclick="return confirm('إلغاء هذا المرتجع؟')" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none">
+                        <i class="fa fa-times ml-1"></i> إلغاء
                     </a>
                 </td>
             `;
@@ -631,50 +613,32 @@ function displayInvoiceData(data) {
     } else {
         document.getElementById('invoiceReturnsSection').style.display = 'none';
     }
+    calcGrandTotal();
 }
 
-function selectProduct(productId, productName, unitPrice, maxQty) {
-    document.getElementById('ret_product_id').value    = productId;
-    document.getElementById('ret_product_name').value  = productName;
-    document.getElementById('ret_unit_price').value    = unitPrice;
-    document.getElementById('maxRetQty').textContent   = maxQty;
-    document.getElementById('ret_qty').max             = maxQty;
-    document.getElementById('ret_qty').value           = 1;
-    document.getElementById('selectedProductLabel').textContent = productName;
-    document.getElementById('returnFormFields').style.display = 'block';
-    calcReturnAmount();
-
-    // تمييز الصف المحدد
-    document.querySelectorAll('#invoiceItemsTable tr').forEach(r => r.classList.remove('table-active'));
-    event.target.closest('tr').classList.add('table-active');
+function calcLineTotal(input, price) {
+    const qty = parseInt(input.value) || 0;
+    const maxVal = parseInt(input.max) || 0;
+    if (qty < 0) input.value = 0;
+    if (qty > maxVal) input.value = maxVal;
+    
+    const validQty = Math.min(Math.max(0, qty), maxVal);
+    const lineTotal = validQty * price;
+    const tr = input.closest('tr');
+    tr.querySelector('.line-total-display').textContent = formatNum(lineTotal) + ' YER';
+    
+    calcGrandTotal();
 }
 
-function calcReturnAmount() {
-    const qty       = parseInt(document.getElementById('ret_qty').value) || 0;
-    const maxQty    = parseInt(document.getElementById('maxRetQty').textContent) || 0;
-    const unitPrice = parseFloat(document.getElementById('ret_unit_price').value) || 0;
-
-    if (qty > maxQty) {
-        document.getElementById('ret_qty').value = maxQty;
-        alert('لا يمكن إرجاع أكثر من ' + maxQty + ' وحدة!');
-        return;
-    }
-
-    const refund = qty * unitPrice;
-    document.getElementById('ret_refund_display').value = formatNum(refund) + ' ر.ي';
-}
-
-function resetReturnForm() {
-    document.getElementById('invoiceInfo').style.display            = 'none';
-    document.getElementById('invoiceItemsSection').style.display    = 'none';
-    document.getElementById('returnFormFields').style.display       = 'none';
-    document.getElementById('invoiceReturnsSection').style.display  = 'none';
-    document.getElementById('ret_purchase_id').value = '0';
-    document.getElementById('ret_product_id').value = '0';
-    document.getElementById('ret_product_name').value = '';
-    document.getElementById('ret_unit_price').value  = '0';
-    document.getElementById('invoiceItemsBody').innerHTML = '';
-    document.getElementById('prevReturnsBody').innerHTML  = '';
+function calcGrandTotal() {
+    let grandTotal = 0;
+    document.querySelectorAll('.qty-return-input').forEach(input => {
+        const qty = parseInt(input.value) || 0;
+        const price = parseFloat(input.closest('tr').querySelector('input[name="unit_prices[]"]').value) || 0;
+        grandTotal += qty * price;
+    });
+    
+    document.getElementById('grand_return_total_display').innerHTML = formatNum(grandTotal) + ' <span style="font-size: 1.1rem;">YER</span>';
 }
 
 function formatNum(n) {
@@ -688,20 +652,19 @@ function escHtml(str) {
 }
 </script>
 
-<!-- مودال البحث واختيار الفاتورة (F2) -->
 <div class="modal fade mt-3" id="invoiceListModal" tabindex="-1" role="dialog" aria-labelledby="invoiceListModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content rounded-0">
             <div class="modal-header bg-primary text-white">
                 <h5 class="modal-title font-weight-bold" id="invoiceListModalLabel">
-                    <i class="fa fa-list ml-2"></i> نافذة اختيار فاتورة مشتريات (اضغط Esc للإغلاق)
+                    <i class="fa fa-list ml-2"></i> نافذة اختيار فاتورة مشتريات
                 </h5>
                 <button type="button" class="close text-white rounded" data-dismiss="modal" aria-label="Close">
                     <span aria-hidden="true" class="p-2">&times;</span>
                 </button>
             </div>
-            <div class="modal-body">
-                <div class="form-group mb-3 text-right">
+            <div class="modal-body text-right" dir="rtl">
+                <div class="form-group mb-3">
                     <label class="font-weight-bold text-secondary mb-1">ابحث باسم المورد أو رقم الفاتورة:</label>
                     <input type="text" id="modalInvoiceSearchInput" class="form-control rounded-0 font-weight-bold text-right" placeholder="ابحث...">
                 </div>
@@ -729,7 +692,6 @@ function escHtml(str) {
 </div>
 
 <script>
-// الاستماع لزر F2 لفتح نافذة البحث السريع عن الفاتورة
 document.addEventListener('keydown', function(e) {
     if (e.key === 'F2') {
         e.preventDefault();
@@ -754,7 +716,6 @@ function openInvoiceLookupModal() {
     loadModalInvoices('');
 }
 
-// تحميل الفواتير للمودال عبر AJAX
 function loadModalInvoices(search) {
     const tbody = document.getElementById('modalInvoicesTableBody');
     tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">جاري البحث...</td></tr>';
@@ -774,9 +735,9 @@ function loadModalInvoices(search) {
                     <td class="font-weight-bold">#${inv.id}</td>
                     <td class="text-right font-weight-bold text-secondary">${escHtml(inv.supp_name)}</td>
                     <td class="small">${inv.date}</td>
-                    <td class="font-weight-bold">${formatNum(inv.total)}</td>
+                    <td class="font-weight-bold">${formatNum(inv.total)} YER</td>
                     <td class="text-center">
-                        <button type="button" class="btn-flat btn-flat-primary btn-sm py-1 px-2" onclick="selectModalInvoice(${inv.id})">
+                        <button type="button" class="btn-flat btn-flat-primary btn-sm py-1 px-2 text-decoration-none" onclick="selectModalInvoice(${inv.id})">
                             <i class="bi bi-check-square"></i>
                         </button>
                     </td>
@@ -792,7 +753,6 @@ function loadModalInvoices(search) {
 function selectModalInvoice(id) {
     document.getElementById('invoiceSearchInput').value = id;
     
-    // إغلاق المودال
     if (typeof $ !== 'undefined' && $.fn.modal) {
         $('#invoiceListModal').modal('hide');
     } else {
@@ -809,7 +769,6 @@ function selectModalInvoice(id) {
     searchInvoice();
 }
 
-// تصفية الفواتير في المودال عند الكتابة
 document.getElementById('modalInvoiceSearchInput').addEventListener('input', function() {
     loadModalInvoices(this.value);
 });

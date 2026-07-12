@@ -17,41 +17,68 @@ $ref_type = isset($_GET['ref_type']) ? $conn->real_escape_string($_GET['ref_type
 $where_clauses = ["1=1"];
 
 if (!empty($search)) {
-    $where_clauses[] = "(aj.account_debit LIKE '%$search%' OR aj.account_credit LIKE '%$search%' OR aj.description LIKE '%$search%' OR aj.user LIKE '%$search%')";
+    $where_clauses[] = "(je.reference_no LIKE '%$search%' OR je.description LIKE '%$search%' OR a.name LIKE '%$search%' OR a.code LIKE '%$search%' OR ji.memo LIKE '%$search%' OR je.created_by LIKE '%$search%')";
 }
 
 if ($box_id > 0) {
-    $where_clauses[] = "aj.box_id = $box_id";
+    // جلب أرقام القيود المرتبطة بالصندوق من جدول القيود المساعد
+    $res_box_entries = $conn->query("SELECT DISTINCT ref_type, ref_id FROM accounting_journal WHERE box_id = $box_id");
+    $box_conds = ["1=0"];
+    if ($res_box_entries && $res_box_entries->num_rows > 0) {
+        while ($re = $res_box_entries->fetch_assoc()) {
+            $t = $conn->real_escape_string($re['ref_type']);
+            $rid = intval($re['ref_id']);
+            $box_conds[] = "(je.source_type = '$t' AND je.source_id = $rid)";
+        }
+    }
+    $where_clauses[] = "(" . implode(" OR ", $box_conds) . ")";
 }
 
 if (!empty($from_date)) {
-    $where_clauses[] = "DATE(aj.created_at) >= '$from_date'";
+    $where_clauses[] = "je.entry_date >= '$from_date'";
 }
 
 if (!empty($to_date)) {
-    $where_clauses[] = "DATE(aj.created_at) <= '$to_date'";
+    $where_clauses[] = "je.entry_date <= '$to_date'";
 }
 
 if (!empty($ref_type)) {
-    $where_clauses[] = "aj.ref_type = '$ref_type'";
+    $where_clauses[] = "je.source_type = '$ref_type'";
 }
 
 $where_sql = implode(" AND ", $where_clauses);
 
-// الاستعلام لجلب القيود المحاسبية مع اسم الصندوق
-$sql = "SELECT aj.*, t.name AS box_name 
-        FROM accounting_journal aj 
-        LEFT JOIN treasury t ON aj.box_id = t.box_id 
-        WHERE $where_sql 
-        ORDER BY aj.id DESC";
+// استعلام جلب قيود اليومية المزدوجة المفصلة
+$sql = "SELECT 
+            je.id AS entry_id,
+            je.entry_date,
+            je.reference_no,
+            je.description AS entry_desc,
+            je.source_type,
+            je.source_id,
+            je.created_by,
+            ji.id AS item_id,
+            ji.debit,
+            ji.credit,
+            ji.memo,
+            a.code AS account_code,
+            a.name AS account_name
+        FROM accounting_journal_entries je
+        JOIN accounting_journal_items ji ON je.id = ji.entry_id
+        JOIN accounting_accounts a ON ji.account_id = a.id
+        WHERE $where_sql
+        ORDER BY je.id DESC, ji.debit DESC";
 $result = $conn->query($sql);
 
-// إجماليات مفصلة: المدين، الدائن، الصافي
+// إجماليات مفصلة: المدين، الدائن، الأرصدة
 $sql_totals = "SELECT 
-    SUM(CASE WHEN aj.account_debit IS NOT NULL AND aj.account_debit != '' THEN aj.amount ELSE 0 END) AS total_debit,
-    SUM(CASE WHEN aj.account_credit IS NOT NULL AND aj.account_credit != '' THEN aj.amount ELSE 0 END) AS total_credit,
-    COUNT(*) AS total_entries
-    FROM accounting_journal aj WHERE $where_sql";
+    SUM(ji.debit) AS total_debit,
+    SUM(ji.credit) AS total_credit,
+    COUNT(DISTINCT je.id) AS total_entries
+    FROM accounting_journal_entries je
+    JOIN accounting_journal_items ji ON je.id = ji.entry_id
+    JOIN accounting_accounts a ON ji.account_id = a.id
+    WHERE $where_sql";
 $res_totals = $conn->query($sql_totals);
 $totals = ($res_totals && $row_t = $res_totals->fetch_assoc()) ? $row_t : ['total_debit' => 0, 'total_credit' => 0, 'total_entries' => 0];
 $total_debit = floatval($totals['total_debit']);
@@ -63,10 +90,12 @@ $total_entries = intval($totals['total_entries']);
 function translate_ref_type($type) {
     switch ($type) {
         case 'sale': return 'مبيعات';
-        case 'return': return 'مرتجع';
+        case 'return': return 'مرتجع مبيعات';
         case 'purchase': return 'مشتريات';
-        case 'expense': return 'مصروف';
-        case 'receipt': return 'إيراد';
+        case 'expense': return 'مصروفات';
+        case 'receipt': return 'سند قبض';
+        case 'payment': return 'سند صرف';
+        case 'manual': return 'قيد يدوي';
         case 'adjustment': return 'تسوية';
         default: return $type;
     }
@@ -80,50 +109,38 @@ function get_ref_badge_class($type) {
         case 'purchase': return 'badge-info';
         case 'expense': return 'badge-danger';
         case 'receipt': return 'badge-primary';
-        case 'adjustment': return 'badge-secondary';
+        case 'payment': return 'badge-dark';
+        case 'manual': return 'badge-secondary';
+        case 'adjustment': return 'badge-light';
         default: return 'badge-light';
     }
 }
-
-// تحديد اتجاه الحركة المالية (زيادة / نقص)
-function get_movement_direction($debit_acc, $credit_acc) {
-    $debit_acc = strtolower($debit_acc);
-    $credit_acc = strtolower($credit_acc);
-    
-    // حسابات الصندوق والبنوك
-    if (strpos($debit_acc, 'صندوق') !== false || strpos($debit_acc, 'بنك') !== false || strpos($debit_acc, 'نقدية') !== false) {
-        return 'increase';
-    }
-    if (strpos($credit_acc, 'صندوق') !== false || strpos($credit_acc, 'بنك') !== false || strpos($credit_acc, 'نقدية') !== false) {
-        return 'decrease';
-    }
-    return 'neutral';
-}
 ?>
-<title>دفتر القيود اليومية</title>
+
+<title>دفتر القيود اليومية (القيد المزدوج) - تكنولوجيا فون</title>
 
 <style>
-/* ===== تصميم احترافي للجدول ===== */
+@media print {
+    #sidebar, .navbar-top, .no-print, .btn-flat, hr, .card-header { display: none !important; }
+    #content { margin: 0 !important; padding: 0 !important; }
+    body { background: #fff !important; }
+}
+
 .journal-table-professional {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.75rem;
-    background: #fff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+    background-color: #fff;
 }
 
 .journal-table-professional thead th {
-    background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
     color: #fff;
-    font-weight: 600;
-    font-size: 0.72rem;
-    padding: 8px 6px;
+    font-weight: 700;
+    padding: 10px 8px;
+    font-size: 0.78rem;
+    border: 1px solid #1e3a8a;
     text-align: center;
-    border: 1px solid #1a252f;
-    letter-spacing: 0.3px;
-    position: sticky;
-    top: 0;
-    z-index: 10;
 }
 
 .journal-table-professional tbody td {
@@ -132,10 +149,6 @@ function get_movement_direction($debit_acc, $credit_acc) {
     vertical-align: middle;
     font-size: 0.75rem;
     line-height: 1.3;
-}
-
-.journal-table-professional tbody tr:nth-child(even) {
-    background-color: #fafbfc;
 }
 
 .journal-table-professional tbody tr:hover {
@@ -212,171 +225,64 @@ function get_movement_direction($debit_acc, $credit_acc) {
     border-right: 3px solid #10b981 !important;
 }
 
-.movement-badge {
-    display: inline-block;
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 0.65rem;
-    font-weight: 700;
-    margin-right: 4px;
-}
-
-.movement-increase {
-    background: #d1fae5;
-    color: #065f46;
-    border: 1px solid #10b981;
-}
-
-.movement-decrease {
-    background: #fee2e2;
-    color: #991b1b;
-    border: 1px solid #ef4444;
-}
-
-.movement-neutral {
-    background: #e5e7eb;
-    color: #374151;
-    border: 1px solid #9ca3af;
-}
-
-/* ===== تذييل الإجماليات ===== */
+/* تذييل الإجماليات */
 .journal-summary-footer {
-    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
     color: #fff;
-    border-radius: 0 0 8px 8px;
-    padding: 15px 20px;
-    margin-top: -1px;
+    border-radius: 6px;
+    padding: 15px;
+    margin-top: 15px;
 }
 
 .summary-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 15px;
-}
-
-.summary-item {
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 6px;
-    padding: 12px;
     text-align: center;
 }
 
+.summary-item {
+    border-left: 1px dashed rgba(255, 255, 255, 0.15);
+    padding: 5px;
+}
+
+.summary-item:last-child {
+    border-left: none;
+}
+
 .summary-item .label {
-    font-size: 0.75rem;
-    color: #cbd5e1;
-    margin-bottom: 6px;
-    font-weight: 500;
+    font-size: 0.7rem;
+    color: #94a3b8;
+    margin-bottom: 5px;
 }
 
 .summary-item .value {
-    font-size: 1.1rem;
-    font-weight: 700;
+    font-size: 1.15rem;
+    font-weight: 800;
     font-family: 'Courier New', monospace;
-    letter-spacing: 0.5px;
 }
 
-.summary-item.total-debit .value {
-    color: #fca5a5;
-}
+.summary-item.total-debit .value { color: #fca5a5; }
+.summary-item.total-credit .value { color: #86efac; }
+.summary-item.net-balance .value { color: #fcd34d; }
+.summary-item.count .value { color: #e2e8f0; }
 
-.summary-item.total-credit .value {
-    color: #86efac;
-}
-
-.summary-item.net-balance .value {
-    color: #fcd34d;
-    font-size: 1.2rem;
-}
-
-.summary-item.count .value {
-    color: #93c5fd;
-}
-
-/* ===== شارات نوع القيد ===== */
 .ref-badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 3px;
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-}
-
-/* ===== تصميم الفلاتر ===== */
-.filter-section {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 15px;
-    margin-bottom: 20px;
-}
-
-.filter-section .form-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #475569;
-    margin-bottom: 4px;
-}
-
-.filter-section .form-control {
-    font-size: 0.8rem;
-    padding: 6px 10px;
-    border-radius: 4px;
-    border: 1px solid #cbd5e1;
-}
-
-/* ===== الطباعة ===== */
-@media print {
-    .no-print, .filter-section, .journal-summary-footer { display: none !important; }
-    .journal-table-professional { font-size: 0.7rem; }
-    .journal-table-professional thead th {
-        background: #2c3e50 !important;
-        color: #fff !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
-    .amount-debit, .amount-credit {
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
-}
-
-/* ===== رسائل التنبيه ===== */
-.alert-professional {
-    border-radius: 4px;
-    font-size: 0.85rem;
-    padding: 10px 15px;
-    border: none;
-    border-right: 4px solid;
-}
-
-/* ===== عنوان الصفحة ===== */
-.page-header-professional {
-    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
-    color: #fff;
-    padding: 15px 20px;
-    border-radius: 6px 6px 0 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.page-header-professional h5 {
-    margin: 0;
-    font-size: 1rem;
+    font-size: 0.65rem;
     font-weight: 700;
-    letter-spacing: 0.5px;
 }
 </style>
 
+<div class="page-inner">
+
 <?php
 $journal_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
-?>
-
-<?php if ($journal_msg === 'deleted'): ?>
+if ($journal_msg === 'deleted'): ?>
 <div class="alert alert-professional alert-success rounded-0 mb-3 no-print">
-    <strong>تم الحفظ:</strong> تم حذف القيد المحاسبي بنجاح.
+    <i class="bi bi-check-circle-fill ml-2"></i> تم حذف القيد اليومي وتحديث الدفاتر بنجاح.
 </div>
 <?php elseif ($journal_msg === 'error'): ?>
 <div class="alert alert-professional alert-danger rounded-0 mb-3 no-print">
@@ -385,22 +291,28 @@ $journal_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
 <?php endif; ?>
 
 <!-- ===== رأس الصفحة ===== -->
-<div class="page-header-professional no-print">
-    <h5>
-        <i class="fa fa-book ml-2"></i>
-        دفتر القيود اليومية — القيد المزدوج
-    </h5>
-    <div>
-        <button onclick="window.print()" class="btn btn-sm btn-light mr-2" style="font-size: 0.8rem;">
-            <i class="fa fa-printer ml-1"></i> طباعة
+<div class="page-title-bar no-print">
+    <div class="ptb-left">
+        <div class="icon-wrap"><i class="bi bi-book"></i></div>
+        <div>
+            <h4>دفتر القيود اليومية — القيد المزدوج</h4>
+            <small>عرض وتصفية القيود اليومية المحاسبية المسجلة في النظام</small>
+        </div>
+    </div>
+    <div class="ptb-actions">
+        <a href="journal_entry.php" class="btn btn-sm btn-primary text-white text-decoration-none ml-2" style="font-size: 0.8rem; background: linear-gradient(135deg,#10b981 0%,#059669 100%); border: none;">
+            <i class="bi bi-plus-lg ml-1"></i> إضافة قيد يومية
+        </a>
+        <button onclick="window.print()" class="btn btn-sm btn-light" style="font-size: 0.8rem; border: 1px solid #cbd5e1;">
+            <i class="bi bi-printer ml-1"></i> طباعة
         </button>
-        <a href="../home.php" class="btn btn-sm btn-outline-light text-decoration-none" style="font-size: 0.8rem;">
-            <i class="fa fa-arrow-left ml-1"></i> عودة
+        <a href="../home.php" class="btn btn-sm btn-light text-decoration-none" style="font-size: 0.8rem; border: 1px solid #cbd5e1;">
+            <i class="bi bi-arrow-left ml-1"></i> عودة
         </a>
     </div>
 </div>
 
-<div class="card-flat" style="border-radius: 0 0 8px 8px; border-top: none;">
+<div class="card-flat">
     <div class="card-body p-3">
         
         <!-- ===== فلتر البحث المتقدم ===== -->
@@ -419,6 +331,7 @@ $journal_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
                         <option value="purchase" <?php echo ($ref_type == 'purchase') ? 'selected' : ''; ?>>مشتريات</option>
                         <option value="expense" <?php echo ($ref_type == 'expense') ? 'selected' : ''; ?>>مصروفات</option>
                         <option value="receipt" <?php echo ($ref_type == 'receipt') ? 'selected' : ''; ?>>إيرادات</option>
+                        <option value="manual" <?php echo ($ref_type == 'manual') ? 'selected' : ''; ?>>قيود يدوي</option>
                         <option value="adjustment" <?php echo ($ref_type == 'adjustment') ? 'selected' : ''; ?>>تسويات</option>
                     </select>
                 </div>
@@ -461,90 +374,73 @@ $journal_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
             <table class="journal-table-professional" id="journalTable">
                 <thead>
                     <tr>
-                        <th style="width: 5%;">#</th>
-                        <th style="width: 9%;">التاريخ</th>
-                        <th style="width: 7%;">النوع</th>
-                        <th style="width: 17%;">الحساب المدين</th>
-                        <th style="width: 9%;">مدين</th>
-                        <th style="width: 17%;">الحساب الدائن</th>
-                        <th style="width: 9%;">دائن</th>
-                        <th style="width: 18%;">البيان / المرجع</th>
-                        <th style="width: 5%;">المسؤول</th>
+                        <th style="width: 5%;">رقم القيد</th>
+                        <th style="width: 10%;">التاريخ</th>
+                        <th style="width: 12%;">النوع / المرجع</th>
+                        <th style="width: 25%;">الحساب المحاسبي</th>
+                        <th style="width: 10%;">مدين</th>
+                        <th style="width: 10%;">دائن</th>
+                        <th style="width: 20%;">البيان / المرجع</th>
+                        <th style="width: 8%;">المسؤول</th>
                         <?php if ($is_admin): ?>
-                        <th class="no-print" style="width: 4%;">حذف</th>
+                        <th class="no-print" style="width: 5%;">حذف</th>
                         <?php endif; ?>
                     </tr>
                 </thead>
                 <tbody>
                     <?php
                     if ($result && $result->num_rows > 0) {
-                        $row_num = 1;
+                        $prev_entry_id = null;
                         while ($row = $result->fetch_assoc()) {
-                            $movement = get_movement_direction($row['account_debit'], $row['account_credit']);
-                            $movement_label = '';
-                            $movement_class = '';
+                            $is_debit = floatval($row['debit']) > 0;
+                            $amount = $is_debit ? floatval($row['debit']) : floatval($row['credit']);
                             
-                            if ($movement === 'increase') {
-                                $movement_label = 'زيادة';
-                                $movement_class = 'movement-increase';
-                            } elseif ($movement === 'decrease') {
-                                $movement_label = 'نقص';
-                                $movement_class = 'movement-decrease';
-                            } else {
-                                $movement_label = 'قيد';
-                                $movement_class = 'movement-neutral';
-                            }
+                            $row_border = ($prev_entry_id !== null && $prev_entry_id !== $row['entry_id']) ? 'style="border-top: 2px solid #cbd5e1;"' : '';
                             ?>
-                            <tr>
-                                <td class="col-id"><?php echo $row_num++; ?></td>
+                            <tr <?php echo $row_border; ?>>
+                                <td class="col-id"><?php echo $row['entry_id']; ?></td>
                                 <td class="col-date">
-                                    <?php echo date('y/m/d', strtotime($row['created_at'])); ?>
-                                    <br>
-                                    <small style="color: #9ca3af;"><?php echo date('H:i', strtotime($row['created_at'])); ?></small>
+                                    <?php echo date('y/m/d', strtotime($row['entry_date'])); ?>
                                 </td>
                                 <td class="col-type">
-                                    <span class="ref-badge <?php echo get_ref_badge_class($row['ref_type']); ?>">
-                                        <?php echo translate_ref_type($row['ref_type']); ?>
+                                    <span class="ref-badge <?php echo get_ref_badge_class($row['source_type']); ?>">
+                                        <?php echo translate_ref_type($row['source_type']); ?>
                                     </span>
-                                    <?php if ($row['ref_id'] > 0): ?>
-                                        <br><small class="text-muted">#<?php echo $row['ref_id']; ?></small>
+                                    <?php if (!empty($row['reference_no'])): ?>
+                                        <br><small class="text-muted"><?php echo htmlspecialchars($row['reference_no']); ?></small>
                                     <?php endif; ?>
                                 </td>
-                                <td class="col-account account-debit">
-                                    <?php echo htmlspecialchars(!empty($row['account_debit']) ? $row['account_debit'] : '—'); ?>
+                                <td class="col-account <?php echo $is_debit ? 'account-debit' : 'account-credit'; ?>">
+                                    [<?php echo htmlspecialchars($row['account_code']); ?>] <?php echo htmlspecialchars($row['account_name']); ?>
                                 </td>
-                                <td class="col-amount amount-debit">
-                                    <?php echo number_format($row['amount'], 2); ?>
+                                <td class="col-amount <?php echo $is_debit ? 'amount-debit' : ''; ?>">
+                                    <?php echo $is_debit ? number_format($amount, 2) : '—'; ?>
                                 </td>
-                                <td class="col-account account-credit">
-                                    <?php echo htmlspecialchars(!empty($row['account_credit']) ? $row['account_credit'] : '—'); ?>
-                                </td>
-                                <td class="col-amount amount-credit">
-                                    <?php echo number_format($row['amount'], 2); ?>
+                                <td class="col-amount <?php echo !$is_debit ? 'amount-credit' : ''; ?>">
+                                    <?php echo !$is_debit ? number_format($amount, 2) : '—'; ?>
                                 </td>
                                 <td class="col-desc">
-                                    <span class="movement-badge <?php echo $movement_class; ?>"><?php echo $movement_label; ?></span>
-                                    <?php echo htmlspecialchars($row['description']); ?>
-                                    <?php if (!empty($row['box_name'])): ?>
-                                        <br><small class="text-muted"><i class="fa fa-cash-register ml-1"></i><?php echo htmlspecialchars($row['box_name']); ?></small>
-                                    <?php endif; ?>
+                                    <?php echo htmlspecialchars($row['memo'] ?: $row['entry_desc']); ?>
                                 </td>
-                                <td class="col-user"><?php echo htmlspecialchars($row['user']); ?></td>
+                                <td class="col-user"><?php echo htmlspecialchars($row['created_by']); ?></td>
                                 <?php if ($is_admin): ?>
                                 <td class="no-print text-center">
-                                    <a href="delete_journal.php?id=<?php echo $row['id']; ?>" 
+                                    <?php if ($prev_entry_id !== $row['entry_id']): ?>
+                                    <a href="delete_journal.php?id=<?php echo $row['entry_id']; ?>" 
                                        class="btn btn-sm btn-outline-danger py-0 px-1 text-decoration-none"
                                        style="font-size: 0.7rem;"
-                                       onclick="return confirm('تأكيد حذف القيد #<?php echo $row['id']; ?> ؟\nهذا الإجراء لا يمكن التراجع عنه!')">
+                                       onclick="return confirm('تأكيد حذف القيد المزدوج #<?php echo $row['entry_id']; ?> بالكامل؟\nهذا الإجراء سيقوم بحذف كافة السطور والبنود التابعة له!')">
                                         <i class="fa fa-trash"></i>
                                     </a>
+                                    <?php endif; ?>
                                 </td>
                                 <?php endif; ?>
                             </tr>
                             <?php
+                            $prev_entry_id = $row['entry_id'];
                         }
                     } else {
-                        $colspan = $is_admin ? 10 : 9;
+                        $colspan = $is_admin ? 9 : 8;
                         echo '<tr><td colspan="' . $colspan . '" class="text-center py-4 text-muted" style="font-size: 0.85rem;">لا توجد قيود يومية مطابقة لخيارات البحث</td></tr>';
                     }
                     ?>
@@ -556,17 +452,17 @@ $journal_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
         <div class="journal-summary-footer">
             <div class="summary-grid">
                 <div class="summary-item total-debit">
-                    <div class="label">إجمالي المدين (الزيادات)</div>
+                    <div class="label">إجمالي المدين (Debits)</div>
                     <div class="value"><?php echo number_format($total_debit, 2); ?></div>
                     <small style="color: #cbd5e1; font-size: 0.7rem;">ر.ي</small>
                 </div>
                 <div class="summary-item total-credit">
-                    <div class="label">إجمالي الدائن (النقص)</div>
+                    <div class="label">إجمالي الدائن (Credits)</div>
                     <div class="value"><?php echo number_format($total_credit, 2); ?></div>
                     <small style="color: #cbd5e1; font-size: 0.7rem;">ر.ي</small>
                 </div>
                 <div class="summary-item net-balance">
-                    <div class="label">الصافي (الزيادة - النقص)</div>
+                    <div class="label">الفرق (مدين - دائن)</div>
                     <div class="value">
                         <?php 
                         $sign = $net_balance >= 0 ? '+' : '';
@@ -581,20 +477,11 @@ $journal_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
                     <small style="color: #cbd5e1; font-size: 0.7rem;">قيد محاسبي</small>
                 </div>
             </div>
-            
-            <?php if (!empty($search) || $box_id > 0 || !empty($from_date) || !empty($to_date) || !empty($ref_type)): ?>
-            <div class="text-center mt-3 pt-3" style="border-top: 1px solid rgba(255,255,255,0.15);">
-                <small style="color: #94a3b8; font-size: 0.75rem;">
-                    <i class="fa fa-info-circle ml-1"></i>
-                    الإحصائيات أعلاه خاصة بالقيود المفلترة فقط
-                </small>
-            </div>
-            <?php endif; ?>
         </div>
 
     </div>
 </div>
 
-<?php
-require_once($dir_prefix . 'includes/footer.php');
-?>
+</div> <!-- End .page-inner -->
+
+<?php require_once($dir_prefix . 'includes/footer.php'); ?>

@@ -64,6 +64,11 @@ if ($res_m) {
 
 <title>لوحة تفعيل الموديولات - تكنولوجيا فون</title>
 
+<?php
+$active_tab = 'modules';
+require_once 'settings_nav.php';
+?>
+
 <div class="card-flat">
     <div class="card-header">
         <h5><?php echo get_icon('cog', 'ml-2 text-primary'); ?> تخصيص وتفعيل موديولات النظام قطاعياً</h5>

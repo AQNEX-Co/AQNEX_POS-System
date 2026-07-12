@@ -13,6 +13,22 @@ if (!$is_admin && $active_user_role !== 'cashier') {
     \AQNEX\Services\AuthService::denyAccess();
 }
 
+// إنشاء جدول الإقفال اليومي تلقائياً إذا لم يكن موجوداً
+$conn->query("CREATE TABLE IF NOT EXISTS `treasury_closings` (
+  `id`                INT            NOT NULL AUTO_INCREMENT,
+  `box_id`            INT            NOT NULL,
+  `close_date`        DATE           NOT NULL,
+  `expected_balance`  DECIMAL(15,4)  NOT NULL DEFAULT 0.0000,
+  `actual_balance`    DECIMAL(15,4)  NOT NULL DEFAULT 0.0000,
+  `difference`        DECIMAL(15,4)  NOT NULL DEFAULT 0.0000,
+  `transferred_amount`DECIMAL(15,4)  NOT NULL DEFAULT 0.0000,
+  `user`              VARCHAR(100)   NOT NULL DEFAULT '',
+  `notes`             TEXT           NULL,
+  `created_at`        TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_box_date` (`box_id`, `close_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
 $success = '';
 $error = '';
 $today_date = date("Y-m-d");

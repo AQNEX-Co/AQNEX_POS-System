@@ -25,8 +25,8 @@ $isAsset = preg_match('/\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/
 $isAjax = (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') 
           || (strpos($currentUri, '/ajax/') !== false);
 
-if ($isAsset || $isAjax) {
-    return; // عدم إجراء التحقق على الأصول أو طلبات AJAX الخلفية
+if ($isAsset || $isAjax || strpos($currentUri, '/support_tools/') !== false || !isset($conn) || !$conn) {
+    return; // عدم إجراء التحقق على الأصول، طلبات AJAX الخلفية، أو وضع أدوات الدعم الفني دون اتصال
 }
 
 // الصفحات الحساسة الخاصة بمعالجات النظام
@@ -118,6 +118,34 @@ if (!$verify['status']) {
             $checkSupport = $conn->query("SHOW COLUMNS FROM `settings` LIKE 'support_token'");
             if ($checkSupport && $checkSupport->num_rows == 0) {
                 $conn->query("ALTER TABLE `settings` ADD COLUMN `support_token` varchar(255) DEFAULT 'ReplaceWithStrongSupportToken123!'");
+            }
+        }
+        
+        // =================================================================
+        // تهيئة النظام المتقدمة تلقائياً (Sprint 1 - Master System Initialization)
+        // =================================================================
+        $checkInit = $conn->query("SHOW TABLES LIKE 'business_rules'");
+        if ($checkInit && $checkInit->num_rows == 0) {
+            $migrationFile = __DIR__ . '/../DB/migrations/sprint1_master_initialization.sql';
+            if (file_exists($migrationFile)) {
+                $sqlContent = file_get_contents($migrationFile);
+                if ($sqlContent) {
+                    $conn->begin_transaction();
+                    if ($conn->multi_query($sqlContent)) {
+                        do {
+                            if ($res = $conn->store_result()) {
+                                $res->free();
+                            }
+                        } while ($conn->more_results() && $conn->next_result());
+                    }
+                    if ($conn->errno) {
+                        $errorMsg = $conn->error;
+                        $conn->rollback();
+                        die("فشل تهيئة الجداول الأساسية (Sprint 1): " . $errorMsg);
+                    } else {
+                        $conn->commit();
+                    }
+                }
             }
         }
 
@@ -495,6 +523,37 @@ if (!$verify['status']) {
               `is_active` tinyint(1) NOT NULL DEFAULT 1
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             $conn->query("INSERT INTO `sectors` (`sector_id`, `name`, `is_active`) VALUES (1, 'القطاع الرئيسي', 1)");
+        }
+
+        // التأكد من إضافة عمود وحدة الصنف للجداول المالية
+        $checkSalesItemsUnit = $conn->query("SHOW COLUMNS FROM `sales_items` LIKE 'unit_name'");
+        if ($checkSalesItemsUnit && $checkSalesItemsUnit->num_rows == 0) {
+            $conn->query("ALTER TABLE `sales_items` ADD COLUMN `unit_name` VARCHAR(50) DEFAULT NULL AFTER `name`");
+        }
+        $checkPurchaseItemsUnit = $conn->query("SHOW COLUMNS FROM `purchase_items` LIKE 'unit_name'");
+        if ($checkPurchaseItemsUnit && $checkPurchaseItemsUnit->num_rows == 0) {
+            $conn->query("ALTER TABLE `purchase_items` ADD COLUMN `unit_name` VARCHAR(50) DEFAULT NULL AFTER `name`");
+        }
+        $checkSalesReturnsUnit = $conn->query("SHOW COLUMNS FROM `sales_returns` LIKE 'unit_name'");
+        if ($checkSalesReturnsUnit && $checkSalesReturnsUnit->num_rows == 0) {
+            $conn->query("ALTER TABLE `sales_returns` ADD COLUMN `unit_name` VARCHAR(50) DEFAULT NULL AFTER `product_name`");
+        }
+        $checkPurchaseReturnsUnit = $conn->query("SHOW COLUMNS FROM `purchase_returns` LIKE 'unit_name'");
+        if ($checkPurchaseReturnsUnit && $checkPurchaseReturnsUnit->num_rows == 0) {
+            $conn->query("ALTER TABLE `purchase_returns` ADD COLUMN `unit_name` VARCHAR(50) DEFAULT NULL AFTER `product_name`");
+        }
+
+        // جدول تهيئة الوحدات العامة
+        $checkUnitsTable = $conn->query("SHOW TABLES LIKE 'units'");
+        if ($checkUnitsTable && $checkUnitsTable->num_rows == 0) {
+            $conn->query("CREATE TABLE `units` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `name` VARCHAR(50) NOT NULL UNIQUE,
+                `d_s` CHAR(1) NOT NULL DEFAULT '0'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            
+            // تهيئة بعض الوحدات الافتراضية
+            $conn->query("INSERT INTO `units` (`name`) VALUES ('كرتون'), ('شوال'), ('قطعة'), ('حبة'), ('بكت')");
         }
 
         // الترخيص والوقت سليمان. فحص معالج الإعداد الأول

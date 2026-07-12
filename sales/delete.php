@@ -75,6 +75,7 @@ try {
     $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
 
     // 6. حذف السجلات والقيود المحاسبية من الجداول الفعالة
+    $conn->query("DELETE FROM accounting_journal_entries WHERE (source_type = 'sale' AND source_id = $sale_id) OR (source_type = 'return' AND source_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
     $conn->query("DELETE FROM journal_entries WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
     $conn->query("DELETE FROM accounting_journal WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
     $conn->query("DELETE FROM sales_returns WHERE sales_id = $sale_id");

@@ -15,18 +15,40 @@ if ($res) {
     }
 }
 ?>
-<title>عرض قطاعات الأعمال - تكنولوجيا فون</title>
+<title>عرض قطاعات الأعمال</title>
+<style>
+.page-inner { padding: 16px 20px; }
 
-<div class="row mb-4 no-print">
-    <div class="col-md-6">
-        <h3 class="text-secondary font-weight-bold">
-            <i class="bi bi-grid-3x3-gap ml-2 text-primary"></i> قطاعات الأعمال والأنشطة
-        </h3>
-        <p class="text-muted small mb-0">عرض وتصنيف عمليات المبيعات، المشتريات، المنتجات، والقيود حسب قطاعات الشركة المختلفة.</p>
+/* ===== ترويسة الصفحة الموحدة ===== */
+.page-title-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0 14px; border-bottom: 2px solid #1e40af; margin-bottom: 16px;
+    flex-wrap: wrap; gap: 10px;
+}
+.page-title-bar .ptb-left { display: flex; align-items: center; gap: 10px; }
+.page-title-bar .icon-wrap {
+    width: 34px; height: 34px;
+    background: #1e40af; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 1rem;
+}
+.page-title-bar h4 { margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--text-color); }
+.page-title-bar small { font-size: 0.72rem; color: #64748b; display: block; }
+.page-title-bar .ptb-actions { display: flex; gap: 8px; }
+</style>
+
+<div class="page-inner">
+
+<div class="page-title-bar no-print">
+    <div class="ptb-left">
+        <div class="icon-wrap"><i class="bi bi-grid-3x3-gap"></i></div>
+        <div>
+            <h4>قطاعات الأعمال والأنشطة</h4>
+            <small>عرض وتصنيف عمليات المبيعات، المشتريات، المنتجات، والقيود حسب قطاعات الشركة المختلفة.</small>
+        </div>
     </div>
-    <div class="col-md-6 text-left">
-        <a href="../home.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-            <?php echo get_icon('logout', 'ml-1'); ?> عودة للرئيسية
+    <div class="ptb-actions">
+        <a href="../home.php" class="btn btn-sm btn-light text-decoration-none" style="font-size: 0.8rem; border: 1px solid #cbd5e1;">
+            <i class="bi bi-arrow-left"></i> عودة للرئيسية
         </a>
     </div>
 </div>
@@ -62,6 +84,8 @@ if ($res) {
         </div>
     </div>
 </div>
+
+</div> <!-- End .page-inner -->
 
 <?php
 require_once($dir_prefix . 'includes/footer.php');

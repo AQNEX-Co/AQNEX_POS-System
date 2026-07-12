@@ -146,6 +146,62 @@ class AccountingService
                 ('$ref_type_esc', $ref_id, '$debit_acc_esc', '$credit_acc_esc', $amount, '$desc_esc', '$currency_esc', $exchange_rate, $amount_foreign, '$user_esc', $box_val, $sector_val)";
         $res2 = $conn->query($sql2);
 
+        // 3. Mirror into modern accounting_journal_entries & accounting_journal_items
+        try {
+            $debit_acc_id = 0;
+            $credit_acc_id = 0;
+
+            $res_deb = $conn->query("SELECT id FROM accounting_accounts WHERE name = '$debit_acc_esc' LIMIT 1");
+            if ($res_deb && $row_deb = $res_deb->fetch_assoc()) {
+                $debit_acc_id = intval($row_deb['id']);
+            }
+            $res_crd = $conn->query("SELECT id FROM accounting_accounts WHERE name = '$credit_acc_esc' LIMIT 1");
+            if ($res_crd && $row_crd = $res_crd->fetch_assoc()) {
+                $credit_acc_id = intval($row_crd['id']);
+            }
+
+            if ($debit_acc_id === 0 || $credit_acc_id === 0) {
+                self::syncAccounts($conn);
+                
+                $res_deb = $conn->query("SELECT id FROM accounting_accounts WHERE name = '$debit_acc_esc' LIMIT 1");
+                if ($res_deb && $row_deb = $res_deb->fetch_assoc()) {
+                    $debit_acc_id = intval($row_deb['id']);
+                }
+                $res_crd = $conn->query("SELECT id FROM accounting_accounts WHERE name = '$credit_acc_esc' LIMIT 1");
+                if ($res_crd && $row_crd = $res_crd->fetch_assoc()) {
+                    $credit_acc_id = intval($row_crd['id']);
+                }
+            }
+
+            if ($debit_acc_id > 0 && $credit_acc_id > 0 && $debit_acc_id !== $credit_acc_id) {
+                $ref_no = 'JE-' . date('Y') . '-' . $ref_type . '-' . $ref_id;
+                $ref_no_esc = $conn->real_escape_string($ref_no);
+                
+                $entry_date = date('Y-m-d');
+                $sql_h = "INSERT INTO accounting_journal_entries 
+                          (entry_date, reference_no, description, source_type, source_id, status, created_by) 
+                          VALUES 
+                          ('$entry_date', '$ref_no_esc', '$desc_esc', '$ref_type_esc', $ref_id, 'posted', '$user_esc')";
+                if ($conn->query($sql_h)) {
+                    $entry_id = $conn->insert_id;
+                    
+                    $sql_d = "INSERT INTO accounting_journal_items 
+                              (entry_id, account_id, debit, credit, exchange_rate, memo) 
+                              VALUES 
+                              ($entry_id, $debit_acc_id, $amount, 0.0, $exchange_rate, '$desc_esc')";
+                    $conn->query($sql_d);
+                    
+                    $sql_c = "INSERT INTO accounting_journal_items 
+                              (entry_id, account_id, debit, credit, exchange_rate, memo) 
+                              VALUES 
+                              ($entry_id, $credit_acc_id, 0.0, $amount, $exchange_rate, '$desc_esc')";
+                    $conn->query($sql_c);
+                }
+            }
+        } catch (\Exception $e) {
+            // Silently ignore or write log to prevent breaking transaction flow
+        }
+
         return ($res1 && $res2);
     }
 
@@ -232,6 +288,7 @@ class AccountingService
             '5102' => ['المصروفات العامة والتشغيلية', '5', 'expense', 1, 2], // Changed to parent
             '5103' => ['الخصم المسموح به (مصروف)', '5', 'expense', 0, 2], // Added
             '5104' => ['عجز وفروقات الصناديق (مصروف)', '5', 'expense', 0, 2], // Added
+            '5105' => ['خسائر وتلفيات المخزون (مصروف)', '5', 'expense', 0, 2], // Added
         ];
 
         // We will insert/update these base accounts

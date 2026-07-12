@@ -250,6 +250,10 @@ if (isset($_POST['restore'])) {
 </style>
 
 <div class="backup-container text-right">
+<?php
+$active_tab = 'backup';
+require_once 'settings_nav.php';
+?>
     <!-- عنوان الصفحة الرئيسي -->
     <div class="row mb-4">
         <div class="col-12">

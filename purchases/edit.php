@@ -112,9 +112,23 @@ if (isset($_POST['btn_save'])) {
     $quantities = isset($_POST['quantity']) ? $_POST['quantity'] : [];
     $unit_prices = isset($_POST['unit_price']) ? $_POST['unit_price'] : [];
     $line_totals = isset($_POST['line_total']) ? $_POST['line_total'] : [];
+    $conversion_factors = isset($_POST['conversion_factor']) ? $_POST['conversion_factor'] : [];
+    $unit_names = isset($_POST['unit_name']) ? $_POST['unit_name'] : [];
 
     $conn->begin_transaction();
     try {
+        // التحقق من رصيد الصندوق قبل الحفظ
+        if ($pay_from_box && $total_paid_base > 0) {
+            $box_balance = get_box_balance($conn, $selected_box_id);
+            $required_amount = $total_paid_base;
+            if ($original_pay_from_box && $selected_box_id === $original_box_id) {
+                $required_amount = $total_paid_base - $original_paid_base;
+            }
+            if ($required_amount > 0 && $box_balance < $required_amount) {
+                throw new Exception("رصيد الصندوق غير كافٍ! المتاح: " . number_format($box_balance, 2) . " ر.ي، والمطلوب الإضافي: " . number_format($required_amount, 2) . " ر.ي");
+            }
+        }
+
         // Prevent editing if there are active purchase returns on this invoice
         $returns_check = $conn->query("SELECT COUNT(*) as cnt FROM purchase_returns WHERE purchase_id = $invoice_id AND status = 'active'");
         if ($returns_check) {
@@ -128,15 +142,29 @@ if (isset($_POST['btn_save'])) {
         $old_items_res = $conn->query("SELECT * FROM purchase_items WHERE purchase_id = $invoice_id");
         if ($old_items_res) {
             while ($old_item = $old_items_res->fetch_assoc()) {
-                $item_name = $conn->real_escape_string($old_item['name']);
+                $item_name_full = $old_item['name'];
                 $old_qty = intval($old_item['quantity']);
                 if ($old_qty > 0) {
-                    $product_lookup = $conn->query("SELECT id, quantity FROM products WHERE name = '$item_name' LIMIT 1");
+                    $clean_name = preg_replace('/\s*\([^)]+\)$/', '', $item_name_full);
+                    $clean_name_esc = $conn->real_escape_string($clean_name);
+                    $product_lookup = $conn->query("SELECT id, quantity FROM products WHERE name = '$clean_name_esc' LIMIT 1");
                     if ($product_lookup && $product_lookup->num_rows > 0) {
                         $product_row = $product_lookup->fetch_assoc();
                         $product_id = intval($product_row['id']);
-                        $conn->query("UPDATE products SET quantity = GREATEST(0, quantity - $old_qty), total = GREATEST(0, quantity * buy_price) WHERE id = $product_id");
-                        $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user) SELECT $product_id, name, 'purchase', -$old_qty, quantity, 'عكس فاتورة مشتريات رقم #$invoice_id', '" . $_SESSION['SESS_FIRST_NAME'] . "' FROM products WHERE id = $product_id");
+                        
+                        // جلب معامل التحويل للوحدة المخزنة
+                        $old_unit_name = $old_item['unit_name'];
+                        $conv_factor = 1.0;
+                        if (!empty($old_unit_name)) {
+                            $u_res = $conn->query("SELECT conversion_factor FROM product_units WHERE product_id = $product_id AND unit_name = '" . $conn->real_escape_string($old_unit_name) . "' LIMIT 1");
+                            if ($u_res && $u_res->num_rows > 0) {
+                                $conv_factor = doubleval($u_res->fetch_assoc()['conversion_factor']);
+                            }
+                        }
+                        $old_base_qty = $old_qty * $conv_factor;
+                        
+                        $conn->query("UPDATE products SET quantity = GREATEST(0, quantity - $old_base_qty), total = GREATEST(0, quantity * buy_price) WHERE id = $product_id");
+                        $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user) SELECT $product_id, name, 'purchase', -$old_base_qty, quantity, 'عكس فاتورة مشتريات رقم #$invoice_id', '" . $_SESSION['SESS_FIRST_NAME'] . "' FROM products WHERE id = $product_id");
                     }
                 }
             }
@@ -164,15 +192,20 @@ if (isset($_POST['btn_save'])) {
             $qty = intval($quantities[$i]);
             $u_price = doubleval($unit_prices[$i]);
             $l_total = doubleval($line_totals[$i]);
+            $conv_factor = isset($conversion_factors[$i]) ? doubleval($conversion_factors[$i]) : 1.0;
+            if ($conv_factor <= 0) $conv_factor = 1.0;
+            $unit_name = isset($unit_names[$i]) ? trim($unit_names[$i]) : '';
 
             if (!empty($p_name) && $qty > 0 && $l_total > 0) {
                 $line_total_base = $l_total * $exchange_rate;
                 $items_to_save[] = [
-                    'name' => $conn->real_escape_string($p_name),
+                    'name' => $p_name,
                     'product_id' => $p_id,
                     'quantity' => $qty,
                     'unit_price_base' => $u_price * $exchange_rate,
                     'line_total_base' => $line_total_base,
+                    'conversion_factor' => $conv_factor,
+                    'unit_name' => $unit_name
                 ];
                 $invoice_lines_base_total += $line_total_base;
             }
@@ -193,6 +226,11 @@ if (isset($_POST['btn_save'])) {
             $qty = intval($item['quantity']);
             $unit_buy_price_base = $item['unit_price_base'];
             $l_total_base = $item['line_total_base'];
+            $conv_factor = $item['conversion_factor'];
+            $unit_name = $item['unit_name'];
+            if (empty($unit_name)) {
+                $unit_name = 'الوحدة الأساسية';
+            }
 
             if ($line_count > 0 && $index === $line_count - 1) {
                 $line_paid_base = max(0, $total_paid_base - $allocated_paid);
@@ -202,8 +240,19 @@ if (isset($_POST['btn_save'])) {
             }
             $line_remaining_base = max(0, $l_total_base - $line_paid_base);
 
-            $sql_item = "INSERT INTO purchase_items (purchase_id, buys_date, supp_name, supp_id, name, quantity, buy_price, pushtosupp, total_d, s) VALUES ($invoice_id, '$build_date', '$supplier_name', $supplier_id, '$p_name', $qty, $l_total_base, $line_paid_base, $line_remaining_base, 0)";
+            // إضافة اسم الوحدة للاسم لضمان التوافق
+            $p_name_store = $p_name;
+            if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية' && strpos($p_name_store, "($unit_name)") === false) {
+                $p_name_store .= " ($unit_name)";
+            }
+            $p_name_store_esc = $conn->real_escape_string($p_name_store);
+            $unit_name_esc = $conn->real_escape_string($unit_name);
+
+            $sql_item = "INSERT INTO purchase_items (purchase_id, buys_date, supp_name, supp_id, name, quantity, buy_price, pushtosupp, total_d, s, unit_name) VALUES ($invoice_id, '$build_date', '$supplier_name', $supplier_id, '$p_name_store_esc', $qty, $l_total_base, $line_paid_base, $line_remaining_base, 0, '$unit_name_esc')";
             $conn->query($sql_item);
+
+            $base_qty = $qty * $conv_factor;
+            $base_buy_price = $unit_buy_price_base / $conv_factor;
 
             if ($p_id <= 0) {
                 $product_name_esc = $conn->real_escape_string($p_name);
@@ -217,17 +266,17 @@ if (isset($_POST['btn_save'])) {
                         $conn->query("INSERT INTO categories (name, d_s) VALUES ('عام', 0)");
                         $cat_id = $conn->insert_id;
                     }
-                    $sale_price_val = $unit_buy_price_base * 1.25;
-                    $conn->query("INSERT INTO products (name, quantity, buy_price, sale_price, catid, date, delete_status) VALUES ('$product_name_esc', 0, $unit_buy_price_base, $sale_price_val, $cat_id, NOW(), 0)");
+                    $sale_price_val = $base_buy_price * 1.25;
+                    $conn->query("INSERT INTO products (name, quantity, buy_price, sale_price, catid, date, delete_status) VALUES ('$product_name_esc', 0, $base_buy_price, $sale_price_val, $cat_id, NOW(), 0)");
                     $p_id = $conn->insert_id;
                 }
             }
 
             if ($p_id > 0) {
-                $conn->query("UPDATE products SET quantity = quantity + $qty, buy_price = $unit_buy_price_base, total = quantity * buy_price WHERE id = $p_id");
-                $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user) SELECT $p_id, name, 'purchase', $qty, quantity, 'تعديل فاتورة مشتريات رقم #$invoice_id', '" . $_SESSION['SESS_FIRST_NAME'] . "' FROM products WHERE id = $p_id");
+                $conn->query("UPDATE products SET quantity = quantity + $base_qty, buy_price = $base_buy_price, total = quantity * buy_price WHERE id = $p_id");
+                $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user) SELECT $p_id, name, 'purchase', $base_qty, quantity, 'تعديل فاتورة مشتريات رقم #$invoice_id', '" . $_SESSION['SESS_FIRST_NAME'] . "' FROM products WHERE id = $p_id");
             } else {
-                $conn->query("UPDATE products SET quantity = quantity + $qty, buy_price = $unit_buy_price_base, total = quantity * buy_price WHERE name = '$p_name'");
+                $conn->query("UPDATE products SET quantity = quantity + $base_qty, buy_price = $base_buy_price, total = quantity * buy_price WHERE name = '$p_name_store_esc'");
             }
         }
 
@@ -458,10 +507,11 @@ $box_id = $original_box_id;
                 <table class="table-flat" id="purchaseTable">
                     <thead>
                         <tr>
-                            <th style="width: 35%;">المنتج</th>
-                            <th style="width: 15%;">الكمية</th>
+                            <th style="width: 25%;">المنتج</th>
+                            <th style="width: 15%;">الوحدة</th>
+                            <th style="width: 15%;">الالكمية</th>
                             <th style="width: 20%;">سعر الشراء الفردي</th>
-                            <th style="width: 25%;">المجموع الكلي</th>
+                            <th style="width: 20%;">المجموع الكلي</th>
                             <th class="no-print" style="width: 5%;">اجراء</th>
                         </tr>
                     </thead>
@@ -476,15 +526,39 @@ $box_id = $original_box_id;
                                             <input type="hidden" name="product_id[]" class="select-product" value="<?php echo $item['product_id']; ?>">
                                             <div class="autocomplete-dropdown d-none"></div>
                                         </div>
+                                        <?php
+                                        // استخراج الوحدة
+                                        $unit_name = 'الوحدة الأساسية';
+                                        $conv_factor = 1.0;
+                                        $unit_id = '';
+                                        if (!empty($item['unit_name'])) {
+                                            $unit_name = $item['unit_name'];
+                                        } elseif (preg_match('/\(([^)]+)\)/', $item['name'], $matches)) {
+                                            $unit_name = trim($matches[1]);
+                                        }
+                                        
+                                        $u_res = $conn->query("SELECT id, conversion_factor FROM product_units WHERE product_id = " . intval($item['product_id']) . " AND unit_name = '" . $conn->real_escape_string($unit_name) . "' LIMIT 1");
+                                        if ($u_res && $u_res->num_rows > 0) {
+                                            $u_row = $u_res->fetch_assoc();
+                                            $conv_factor = doubleval($u_row['conversion_factor']);
+                                            $unit_id = $u_row['id'];
+                                        }
+                                        ?>
+                                        <input type="hidden" name="conversion_factor[]" class="conversion-factor" value="<?php echo $conv_factor; ?>">
+                                        <input type="hidden" name="unit_name[]" class="unit-name" value="<?php echo htmlspecialchars($unit_name); ?>">
+                                        <input type="hidden" name="unit_id[]" class="unit-id" value="<?php echo $unit_id; ?>">
+                                    </td>
+                                    <td>
+                                        <input type="text" name="unit_display[]" class="form-control unit-display-input text-center bg-light rounded-0" readonly value="<?php echo htmlspecialchars($unit_name); ?>">
                                     </td>
                                     <td>
                                         <input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="<?php echo $item['quantity']; ?>" required>
                                     </td>
                                     <td>
-                                        <input type="number" step="any" name="unit_price[]" class="form-control price-input text-center rounded-0" value="<?php echo number_format($item['unit_price'], 2); ?>" required>
+                                        <input type="number" step="any" name="unit_price[]" class="form-control price-input text-center rounded-0" value="<?php echo number_format($item['unit_price'], 2, '.', ''); ?>" required>
                                     </td>
                                     <td>
-                                        <input type="text" name="line_total[]" class="form-control total-input text-center bg-light rounded-0" readonly value="<?php echo number_format($item['line_total'], 2); ?>">
+                                        <input type="text" name="line_total[]" class="form-control total-input text-center bg-light rounded-0" readonly value="<?php echo number_format($item['line_total'], 2, '.', ''); ?>">
                                     </td>
                                     <td class="no-print">
                                         <button type="button" class="btn-flat btn-flat-danger btn-sm py-1 px-2 remove-item-btn">
@@ -502,6 +576,12 @@ $box_id = $original_box_id;
                                         <input type="hidden" name="product_id[]" class="select-product" value="-1">
                                         <div class="autocomplete-dropdown d-none"></div>
                                     </div>
+                                    <input type="hidden" name="conversion_factor[]" class="conversion-factor" value="1.0000">
+                                    <input type="hidden" name="unit_name[]" class="unit-name" value="الوحدة الأساسية">
+                                    <input type="hidden" name="unit_id[]" class="unit-id" value="">
+                                </td>
+                                <td>
+                                    <input type="text" name="unit_display[]" class="form-control unit-display-input text-center bg-light rounded-0" readonly value="الوحدة الأساسية">
                                 </td>
                                 <td>
                                     <input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="1" required>
@@ -582,6 +662,45 @@ $box_id = $original_box_id;
 const availableProducts = <?php echo $products_json; ?>;
 
 document.addEventListener("DOMContentLoaded", function() {
+    const purchaseEditForm = document.getElementById("purchaseEditForm");
+    if (purchaseEditForm) {
+        purchaseEditForm.addEventListener("submit", function(e) {
+            const payFromBox = document.getElementById("payFromBox").checked;
+            if (payFromBox) {
+                let boxBalance = 0;
+                const boxSelect = document.getElementById("boxSelect");
+                const userBoxId = document.getElementById("userBoxId");
+
+                if (boxSelect && boxSelect.selectedIndex >= 0) {
+                    const selectedOption = boxSelect.options[boxSelect.selectedIndex];
+                    boxBalance = parseFloat(selectedOption.getAttribute("data-balance")) || 0;
+                } else if (userBoxId) {
+                    boxBalance = parseFloat(userBoxId.getAttribute("data-balance")) || 0;
+                }
+
+                const totalPaid = parseFloat(document.getElementById("totalPaidInput").value) || 0;
+                const originalPayFromBox = <?php echo $original_pay_from_box ? 'true' : 'false'; ?>;
+                const originalBoxId = <?php echo $original_box_id; ?>;
+                const originalPaidBase = <?php echo $original_paid_base; ?>;
+                const exchangeRate = parseFloat(document.getElementById("exchangeRateInput").value) || 1.0;
+                const originalPaid = originalPaidBase / exchangeRate;
+
+                let selectedBoxIdVal = boxSelect ? parseInt(boxSelect.value) : (userBoxId ? parseInt(userBoxId.value) : 0);
+
+                let requiredAmount = totalPaid;
+                if (originalPayFromBox && selectedBoxIdVal === originalBoxId) {
+                    requiredAmount = totalPaid - originalPaid;
+                }
+
+                if (requiredAmount > boxBalance) {
+                    alert("رصيد الصندوق غير كافٍ! الرصيد المتاح: " + boxBalance.toFixed(2) + " ر.ي\nالمبلغ الإضافي المطلوب: " + requiredAmount.toFixed(2) + " ر.ي\n\nيرجى تقليل المبلغ المدفوع أو إلغاء خيار 'خصم المدفوع من الصندوق'.");
+                    e.preventDefault();
+                    return false;
+                }
+            }
+        });
+    }
+
     const itemsContainer = document.getElementById("itemsContainer");
     const addItemBtn = document.getElementById("addItemBtn");
     const exchangeRateInput = document.getElementById("exchangeRateInput");
@@ -616,6 +735,10 @@ document.addEventListener("DOMContentLoaded", function() {
         newRow.querySelector(".quantity-input").value = "1";
         newRow.querySelector(".price-input").value = "0";
         newRow.querySelector(".total-input").value = "0.00";
+        newRow.querySelector(".conversion-factor").value = "1.0000";
+        newRow.querySelector(".unit-name").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-display-input").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-id").value = "";
         newRow.querySelector(".autocomplete-dropdown").classList.add("d-none");
         newRow.querySelector(".autocomplete-dropdown").innerHTML = "";
         itemsContainer.appendChild(newRow);
@@ -681,6 +804,12 @@ document.addEventListener("DOMContentLoaded", function() {
         input.value = product.name;
         hiddenInput.value = product.id;
         nameInput.value = product.name;
+
+        const conversionFactor = parseFloat(product.conversion_factor) || 1.0;
+        row.querySelector(".conversion-factor").value = conversionFactor;
+        row.querySelector(".unit-name").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-display-input").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-id").value = product.unit_id || "";
 
         const buyPriceConverted = (product.buy_price / (parseFloat(exchangeRateInput.value) || 1.0)).toFixed(2);
         row.querySelector(".price-input").value = buyPriceConverted;

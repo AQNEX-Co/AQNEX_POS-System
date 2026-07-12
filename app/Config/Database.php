@@ -4,6 +4,7 @@ namespace AQNEX\Config;
 class Database
 {
     private static array $config = [];
+    private static ?\PDO $pdoInstance = null;
 
     public static function loadConfig(array $config): void
     {
@@ -89,5 +90,34 @@ class Database
 
         $connection->set_charset($charset);
         return $connection;
+    }
+
+    public static function createPdo(): ?\PDO
+    {
+        if (self::$pdoInstance !== null) {
+            return self::$pdoInstance;
+        }
+
+        $host = self::$config['host'] ?? 'localhost';
+        $port = (int)(self::$config['port'] ?? 3306);
+        $name = self::$config['name'] ?? '';
+        $user = self::$config['user'] ?? '';
+        $pass = self::$config['pass'] ?? '';
+        $charset = self::$config['charset'] ?? 'utf8mb4';
+
+        self::ensureDatabaseExists($host, $port, $user, $pass, $name, $charset);
+
+        try {
+            $dsn = "mysql:host=$host;port=$port;dbname=$name;charset=$charset";
+            $options = [
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                \PDO::ATTR_EMULATE_PREPARES => false,
+            ];
+            self::$pdoInstance = new \PDO($dsn, $user, $pass, $options);
+            return self::$pdoInstance;
+        } catch (\PDOException $e) {
+            return null;
+        }
     }
 }

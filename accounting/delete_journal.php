@@ -3,7 +3,7 @@ $dir_prefix = '../';
 require_once($dir_prefix . 'includes/connect.php');
 require_once($dir_prefix . 'includes/auth.php');
 
-// Verify session and admin status before outputting any HTML to prevent "headers already sent" warning
+// التحقق من الصلاحيات والمسؤول
 if (!\AQNEX\Services\AuthService::isAdmin()) {
     \AQNEX\Services\AuthService::denyAccess();
 }
@@ -13,29 +13,28 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     exit;
 }
 
-$journal_id = intval($_GET['id']);
+$entry_id = intval($_GET['id']);
 
-$res = $conn->query("SELECT * FROM accounting_journal WHERE id = $journal_id LIMIT 1");
+// فحص وجود القيد المزدوج
+$res = $conn->query("SELECT * FROM accounting_journal_entries WHERE id = $entry_id LIMIT 1");
 if ($res && $res->num_rows > 0) {
     $row = $res->fetch_assoc();
-    $ref_type = $conn->real_escape_string($row['ref_type']);
-    $ref_id = intval($row['ref_id']);
-    $debit = $conn->real_escape_string($row['account_debit']);
-    $credit = $conn->real_escape_string($row['account_credit']);
-    $amount = doubleval($row['amount']);
-    
+    $source_type = $conn->real_escape_string($row['source_type']);
+    $source_id = intval($row['source_id']);
+
     $conn->begin_transaction();
     try {
-        // أرشفة القيد المحاسبي للتاريخ (History)
-        $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE id = $journal_id");
-        $conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE ref_type = '$ref_type' AND ref_id = $ref_id AND account_debit = '$debit' AND account_credit = '$credit' AND amount = $amount");
+        // 1. حذف بنود القيد من جدول البنود
+        $conn->query("DELETE FROM accounting_journal_items WHERE entry_id = $entry_id");
 
-        // Delete from accounting_journal
-        $conn->query("DELETE FROM accounting_journal WHERE id = $journal_id");
-        
-        // Delete corresponding row from journal_entries
-        $conn->query("DELETE FROM journal_entries WHERE ref_type = '$ref_type' AND ref_id = $ref_id AND account_debit = '$debit' AND account_credit = '$credit' AND amount = $amount");
-        
+        // 2. حذف رأس القيد من جدول القيود المزدوجة
+        $conn->query("DELETE FROM accounting_journal_entries WHERE id = $entry_id");
+
+        // 3. حذف القيد المقابل من جدول القيود القديم (المبسط) في حال كان مرحل من مبيعات أو مشتريات
+        if ($source_type !== 'manual' && $source_id > 0) {
+            $conn->query("DELETE FROM accounting_journal WHERE ref_type = '$source_type' AND ref_id = $source_id");
+        }
+
         $conn->commit();
         header('Location: journal.php?msg=deleted');
     } catch (Exception $e) {
@@ -43,7 +42,9 @@ if ($res && $res->num_rows > 0) {
         header('Location: journal.php?msg=error');
     }
 } else {
-    header('Location: journal.php?msg=notfound');
+    // إذا لم يوجد في القيود المزدوجة، نقوم بالحذف الاحتياطي من الجدول القديم مباشرة
+    $conn->query("DELETE FROM accounting_journal WHERE id = $entry_id");
+    header('Location: journal.php?msg=deleted');
 }
 exit;
 ?>

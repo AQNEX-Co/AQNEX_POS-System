@@ -35,20 +35,54 @@ class AuthService
         return self::currentUserRole() === 'admin';
     }
 
-    public static function hasPermission(string $module, \mysqli $conn): bool
+    public static function hasPermission(string $module, ?\mysqli $conn = null): bool
     {
-        if (self::isAdmin()) {
-            return true;
-        }
-
+        self::startSession();
         $userId = self::currentUserId();
         if ($userId <= 0) {
             return false;
         }
 
+        if (self::isAdmin()) {
+            return true;
+        }
+
         $module = trim($module);
         if ($module === '') {
             return true;
+        }
+
+        // Try the new RBAC verification via PDO first
+        $pdo = \AQNEX\Config\Database::createPdo();
+        if ($pdo) {
+            try {
+                $stmt = $pdo->prepare("
+                    SELECT COUNT(*) 
+                    FROM users u
+                    JOIN roles r ON u.role_id = r.id
+                    JOIN role_permissions rp ON r.id = rp.role_id
+                    JOIN permissions p ON rp.permission_id = p.id
+                    WHERE u.userid = :user_id AND p.permission_key = :permission_key
+                ");
+                $stmt->execute([
+                    ':user_id' => $userId,
+                    ':permission_key' => $module
+                ]);
+                $count = (int) $stmt->fetchColumn();
+                if ($count > 0) {
+                    return true;
+                }
+            } catch (\PDOException $e) {
+                // If tables do not exist yet or connection fails, fallback to legacy
+            }
+        }
+
+        // Fallback for Legacy / Custom permissions
+        if ($conn === null) {
+            $conn = \AQNEX\Config\Database::createMysqli();
+        }
+        if (!$conn) {
+            return false;
         }
 
         $result = $conn->query("SELECT custom_permissions FROM users WHERE userid = $userId LIMIT 1");
@@ -75,7 +109,7 @@ class AuthService
         return false;
     }
 
-    public static function checkPermission(string $module, \mysqli $conn): void
+    public static function checkPermission(string $module, ?\mysqli $conn = null): void
     {
         if (!self::hasPermission($module, $conn)) {
             self::denyAccess();
@@ -98,6 +132,11 @@ class AuthService
         </script>";
         echo "</body></html>";
         exit();
+    }
+
+    public static function can(string $permission): bool
+    {
+        return self::hasPermission($permission);
     }
 
     public static function redirect(string $url): void

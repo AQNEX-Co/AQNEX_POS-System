@@ -89,6 +89,11 @@ if ($res_p) {
 
 <title>إدارة الطابعات - تكنولوجيا فون</title>
 
+<?php
+$active_tab = 'printers';
+require_once 'settings_nav.php';
+?>
+
 <div class="card-flat">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5><?php echo get_icon('print', 'ml-2 text-primary'); ?> إعدادات وإدارة طابعات النظام</h5>

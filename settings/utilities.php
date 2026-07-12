@@ -7,6 +7,10 @@ check_permission(['admin']);
 ?>
 
 <div class="settings-shell">
+<?php
+$active_tab = 'utilities';
+require_once 'settings_nav.php';
+?>
 
 <div class="row mb-4 no-print align-items-center">
     <div class="col-md-7 text-right">
@@ -102,7 +106,7 @@ check_permission(['admin']);
                                 تهيئة الاتصال بمحرك الذكاء الاصطناعي Gemini وتحديث مفتاح الوصول (API Key) للمساعدة التحليلية المباشرة.
                             </p>
                         </div>
-                        <a href="index.php?tab=assistant" class="btn btn-outline-primary btn-sm btn-block mt-4 font-weight-bold py-2 rounded-0">
+                        <a href="rules.php" class="btn btn-outline-primary btn-sm btn-block mt-4 font-weight-bold py-2 rounded-0">
                             تهيئة Gemini API
                         </a>
                     </div>

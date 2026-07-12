@@ -7,7 +7,7 @@ class SettingsRepository
     {
         return [
             'id' => 1,
-            'store_name' => 'تكنولوجيا فون',
+            'store_name' => 'اسم المنشأة',
             'phone' => '777777777',
             'address' => 'اليمن - عدن',
             'currency' => 'ريال يمني',

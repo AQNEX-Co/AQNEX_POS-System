@@ -91,6 +91,7 @@ if (isset($_POST['btn_save'])) {
     $total_remaining_base = 0;
     $total_discount_base = 0;
     $total_cost_base = 0;
+    $calculated_grand_profit_base = 0.0;
     $count = count($products);
 
     for ($i = 0; $i < $count; $i++) {
@@ -100,7 +101,6 @@ if (isset($_POST['btn_save'])) {
             $total_paid_base += doubleval($paids[$i]) * $exchange_rate;
             $total_remaining_base += doubleval($remainings[$i]) * $exchange_rate;
             $total_discount_base += doubleval($discounts[$i]) * $exchange_rate;
-            $total_cost_base += ($qty * doubleval($buy_prices[$i])) * $exchange_rate;
         }
     }
 
@@ -159,6 +159,9 @@ if (isset($_POST['btn_save'])) {
                 $conv_factor = isset($_POST['conversion_factor'][$i]) ? doubleval($_POST['conversion_factor'][$i]) : 1.0;
                 if ($conv_factor <= 0) $conv_factor = 1.0;
                 $unit_name = isset($_POST['unit_name'][$i]) ? trim($_POST['unit_name'][$i]) : '';
+                if (empty($unit_name)) {
+                    $unit_name = 'الوحدة الأساسية';
+                }
 
                 $product_field_val = "$p_id $product_name_db";
                 if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية') {
@@ -172,55 +175,42 @@ if (isset($_POST['btn_save'])) {
                 $line_total_base = ($qty * $price) * $exchange_rate;
                 $line_net_base = $paid_base + $rem_base;
 
-                $sql_item = "INSERT INTO `sales_items`(`sales_id`, `id`, `cust_name`, `name`, `quantity`, `unit_price`, `bush`, `d`, `dis`, `total`, `all_tot`, `build_date`) 
-                             VALUES ('$billing_id', '$p_id', '$customer_name', '$product_field_val', '$qty', '$price_base', '$paid_base', '$disc_base', '$rem_base', '$line_net_base', '$line_total_base', '$build_date')";
+                $unit_name_esc = $conn->real_escape_string($unit_name);
+                $sql_item = "INSERT INTO `sales_items`(`sales_id`, `id`, `cust_name`, `name`, `quantity`, `unit_price`, `bush`, `d`, `dis`, `total`, `all_tot`, `build_date`, `unit_name`) 
+                             VALUES ('$billing_id', '$p_id', '$customer_name', '$product_field_val', '$qty', '$price_base', '$paid_base', '$disc_base', '$rem_base', '$line_net_base', '$line_total_base', '$build_date', '$unit_name_esc')";
                 if (!$conn->query($sql_item)) {
                     throw new Exception("فشل إدراج الصنف: " . $product_name_db);
                 }
                 $sales_item_id = $conn->insert_id;
 
                 $base_qty = $qty * $conv_factor;
-                $sql_update_qty = "UPDATE `products` SET `quantity` = `quantity` - $base_qty WHERE `id` = $p_id";
+                
+                // Decrement global products quantity
+                $sql_update_qty = "UPDATE `products` SET `quantity` = `quantity` - $base_qty, total = quantity * buy_price WHERE `id` = $p_id";
                 if (!$conn->query($sql_update_qty)) {
                     throw new Exception("فشل تحديث كمية المخزن للصنف: " . $product_name_db);
                 }
 
-                $sql_log = "INSERT INTO `inventory_log` (`product_id`, `product_name`, `type`, `qty_change`, `new_qty`, `reason`, `user`) 
-                            SELECT $p_id, name, 'sale', -$base_qty, quantity, 'عملية بيع بفاتورة رقم #$billing_id', '" . $_SESSION['SESS_FIRST_NAME'] . "' 
-                            FROM products WHERE id = $p_id";
-                if (!$conn->query($sql_log)) {
-                    throw new Exception("فشل تسجيل حركة المخزون للصنف: " . $product_name_db);
-                }
+                // Decrement warehouse stock (Main Warehouse ID 1)
+                $conn->query("UPDATE `warehouses_stock` SET `quantity` = `quantity` - $base_qty WHERE `warehouse_id` = 1 AND `product_id` = $p_id");
 
-                if (is_module_enabled('expiry_tracking') && intval($p_row['track_expiry']) === 1) {
-                    $batch_id = isset($_POST['batch_id'][$i]) ? intval($_POST['batch_id'][$i]) : 0;
-                    if ($batch_id > 0) {
-                        if (!$conn->query("UPDATE `product_batches` SET `quantity` = `quantity` - $base_qty WHERE `id` = $batch_id")) {
-                            throw new Exception("فشل تحديث كمية دفعة الصلاحية المحددة");
-                        }
-                    } else {
-                        $rem_to_deduct = $base_qty;
-                        $res_batches = $conn->query("SELECT id, quantity FROM product_batches WHERE product_id = $p_id AND quantity > 0 AND d_s = '0' ORDER BY expiry_date ASC, id ASC");
-                        if ($res_batches) {
-                            while ($b_row = $res_batches->fetch_assoc()) {
-                                if ($rem_to_deduct <= 0) break;
-                                $b_id = intval($b_row['id']);
-                                $b_qty = doubleval($b_row['quantity']);
-                                if ($b_qty >= $rem_to_deduct) {
-                                    if (!$conn->query("UPDATE product_batches SET quantity = quantity - $rem_to_deduct WHERE id = $b_id")) {
-                                        throw new Exception("فشل خصم دفعة الصلاحية تلقائياً");
-                                    }
-                                    $rem_to_deduct = 0;
-                                } else {
-                                    if (!$conn->query("UPDATE product_batches SET quantity = 0 WHERE id = $b_id")) {
-                                        throw new Exception("فشل تصفير كمية دفعة الصلاحية تلقائياً");
-                                    }
-                                    $rem_to_deduct -= $b_qty;
-                                }
-                            }
-                        }
-                    }
-                }
+                // Deduct from batches using FIFO and calculate COGS
+                $cogs_base = \AQNEX\Services\InventoryService::deductStockAndGetCOGS($conn, $p_id, $base_qty);
+                $item_profit_base = $line_total_base - $cogs_base - $disc_base;
+                $calculated_grand_profit_base += $item_profit_base;
+                $total_cost_base += $cogs_base;
+
+                // Log dynamic inventory movement
+                \AQNEX\Services\InventoryService::logInventoryAction($conn, [
+                    'product_id'      => $p_id,
+                    'action_type'     => 'out',
+                    'quantity'        => $base_qty,
+                    'cost_price'      => ($base_qty > 0) ? ($cogs_base / $base_qty) : 0,
+                    'warehouse_id'    => 1,
+                    'reference_table' => 'sales',
+                    'reference_id'    => $billing_id,
+                    'user_id'         => $_SESSION['SESS_FIRST_NAME'] ?? 'system'
+                ]);
 
                 if (is_module_enabled('serial_imei_tracking')) {
                     $serial_ids_str = isset($_POST['serial_ids'][$i]) ? trim($_POST['serial_ids'][$i]) : '';
@@ -245,6 +235,9 @@ if (isset($_POST['btn_save'])) {
                 }
             }
         }
+
+        // Update the sales record with true FIFO profit
+        $conn->query("UPDATE `sales` SET `prifet` = $calculated_grand_profit_base WHERE `id` = $billing_id");
 
         $user_display = $_SESSION['SESS_FIRST_NAME'];
 
@@ -600,6 +593,45 @@ if ($res_curr) {
     border-color: #1c2941;
     box-shadow: 0 0 0 0.15rem rgba(28, 41, 65, 0.12);
 }
+
+/* تبويبات المبيعات المتعددة */
+.sales-tab-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: #475569;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 0 !important;
+    transition: all 0.15s ease;
+}
+.sales-tab-item:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+.sales-tab-item.active {
+    background: #1e40af;
+    border-color: #1e40af;
+    color: #ffffff;
+}
+.sales-tab-close-btn {
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0.7;
+    line-height: 1;
+}
+.sales-tab-close-btn:hover {
+    opacity: 1;
+}
 </style>
 
 <!-- Loading Overlay -->
@@ -624,6 +656,16 @@ if ($res_curr) {
                 <strong>خطأ في حفظ الفاتورة:</strong> <?php echo htmlspecialchars($save_error); ?>
             </div>
         <?php endif; ?>
+        <!-- شريط التبويبات المتعددة (Multi-Invoice Tabs) -->
+        <div class="sales-tabs-bar no-print mb-4" style="display:flex; align-items:center; justify-content:space-between; border-bottom:2px solid #e2e8f0; padding-bottom:10px;">
+            <div id="sales-tabs-list" style="display:flex; gap:6px; flex-wrap:wrap;">
+                <!-- سيتولد برمجياً عبر JS -->
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-primary font-weight-bold" onclick="openNewSalesTab()" style="font-size:0.8rem; border-radius:0; height: 34px;">
+                <i class="bi bi-plus-lg ml-1"></i> فاتورة جديدة (F2)
+            </button>
+        </div>
+
         <form method="POST" id="salesForm">
             <div class="row mb-3">
                 <div class="col-md-2 col-sm-6 mb-3">
@@ -752,7 +794,7 @@ if ($res_curr) {
                     </div>
                     <div class="col-md-6 text-md-left">
                         <button type="button" id="quickProductSearchBtn" class="btn btn-outline-primary rounded-0 px-4 font-weight-bold">
-                            <i class="bi bi-search ml-1"></i> F2 - البحث السريع عن المنتج
+                            <i class="bi bi-search ml-1"></i> F4 - البحث السريع عن المنتج
                         </button>
                     </div>
                 </div>
@@ -764,7 +806,8 @@ if ($res_curr) {
                 <table class="table-flat" id="itemsTable">
                     <thead>
                         <tr>
-                            <th style="width: 28%;">المنتج والوحدة ومسار التعقب</th>
+                            <th style="width: 22%;">المنتج ومسار التعقب</th>
+                            <th style="width: 8%;">الوحدة</th>
                             <th style="width: 8%;">المخزن</th>
                             <th style="width: 8%;">الكمية</th>
                             <th style="width: 10%;">سعر البيع</th>
@@ -779,7 +822,7 @@ if ($res_curr) {
                         <tr class="item-row">
                             <td>
                                 <div class="product-search-container">
-                                    <input type="text" class="form-control product-search-input rounded-0" placeholder="اضغط هنا للبحث عن منتج..." autocomplete="off" readonly required>
+                                    <input type="text" class="form-control product-search-input rounded-0" placeholder="اكتب اسم أو باركود الصنف للبحث..." autocomplete="off" required>
                                     <input type="hidden" name="product_id[]" class="select-product" value="">
                                     <div class="autocomplete-dropdown d-none"></div>
                                 </div>
@@ -799,6 +842,9 @@ if ($res_curr) {
                                     <small class="text-danger font-weight-bold d-block mb-1">دفعة الصلاحية (FEFO تلقائي):</small>
                                     <select class="form-control form-control-sm batch-select rounded-0"></select>
                                 </div>
+                            </td>
+                            <td>
+                                <input type="text" class="form-control unit-display-input text-center bg-light rounded-0" readonly value="الوحدة الأساسية">
                             </td>
                             <td>
                                 <input type="text" class="form-control stock-qty text-center bg-light rounded-0" readonly value="0">
@@ -852,29 +898,45 @@ if ($res_curr) {
             </div>
                 </div>
                 
-                <div class="col-lg-6">
-                    <div class="invoice-summary">
-                        <table>
+                    <div class="invoice-summary text-right" dir="rtl">
+                        <table style="width:100%;">
                             <tr>
-                                <td class="total-label">إجمالي الفاتورة المدفوع (المقبوض)</td>
-                                <td class="total-value">
-                                    <input type="text" id="grandPaidDisplay" name="grand_paid" class="form-control text-left font-weight-bold bg-transparent border-0 rounded-0" readonly value="0">
+                                <td class="total-label py-1">إجمالي البنود (Subtotal)</td>
+                                <td class="total-value py-1 text-left font-weight-bold">
+                                    <span id="summarySubtotal">0.00</span> <span class="currency-symbol">ر.ي</span>
                                 </td>
                             </tr>
                             <tr>
-                                <td class="total-label">إجمالي المتبقي (المديونية)</td>
-                                <td class="total-value text-danger">
+                                <td class="total-label py-1">الضريبة (VAT <?php echo floatval($global_settings['tax_percent'] ?? 0); ?>%)</td>
+                                <td class="total-value py-1 text-left font-weight-bold text-warning">
+                                    <span id="summaryTax">0.00</span> <span class="currency-symbol">ر.ي</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="total-label py-1 font-weight-bold">صافي الفاتورة الإجمالي (Net Total)</td>
+                                <td class="total-value py-1 text-left font-weight-bold text-primary">
+                                    <span id="summaryNetTotal">0.00</span> <span class="currency-symbol">ر.ي</span>
+                                </td>
+                            </tr>
+                            <tr style="border-top: 1px solid #cbd5e1;">
+                                <td class="total-label py-1 font-weight-bold">إجمالي المدفوع (المقبوض)</td>
+                                <td class="total-value py-1">
+                                    <input type="text" id="grandPaidDisplay" name="grand_paid" class="form-control text-left font-weight-bold bg-transparent border-0 rounded-0 p-0 text-success" style="height:auto; font-size:1.1rem;" readonly value="0">
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="total-label py-1 font-weight-bold">إجمالي المتبقي (المديونية)</td>
+                                <td class="total-value py-1 text-danger font-weight-bold" style="font-size:1.1rem;">
                                     <span id="grandRemainingDisplay">0.00</span> <span class="currency-symbol">ر.ي</span>
                                 </td>
                             </tr>
                             <tr>
-                                <td class="total-label">إجمالي الربح المتوقع</td>
-                                <td class="total-value text-success">
-                                    <input type="text" id="grandProfitDisplay" name="grand_profit" class="form-control text-left text-success font-weight-bold bg-transparent border-0 rounded-0" readonly value="0">
+                                <td class="total-label py-1">الربح المتوقع</td>
+                                <td class="total-value py-1">
+                                    <input type="text" id="grandProfitDisplay" name="grand_profit" class="form-control text-left font-weight-bold bg-transparent border-0 rounded-0 p-0 text-info" style="height:auto;" readonly value="0">
                                 </td>
                             </tr>
                         </table>
-                    </div>
                     </div>
                     </div>
 
@@ -956,10 +1018,330 @@ if ($res_curr) {
 const availableProducts = <?php echo $products_json; ?>;
 const isSerialModuleEnabled = <?php echo is_module_enabled('serial_imei_tracking') ? 'true' : 'false'; ?>;
 const isExpiryModuleEnabled = <?php echo is_module_enabled('expiry_tracking') ? 'true' : 'false'; ?>;
+const taxPercent = <?php echo floatval($global_settings['tax_percent'] ?? 0); ?>;
 
 let salesFormDirty = false;
 let salesFormSubmitting = false;
 let pendingLeaveUrl = null;
+
+// إدارة تبويبات الفواتير المتعددة (Multi-Invoice Tab Management)
+let tabs = [];
+let activeTabId = null;
+let nextTabId = 1;
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function resetRow(row) {
+    row.querySelector('.select-product').value = '';
+    row.querySelector('.select-product').removeAttribute('data-base-sale-price');
+    row.querySelector('.select-product').removeAttribute('data-base-buy-price');
+    row.querySelector('.product-search-input').value = '';
+    row.querySelector('.buy-price').value = '0';
+    row.querySelector('.conversion-factor').value = '1.0000';
+    row.querySelector('.unit-name').value = 'الوحدة الأساسية';
+    row.querySelector('.unit-id').value = '';
+    row.querySelector('.row-serial-ids').value = '';
+    row.querySelector('.row-batch-id').value = '';
+    row.querySelector('.stock-qty').value = '0';
+    row.querySelector('.quantity-input').value = '1';
+    row.querySelector('.price-input').value = '0.00';
+    row.querySelector('.total-input').value = '0.00';
+    row.querySelector('.paid-input').value = '0.00';
+    row.querySelector('.paid-input').removeAttribute('data-manually-edited');
+    row.querySelector('.discount-input').value = '0';
+    row.querySelector('.remaining-input').value = '0.00';
+    row.querySelector('.profit-input').value = '0.00';
+    row.querySelector('.unit-display-input').value = 'الوحدة الأساسية';
+    row.querySelector('.serial-sec').classList.add('d-none');
+    row.querySelector('.serial-select').innerHTML = '';
+    row.querySelector('.batch-sec').classList.add('d-none');
+    row.querySelector('.batch-select').innerHTML = '';
+}
+
+function saveCurrentTabState() {
+    if (activeTabId === null) return;
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (!tab) return;
+
+    tab.build_date = document.querySelector('[name="build_date"]').value;
+    tab.customer_name = document.querySelector('#select2').value;
+    tab.invoice_type = document.querySelector('#invoiceTypeSelect').value;
+    tab.currency_code = document.querySelector('#currencySelect').value;
+    tab.exchange_rate = document.querySelector('#exchangeRateInput').value;
+    tab.box_id = document.querySelector('#boxSelect') ? document.querySelector('#boxSelect').value : '';
+    tab.payment_method = document.querySelector('#paymentMethodSelect') ? document.querySelector('#paymentMethodSelect').value : 'cash';
+    tab.wallet_type = document.querySelector('#salesWalletTypeSelect') ? document.querySelector('#salesWalletTypeSelect').value : '';
+    tab.remark = document.querySelector('[name="remark"]').value;
+
+    tab.items = [];
+    document.querySelectorAll('#itemsContainer .item-row').forEach(row => {
+        const prodId = row.querySelector('.select-product').value;
+        
+        let serialsHtml = '';
+        let serialsVal = [];
+        const serialSelect = row.querySelector('.serial-select');
+        if (serialSelect) {
+            serialsHtml = serialSelect.innerHTML;
+            serialsVal = Array.from(serialSelect.selectedOptions).map(o => o.value);
+        }
+
+        let batchesHtml = '';
+        let batchesVal = '';
+        const batchSelect = row.querySelector('.batch-select');
+        if (batchSelect) {
+            batchesHtml = batchSelect.innerHTML;
+            batchesVal = batchSelect.value;
+        }
+
+        tab.items.push({
+            product_id: prodId,
+            product_search: row.querySelector('.product-search-input').value,
+            buy_price: row.querySelector('.buy-price').value,
+            conversion_factor: row.querySelector('.conversion-factor').value,
+            unit_name: row.querySelector('.unit-name').value,
+            unit_id: row.querySelector('.unit-id').value,
+            serial_ids: row.querySelector('.row-serial-ids').value,
+            batch_id: row.querySelector('.row-batch-id').value,
+            stock: row.querySelector('.stock-qty').value,
+            quantity: row.querySelector('.quantity-input').value,
+            unit_price: row.querySelector('.price-input').value,
+            total: row.querySelector('.total-input').value,
+            paid: row.querySelector('.paid-input').value,
+            paid_manually: row.querySelector('.paid-input').hasAttribute('data-manually-edited'),
+            discount: row.querySelector('.discount-input').value,
+            remaining: row.querySelector('.remaining-input').value,
+            profit: row.querySelector('.profit-input').value,
+            unit_display: row.querySelector('.unit-display-input').value,
+            serial_sec_visible: !row.querySelector('.serial-sec').classList.contains('d-none'),
+            batch_sec_visible: !row.querySelector('.batch-sec').classList.contains('d-none'),
+            serials_html: serialsHtml,
+            serials_val: serialsVal,
+            batches_html: batchesHtml,
+            batches_val: batchesVal
+        });
+    });
+}
+
+function loadTabState(tabId) {
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return;
+
+    activeTabId = tabId;
+
+    document.querySelector('[name="build_date"]').value = tab.build_date;
+    document.querySelector('#select2').value = tab.customer_name;
+    document.querySelector('#invoiceTypeSelect').value = tab.invoice_type;
+    toggleSalesInvoiceType(tab.invoice_type);
+
+    document.querySelector('#currencySelect').value = tab.currency_code;
+    document.querySelector('#exchangeRateInput').value = tab.exchange_rate;
+    if (document.querySelector('#boxSelect')) {
+        document.querySelector('#boxSelect').value = tab.box_id;
+    }
+    if (document.querySelector('#paymentMethodSelect')) {
+        document.querySelector('#paymentMethodSelect').value = tab.payment_method;
+        toggleSalesWalletSection(tab.payment_method);
+    }
+    if (document.querySelector('#salesWalletTypeSelect')) {
+        document.querySelector('#salesWalletTypeSelect').value = tab.wallet_type;
+    }
+    document.querySelector('[name="remark"]').value = tab.remark;
+
+    if (typeof fetchCustomerDetails === 'function') {
+        fetchCustomerDetails(tab.customer_name);
+    }
+
+    const container = document.getElementById("itemsContainer");
+    if (!container) return;
+    container.innerHTML = '';
+    
+    if (tab.items.length === 0) {
+        const newRow = rowTemplate.cloneNode(true);
+        resetRow(newRow);
+        container.appendChild(newRow);
+    } else {
+        tab.items.forEach(item => {
+            const row = rowTemplate.cloneNode(true);
+            row.querySelector('.select-product').value = item.product_id;
+            
+            const rate = parseFloat(tab.exchange_rate) || 1.0;
+            const baseSalePrice = (parseFloat(item.unit_price) * rate);
+            const baseBuyPrice = (parseFloat(item.buy_price) * rate);
+            row.querySelector('.select-product').setAttribute('data-base-sale-price', baseSalePrice);
+            row.querySelector('.select-product').setAttribute('data-base-buy-price', baseBuyPrice);
+
+            row.querySelector('.product-search-input').value = item.product_search;
+            row.querySelector('.buy-price').value = item.buy_price;
+            row.querySelector('.conversion-factor').value = item.conversion_factor;
+            row.querySelector('.unit-name').value = item.unit_name;
+            row.querySelector('.unit-id').value = item.unit_id;
+            row.querySelector('.row-serial-ids').value = item.serial_ids;
+            row.querySelector('.row-batch-id').value = item.batch_id;
+            row.querySelector('.stock-qty').value = item.stock;
+            row.querySelector('.quantity-input').value = item.quantity;
+            row.querySelector('.price-input').value = item.unit_price;
+            row.querySelector('.total-input').value = item.total;
+            row.querySelector('.paid-input').value = item.paid;
+            if (item.paid_manually) {
+                row.querySelector('.paid-input').setAttribute('data-manually-edited', 'true');
+            } else {
+                row.querySelector('.paid-input').removeAttribute('data-manually-edited');
+            }
+            row.querySelector('.discount-input').value = item.discount;
+            row.querySelector('.remaining-input').value = item.remaining;
+            row.querySelector('.profit-input').value = item.profit;
+            row.querySelector('.unit-display-input').value = item.unit_display;
+
+            const serialSec = row.querySelector('.serial-sec');
+            const serialSelect = row.querySelector('.serial-select');
+            if (item.serial_sec_visible) {
+                serialSec.classList.remove('d-none');
+                serialSelect.innerHTML = item.serials_html;
+                Array.from(serialSelect.options).forEach(opt => {
+                    opt.selected = item.serials_val.includes(opt.value);
+                });
+            } else {
+                serialSec.classList.add('d-none');
+                serialSelect.innerHTML = '';
+            }
+
+            const batchSec = row.querySelector('.batch-sec');
+            const batchSelect = row.querySelector('.batch-select');
+            if (item.batch_sec_visible) {
+                batchSec.classList.remove('d-none');
+                batchSelect.innerHTML = item.batches_html;
+                batchSelect.value = item.batches_val;
+            } else {
+                batchSec.classList.add('d-none');
+                batchSelect.innerHTML = '';
+            }
+
+            container.appendChild(row);
+        });
+    }
+
+    renderTabs();
+    updateGrandTotals();
+    updateAccountingGuide();
+}
+
+function openNewSalesTab() {
+    if (activeTabId !== null) {
+        saveCurrentTabState();
+    }
+
+    const tabId = nextTabId++;
+    const tabName = `فاتورة عميل ${tabId}`;
+    
+    const newTab = {
+        id: tabId,
+        name: tabName,
+        build_date: new Date().toISOString().split('T')[0],
+        customer_name: '',
+        invoice_type: 'cash',
+        currency_code: 'YER',
+        exchange_rate: '1.0000',
+        box_id: document.querySelector('#boxSelect') ? document.querySelector('#boxSelect').options[0]?.value : '1',
+        payment_method: 'cash',
+        wallet_type: '',
+        remark: '',
+        items: []
+    };
+
+    tabs.push(newTab);
+    loadTabState(tabId);
+}
+
+function closeTab(tabId, event) {
+    if (event) event.stopPropagation();
+    
+    const idx = tabs.findIndex(t => t.id === tabId);
+    if (idx === -1) return;
+
+    tabs.splice(idx, 1);
+    if (activeTabId === tabId) {
+        if (tabs.length > 0) {
+            const nextActive = tabs[Math.min(idx, tabs.length - 1)].id;
+            loadTabState(nextActive);
+        } else {
+            activeTabId = null;
+            openNewSalesTab();
+        }
+    } else {
+        renderTabs();
+    }
+    saveTabsToLocalStorage();
+}
+
+function switchTab(tabId) {
+    if (activeTabId === tabId) return;
+    saveCurrentTabState();
+    loadTabState(tabId);
+    saveTabsToLocalStorage();
+}
+
+function renderTabs() {
+    const container = document.getElementById("sales-tabs-list");
+    if (!container) return;
+    
+    let html = "";
+    tabs.forEach(tab => {
+        const activeClass = tab.id === activeTabId ? "active" : "";
+        html += `
+            <div class="sales-tab-item ${activeClass}" onclick="switchTab(${tab.id})">
+                <span>${escapeHtml(tab.name)}</span>
+                <button type="button" class="sales-tab-close-btn" onclick="closeTab(${tab.id}, event)">&times;</button>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+function saveTabsToLocalStorage() {
+    saveCurrentTabState();
+    localStorage.setItem('aqnex_sales_tabs', JSON.stringify(tabs));
+    localStorage.setItem('aqnex_sales_active_tab_id', activeTabId);
+}
+
+function loadTabsFromLocalStorage() {
+    try {
+        const storedTabs = localStorage.getItem('aqnex_sales_tabs');
+        const storedActiveId = localStorage.getItem('aqnex_sales_active_tab_id');
+        if (storedTabs) {
+            const parsed = JSON.parse(storedTabs);
+            if (parsed && parsed.length > 0) {
+                tabs = parsed;
+                activeTabId = parseInt(storedActiveId);
+                nextTabId = Math.max(...tabs.map(t => t.id), 0) + 1;
+                
+                if (activeTabId && tabs.some(t => t.id === activeTabId)) {
+                    loadTabState(activeTabId);
+                } else if (tabs.length > 0) {
+                    loadTabState(tabs[0].id);
+                }
+                return true;
+            }
+        }
+    } catch(e) {
+        console.error("Error loading tabs from localStorage", e);
+    }
+    return false;
+}
+
+window.openNewSalesTab = openNewSalesTab;
+window.switchTab = switchTab;
+window.closeTab = closeTab;
+window.saveCurrentTabState = saveCurrentTabState;
+window.loadTabState = loadTabState;
+
 
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(() => { salesFormDirty = false; }, 300);
@@ -968,11 +1350,61 @@ document.addEventListener('DOMContentLoaded', function() {
     if (salesForm) {
         salesForm.addEventListener('change', () => { salesFormDirty = true; });
         salesForm.addEventListener('input',  () => { salesFormDirty = true; });
-        salesForm.addEventListener('submit', () => { salesFormSubmitting = true; salesFormDirty = false; });
+        salesForm.addEventListener('submit', () => { 
+            saveCurrentTabState(); 
+            // Remove the active tab from tabs array so it's not restored
+            const activeIdx = tabs.findIndex(t => t.id === activeTabId);
+            if (activeIdx !== -1) {
+                tabs.splice(activeIdx, 1);
+            }
+            localStorage.setItem('aqnex_sales_tabs', JSON.stringify(tabs));
+            localStorage.removeItem('aqnex_sales_active_tab_id');
+            salesFormSubmitting = true; 
+            salesFormDirty = false; 
+        });
+
+        let autoSaveTimeout = null;
+        function triggerAutoSave() {
+            clearTimeout(autoSaveTimeout);
+            autoSaveTimeout = setTimeout(() => {
+                saveTabsToLocalStorage();
+            }, 500);
+        }
+        salesForm.addEventListener('input', triggerAutoSave);
+        salesForm.addEventListener('change', triggerAutoSave);
     }
 
     const btnSave = document.getElementById('btnSaveSales');
-    if (btnSave) btnSave.addEventListener('click', () => { salesFormSubmitting = true; });
+    if (btnSave) {
+        btnSave.addEventListener('click', () => { 
+            salesFormSubmitting = true; 
+        });
+    }
+
+    // تهيئة أو استرجاع التبويبات بعد تحميل الصفحة تماماً
+    setTimeout(() => {
+        const loaded = loadTabsFromLocalStorage();
+        if (!loaded) {
+            const firstTabId = nextTabId++;
+            tabs.push({
+                id: firstTabId,
+                name: "فاتورة عميل 1",
+                build_date: document.querySelector('[name="build_date"]').value,
+                customer_name: document.querySelector('#select2').value,
+                invoice_type: document.querySelector('#invoiceTypeSelect').value,
+                currency_code: document.querySelector('#currencySelect').value,
+                exchange_rate: document.querySelector('#exchangeRateInput').value,
+                box_id: document.querySelector('#boxSelect') ? document.querySelector('#boxSelect').value : '',
+                payment_method: document.querySelector('#paymentMethodSelect') ? document.querySelector('#paymentMethodSelect').value : 'cash',
+                wallet_type: document.querySelector('#salesWalletTypeSelect') ? document.querySelector('#salesWalletTypeSelect').value : '',
+                remark: document.querySelector('[name="remark"]').value,
+                items: []
+            });
+            activeTabId = firstTabId;
+            saveCurrentTabState(); // Capture existing items/state
+            renderTabs();
+        }
+    }, 150);
 
     document.querySelectorAll('a[href]').forEach(function(link) {
         const href = link.getAttribute('href');
@@ -1111,15 +1543,38 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function updateGrandTotals() {
+        let subtotal = 0;
         let totalPaid = 0;
+        let totalDiscount = 0;
         let totalRemaining = 0;
         let totalProfit = 0;
 
         document.querySelectorAll(".item-row").forEach(function(row) {
-            totalPaid += parseFloat(row.querySelector(".paid-input").value) || 0;
-            totalRemaining += parseFloat(row.querySelector(".remaining-input").value) || 0;
-            totalProfit += parseFloat(row.querySelector(".profit-input").value) || 0;
+            const qty = parseInt(row.querySelector(".quantity-input").value) || 0;
+            const price = parseFloat(row.querySelector(".price-input").value) || 0;
+            const paid = parseFloat(row.querySelector(".paid-input").value) || 0;
+            const disc = parseFloat(row.querySelector(".discount-input").value) || 0;
+            const rem = parseFloat(row.querySelector(".remaining-input").value) || 0;
+            const profit = parseFloat(row.querySelector(".profit-input").value) || 0;
+
+            subtotal += (qty * price);
+            totalPaid += paid;
+            totalDiscount += disc;
+            totalRemaining += rem;
+            totalProfit += profit;
         });
+
+        const taxVal = (subtotal * taxPercent) / 100;
+        const netTotal = subtotal + taxVal - totalDiscount;
+
+        const subtotalEl = document.getElementById("summarySubtotal");
+        if (subtotalEl) subtotalEl.textContent = subtotal.toFixed(2);
+        
+        const taxEl = document.getElementById("summaryTax");
+        if (taxEl) taxEl.textContent = taxVal.toFixed(2);
+
+        const netTotalEl = document.getElementById("summaryNetTotal");
+        if (netTotalEl) netTotalEl.textContent = netTotal.toFixed(2);
 
         document.getElementById("grandPaidDisplay").value = totalPaid.toFixed(2);
         document.getElementById("grandRemainingDisplay").textContent = totalRemaining.toFixed(2);
@@ -1219,6 +1674,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
         newRow.querySelector(".conversion-factor").value = "1.0000";
         newRow.querySelector(".unit-name").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-display-input").value = "الوحدة الأساسية";
         newRow.querySelector(".unit-id").value = "";
         newRow.querySelector(".row-serial-ids").value = "";
         newRow.querySelector(".row-batch-id").value = "";
@@ -1243,6 +1699,43 @@ document.addEventListener("DOMContentLoaded", function() {
                 updateAccountingGuide();
             } else {
                 alert("يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+            }
+        }
+    });
+
+    // معالجة التنقل بلوحة المفاتيح لقائمة الإكمال التلقائي
+    itemsContainer.addEventListener("keydown", function(e) {
+        if (e.target.matches(".product-search-input")) {
+            const row = e.target.closest(".item-row");
+            const dropdown = row.querySelector(".autocomplete-dropdown");
+            if (!dropdown || dropdown.classList.contains("d-none")) return;
+
+            const items = Array.from(dropdown.querySelectorAll(".autocomplete-item"));
+            if (items.length === 0) return;
+
+            const activeItem = dropdown.querySelector(".autocomplete-item.active");
+            let idx = items.indexOf(activeItem);
+
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (activeItem) activeItem.classList.remove("active");
+                idx = (idx + 1) % items.length;
+                items[idx].classList.add("active");
+                items[idx].scrollIntoView({ block: "nearest" });
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (activeItem) activeItem.classList.remove("active");
+                idx = (idx - 1 + items.length) % items.length;
+                items[idx].classList.add("active");
+                items[idx].scrollIntoView({ block: "nearest" });
+            } else if (e.key === "Enter") {
+                if (activeItem) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    activeItem.click(); // اختيار الصنف المحدد
+                }
             }
         }
     });
@@ -1325,21 +1818,55 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         }, 300);
     }
+    window.openProductModalAndFocusSearch = openProductModalAndFocusSearch;
 
-    // عند النقر على حقل البحث عن المنتج → فتح المودال مباشرة
-    itemsContainer.addEventListener("click", function(e) {
+    // عند التركيز على حقل البحث عن المنتج، يتم تحديد الصف النشط
+    itemsContainer.addEventListener("focusin", function(e) {
         if (e.target.matches(".product-search-input")) {
             const row = e.target.closest(".item-row");
             window.activeSearchRow = row;
-            
-            // إذا كان هناك منتج محدد مسبقاً، لا تفتح المودال
-            const selectProduct = row.querySelector(".select-product");
-            if (selectProduct && selectProduct.value) {
+        }
+    });
+
+    // الإكمال التلقائي الذكي عند الكتابة (Autocomplete)
+    itemsContainer.addEventListener("input", function(e) {
+        if (e.target.matches(".product-search-input")) {
+            const row = e.target.closest(".item-row");
+            const dropdown = row.querySelector(".autocomplete-dropdown");
+            const q = e.target.value.trim();
+
+            if (q.length < 1) {
+                dropdown.classList.add("d-none");
+                dropdown.innerHTML = "";
                 return;
             }
-            
-            // فتح المودال ونقل المؤشر لخانة البحث
-            openProductModalAndFocusSearch('');
+
+            fetch(`../api/search_products.php?q=${encodeURIComponent(q)}`)
+                .then(res => res.json())
+                .then(data => {
+                    let html = "";
+                    if (data && data.length > 0) {
+                        data.forEach(p => {
+                            const pJson = escapeHtml(JSON.stringify(p));
+                            html += `
+                                <div class="autocomplete-item text-right" data-product="${pJson}" style="padding: 6px 12px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
+                                    <div class="font-weight-bold" style="font-size: 0.85rem;">${escapeHtml(p.name)}</div>
+                                    <div style="font-size: 0.72rem; color: #64748b;">
+                                        باركود: ${escapeHtml(p.barcode || '—')} | المخزون: ${p.quantity} | السعر: ${p.sale_price} ر.ي
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        dropdown.innerHTML = html;
+                        dropdown.classList.remove("d-none");
+                    } else {
+                        dropdown.innerHTML = '<div style="padding: 8px; color: #94a3b8; font-size: 0.8rem; text-align: center;">لا توجد نتائج</div>';
+                        dropdown.classList.remove("d-none");
+                    }
+                })
+                .catch(err => {
+                    console.error("Autocomplete error:", err);
+                });
         }
     });
 
@@ -1357,6 +1884,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const conversionFactor = parseFloat(product.conversion_factor) || 1.0;
         row.querySelector(".conversion-factor").value = conversionFactor;
         row.querySelector(".unit-name").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-display-input").value = product.unit_name || "الوحدة الأساسية";
         row.querySelector(".unit-id").value = product.unit_id || "";
 
         const rate = parseFloat(exchangeRateInput.value) || 1.0;
@@ -2164,18 +2692,14 @@ document.addEventListener("DOMContentLoaded", function() {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'F2') {
         e.preventDefault();
-        if (typeof openQuickProductModal === 'function') {
-            openQuickProductModal();
+        if (typeof openNewSalesTab === 'function') {
+            openNewSalesTab();
         }
     }
     if (e.key === 'F4') {
         e.preventDefault();
-        const customerSelect = document.getElementById('select2');
-        if (customerSelect) {
-            customerSelect.focus();
-            if (typeof $(customerSelect).select2 === 'function') {
-                $(customerSelect).select2('open');
-            }
+        if (typeof openProductModalAndFocusSearch === 'function') {
+            openProductModalAndFocusSearch('');
         }
     }
     if (e.key === 'F8') {

@@ -37,6 +37,9 @@ if (isset($_GET['id'])) {
             }
             
             // 4. حذف القيود اليومية المحاسبية من الجداول الفعالة
+            if (!$conn->query("DELETE FROM accounting_journal_entries WHERE source_type = 'receipt' AND source_id = $qid")) {
+                throw new Exception("فشل حذف قيود القيد المزدوج الحديثة");
+            }
             if (!$conn->query("DELETE FROM journal_entries WHERE ref_type = 'receipt' AND ref_id = $qid")) {
                 throw new Exception("فشل حذف القيود اليومية");
             }

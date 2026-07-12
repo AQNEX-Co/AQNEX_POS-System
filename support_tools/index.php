@@ -1,9 +1,17 @@
 <?php
 require_once __DIR__ . '/../includes/connect.php';
 
+// التحقق من حالة الاتصال بقاعدة البيانات
+$isOffline = ($conn === null);
+
 // جلب رمز الدعم الفني الموثق من الإعدادات بقاعدة البيانات
-$res_s = $conn->query("SELECT support_token FROM settings WHERE id = 1 LIMIT 1");
-$support_token = ($res_s && $row_s = $res_s->fetch_assoc()) ? ($row_s['support_token'] ?? '') : '';
+$support_token = '';
+if ($conn) {
+    try {
+        $res_s = $conn->query("SELECT support_token FROM settings WHERE id = 1 LIMIT 1");
+        $support_token = ($res_s && $row_s = $res_s->fetch_assoc()) ? ($row_s['support_token'] ?? '') : '';
+    } catch (\Exception $ex) {}
+}
 if (empty($support_token)) {
     $support_token = '123';
 }
@@ -16,7 +24,7 @@ if (!is_string($auth) || !hash_equals($support_token, $auth)) {
 }
 
 // تصدير قاعدة البيانات بصيغة SQL
-if (isset($_GET['act']) && $_GET['act'] === 'export_db') {
+if (!$isOffline && isset($_GET['act']) && $_GET['act'] === 'export_db') {
     if (ob_get_level()) {
         ob_end_clean();
     }
@@ -112,11 +120,6 @@ if ($use_adminer === 1 && file_exists($adminerPath)) {
 }
 
 // ==========================================
-// أوفلاين - أداة دعم محلي بديلة (Fallback Utility)
-// ==========================================
-
-
-// ==========================================
 // العمليات التلقائية لقاعدة البيانات (CRUD)
 // ==========================================
 $crud_table = $_GET['tbl'] ?? '';
@@ -125,7 +128,7 @@ $crud_val = $_GET['val'] ?? '';
 $crud_act = $_GET['act'] ?? '';
 $crud_msg = '';
 
-if (!empty($crud_act)) {
+if (!$isOffline && !empty($crud_act)) {
     if ($crud_act === 'del') {
         $table_esc = $conn->real_escape_string($crud_table);
         $pk_esc = $conn->real_escape_string($crud_pk);
@@ -218,14 +221,13 @@ if (!empty($crud_act)) {
 }
 
 $query = $_POST['sql_query'] ?? '';
-if (empty($query) && isset($_GET['tbl'])) {
+if (!$isOffline && empty($query) && isset($_GET['tbl'])) {
     $query = "SELECT * FROM `" . $conn->real_escape_string($_GET['tbl']) . "` LIMIT 50;";
 }
 $query_result = null;
 $query_error = '';
 
-if (!empty($query)) {
-    // الحماية المبدئية - هذه الأداة للمشرف الفني فقط محلياً
+if (!$isOffline && !empty($query)) {
     if ($conn->multi_query($query)) {
         $query_result = [];
         do {
@@ -245,14 +247,16 @@ if (!empty($query)) {
 
 // استعلام لجلب قائمة الجداول وإحصائياتها
 $tables = [];
-$res_t = $conn->query("SHOW TABLE STATUS");
-if ($res_t) {
-    while ($row = $res_t->fetch_assoc()) {
-        $tables[] = [
-            'name' => $row['Name'],
-            'rows' => $row['Rows'],
-            'size' => round(($row['Data_length'] + $row['Index_length']) / 1024 / 1024, 2) . ' MB'
-        ];
+if (!$isOffline) {
+    $res_t = $conn->query("SHOW TABLE STATUS");
+    if ($res_t) {
+        while ($row = $res_t->fetch_assoc()) {
+            $tables[] = [
+                'name' => $row['Name'],
+                'rows' => $row['Rows'],
+                'size' => round(($row['Data_length'] + $row['Index_length']) / 1024 / 1024, 2) . ' MB'
+            ];
+        }
     }
 }
 ?>
@@ -260,7 +264,9 @@ if ($res_t) {
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>أدوات الدعم الفني المحلي - أوفلاين</title>
+    <title>أدوات الدعم الفني المحلي - AQNEX POS</title>
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -441,215 +447,239 @@ if ($res_t) {
 </head>
 <body>
 
-<div class="sidebar">
-    <div class="sidebar-header">
-        <h3>الدعم الفني المحلي (Offline)</h3>
-        <span style="font-size: 0.8rem; color: var(--text-muted);">أداة استعراض قاعدة البيانات البديلة</span>
-    </div>
-    <div class="table-list">
-        <?php foreach ($tables as $t): ?>
-            <div class="table-item" onclick="loadTableQuery('<?php echo htmlspecialchars($t['name']); ?>')">
-                <span><?php echo htmlspecialchars($t['name']); ?></span>
-                <span class="table-badge"><?php echo $t['rows']; ?> صف</span>
+<?php if ($isOffline): ?>
+    <!-- واجهة الدعم الفني في وضع عدم الاتصال -->
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; padding: 40px; box-sizing: border-box;">
+        <div style="background-color: var(--bg-secondary); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 40px; text-align: center; max-width: 600px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+            <i class="bi bi-database-fill-exclamation" style="font-size: 4rem; color: var(--danger); display: block; margin-bottom: 20px;"></i>
+            <h3 style="color: var(--text-main); font-weight: 800; font-size: 1.6rem; margin-bottom: 15px;">وضع الدعم الفني (قاعدة البيانات غير متصلة)</h3>
+            <p style="color: var(--text-muted); line-height: 1.7; font-size: 0.95rem; margin-bottom: 30px;">
+                تعذر الاتصال بقاعدة البيانات. يرجى التحقق من تشغيل MySQL في XAMPP أو ضبط معلومات الاتصال.
+                <br>
+                يمكنك الدخول مباشرة إلى أداة <strong>Adminer</strong> لإدارة وإصلاح الجداول دون المرور بصفحة الفحص.
+            </p>
+            <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                <a href="index.php?auth=<?php echo urlencode($auth); ?>&use_adminer=1" style="text-decoration: none; background-color: var(--accent); color: var(--bg-primary); font-weight: bold; padding: 12px 25px; border-radius: 6px; font-size: 1rem; display: inline-flex; align-items: center; gap: 8px;">
+                    <i class="bi bi-wrench"></i> تشغيل أداة Adminer المباشرة
+                </a>
+                <a href="../home.php" style="text-decoration: none; background-color: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text-main); font-weight: bold; padding: 12px 25px; border-radius: 6px; font-size: 1rem; display: inline-flex; align-items: center; gap: 8px;">
+                    🚪 خروج
+                </a>
             </div>
-        <?php endforeach; ?>
-    </div>
-</div>
-
-<div class="main-content">
-    <div class="quick-actions" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
-        <button class="btn-quick" onclick="setQuery('SELECT * FROM settings WHERE id = 1;')">فحص الإعدادات العامة</button>
-        <button class="btn-quick" onclick="setQuery('SELECT * FROM users LIMIT 10;')">فحص الحسابات والمستخدمين</button>
-        <button class="btn-quick" onclick="setQuery('SELECT SUM(mony) FROM treasury;')">رصيد الصناديق الكلي</button>
-        <button class="btn-quick" onclick="setQuery('SELECT * FROM inventory_log ORDER BY id DESC LIMIT 50;')">سجل حركة المخزون الأخير</button>
-        <a href="index.php?auth=<?php echo urlencode($auth); ?>&use_adminer=1" class="btn-quick" style="text-decoration: none; background-color: var(--accent); color: var(--bg-primary); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">🔧 تشغيل لوحة التحكم الكلاسيكية (Adminer)</a>
-        <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=export_db" class="btn-quick" style="text-decoration: none; background-color: var(--success); color: var(--bg-primary); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">📥 تصدير قاعدة البيانات (.sql)</a>
-        <a href="../home.php" class="btn-quick" style="text-decoration: none; background-color: var(--danger); color: var(--text-main); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">🚪 العودة للنظام (خروج)</a>
-    </div>
-
-    <div class="editor-container">
-        <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;" dir="ltr">
-            <button type="button" class="btn-quick" onclick="insertSqlTemplate('select')" style="background-color: rgba(56, 189, 248, 0.1); border-color: var(--accent); color: var(--accent); font-weight: bold;">SELECT</button>
-            <button type="button" class="btn-quick" onclick="insertSqlTemplate('create')" style="background-color: rgba(16, 185, 129, 0.1); border-color: var(--success); color: var(--success); font-weight: bold;">CREATE TABLE</button>
-            <button type="button" class="btn-quick" onclick="insertSqlTemplate('insert')" style="background-color: rgba(245, 158, 11, 0.1); border-color: #f59e0b; color: #f59e0b; font-weight: bold;">INSERT</button>
-            <button type="button" class="btn-quick" onclick="insertSqlTemplate('update')" style="background-color: rgba(59, 130, 246, 0.1); border-color: #3b82f6; color: #3b82f6; font-weight: bold;">UPDATE</button>
-            <button type="button" class="btn-quick" onclick="insertSqlTemplate('delete')" style="background-color: rgba(239, 68, 68, 0.1); border-color: var(--danger); color: var(--danger); font-weight: bold;">DELETE</button>
         </div>
-        <form method="POST" id="queryForm">
-            <textarea class="sql-input" name="sql_query" id="sql_query" placeholder="اكتب استعلام SQL هنا... (مثال: SELECT * FROM products LIMIT 10)"><?php echo htmlspecialchars($query); ?></textarea>
-            <div style="text-align: left; margin-top: 10px;">
-                <button type="submit" class="btn-run">تشغيل الاستعلام</button>
-            </div>
-        </form>
+    </div>
+<?php else: ?>
+    <!-- واجهة أدوات الدعم الفني العادية -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h3>الدعم الفني المحلي (Online)</h3>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">أداة استعراض قاعدة البيانات البديلة</span>
+        </div>
+        <div class="table-list">
+            <?php foreach ($tables as $t): ?>
+                <div class="table-item" onclick="loadTableQuery('<?php echo htmlspecialchars($t['name']); ?>')">
+                    <span><?php echo htmlspecialchars($t['name']); ?></span>
+                    <span class="table-badge"><?php echo $t['rows']; ?> صف</span>
+                </div>
+            <?php endforeach; ?>
+        </div>
     </div>
 
-    <div class="results-container">
-        <?php if (isset($_GET['msg'])): ?>
-            <div style="background-color: var(--success); color: var(--bg-primary); padding: 10px; border-radius: 6px; margin-bottom: 15px; font-weight: bold;">
-                <?php
-                if ($_GET['msg'] === 'deleted') echo "✓ تم حذف الصف بنجاح!";
-                if ($_GET['msg'] === 'updated') echo "✓ تم تحديث الصف بنجاح!";
-                if ($_GET['msg'] === 'added') echo "✓ تم إضافة الصف بنجاح!";
-                ?>
-            </div>
-        <?php endif; ?>
-        <?php if (!empty($crud_msg)): ?>
-            <div class="alert alert-danger">
-                <?php echo htmlspecialchars($crud_msg); ?>
-            </div>
-        <?php endif; ?>
+    <div class="main-content">
+        <div class="quick-actions" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+            <button class="btn-quick" onclick="setQuery('SELECT * FROM settings WHERE id = 1;')">فحص الإعدادات العامة</button>
+            <button class="btn-quick" onclick="setQuery('SELECT * FROM users LIMIT 10;')">فحص الحسابات والمستخدمين</button>
+            <button class="btn-quick" onclick="setQuery('SELECT SUM(mony) FROM treasury;')">رصيد الصناديق الكلي</button>
+            <button class="btn-quick" onclick="setQuery('SELECT * FROM inventory_log ORDER BY id DESC LIMIT 50;')">سجل حركة المخزون الأخير</button>
+            <a href="index.php?auth=<?php echo urlencode($auth); ?>&use_adminer=1" class="btn-quick" style="text-decoration: none; background-color: var(--accent); color: var(--bg-primary); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">🔧 تشغيل لوحة التحكم الكلاسيكية (Adminer)</a>
+            <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=export_db" class="btn-quick" style="text-decoration: none; background-color: var(--success); color: var(--bg-primary); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">📥 تصدير قاعدة البيانات (.sql)</a>
+            <a href="../home.php" class="btn-quick" style="text-decoration: none; background-color: var(--danger); color: var(--text-main); font-weight: bold; border: none; padding: 6px 15px; border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;">🚪 العودة للنظام (خروج)</a>
+        </div>
 
-        <?php if ($crud_act === 'edit_form' || $crud_act === 'add_form'): 
-            $table_esc = $conn->real_escape_string($crud_table);
-            $pk_esc = $conn->real_escape_string($crud_pk);
-            $val_esc = $conn->real_escape_string($crud_val);
-            
-            $row_data = [];
-            if ($crud_act === 'edit_form') {
-                $res_row = $conn->query("SELECT * FROM `$table_esc` WHERE `$pk_esc` = '$val_esc' LIMIT 1");
-                if ($res_row) $row_data = $res_row->fetch_assoc();
-            }
-            
-            $res_cols = $conn->query("SHOW COLUMNS FROM `$table_esc`");
-        ?>
-            <div style="background-color: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
-                <h4 style="color: var(--accent); margin-top: 0;">
-                    <?php echo $crud_act === 'edit_form' ? "تعديل صف في جدول `$crud_table`" : "إضافة صف جديد في جدول `$crud_table`"; ?>
-                </h4>
-                <form method="POST" action="index.php?auth=<?php echo urlencode($auth); ?>&act=<?php echo $crud_act === 'edit_form' ? 'save_edit' : 'save_add'; ?>&tbl=<?php echo urlencode($crud_table); ?>&pk=<?php echo urlencode($crud_pk); ?>&val=<?php echo urlencode($crud_val); ?>">
-                    <?php while ($col = $res_cols->fetch_assoc()): 
-                        $col_name = $col['Field'];
-                        $is_pk = ($col['Key'] === 'PRI' || $col_name === $crud_pk);
-                        $val_input = $row_data[$col_name] ?? '';
+        <div class="editor-container">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;" dir="ltr">
+                <button type="button" class="btn-quick" onclick="insertSqlTemplate('select')" style="background-color: rgba(56, 189, 248, 0.1); border-color: var(--accent); color: var(--accent); font-weight: bold;">SELECT</button>
+                <button type="button" class="btn-quick" onclick="insertSqlTemplate('create')" style="background-color: rgba(16, 185, 129, 0.1); border-color: var(--success); color: var(--success); font-weight: bold;">CREATE TABLE</button>
+                <button type="button" class="btn-quick" onclick="insertSqlTemplate('insert')" style="background-color: rgba(245, 158, 11, 0.1); border-color: #f59e0b; color: #f59e0b; font-weight: bold;">INSERT</button>
+                <button type="button" class="btn-quick" onclick="insertSqlTemplate('update')" style="background-color: rgba(59, 130, 246, 0.1); border-color: #3b82f6; color: #3b82f6; font-weight: bold;">UPDATE</button>
+                <button type="button" class="btn-quick" onclick="insertSqlTemplate('delete')" style="background-color: rgba(239, 68, 68, 0.1); border-color: var(--danger); color: var(--danger); font-weight: bold;">DELETE</button>
+            </div>
+            <form method="POST" id="queryForm">
+                <textarea class="sql-input" name="sql_query" id="sql_query" placeholder="اكتب استعلام SQL هنا... (مثال: SELECT * FROM products LIMIT 10)"><?php echo htmlspecialchars($query); ?></textarea>
+                <div style="text-align: left; margin-top: 10px;">
+                    <button type="submit" class="btn-run">تشغيل الاستعلام</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="results-container">
+            <?php if (isset($_GET['msg'])): ?>
+                <div style="background-color: var(--success); color: var(--bg-primary); padding: 10px; border-radius: 6px; margin-bottom: 15px; font-weight: bold;">
+                    <?php
+                    if ($_GET['msg'] === 'deleted') echo "✓ تم حذف الصف بنجاح!";
+                    if ($_GET['msg'] === 'updated') echo "✓ تم تحديث الصف بنجاح!";
+                    if ($_GET['msg'] === 'added') echo "✓ تم إضافة الصف بنجاح!";
                     ?>
-                        <div style="margin-bottom: 15px; text-align: right;">
-                            <label style="display: block; font-weight: bold; margin-bottom: 5px; color: var(--text-muted);">
-                                <?php echo htmlspecialchars($col_name); ?> 
-                                <?php if ($is_pk) echo '<span style="color: var(--danger); font-size: 0.8rem;">(مفتاح أساسي)</span>'; ?>
-                            </label>
-                            <input type="text" name="<?php echo htmlspecialchars($col_name); ?>" 
-                                   value="<?php echo htmlspecialchars($val_input); ?>" 
-                                   style="width: 100%; height: 40px; background-color: var(--bg-primary); border: 1px solid rgba(255,255,255,0.1); color: var(--text-main); padding: 5px 10px; border-radius: 4px; box-sizing: border-box;"
-                                   <?php if ($is_pk && $crud_act === 'edit_form') echo 'readonly'; ?>>
-                        </div>
-                    <?php endwhile; ?>
-                    <div style="margin-top: 20px; text-align: left;">
-                        <button type="submit" name="submit" class="btn-run" style="background-color: var(--success); color: var(--bg-primary);">حفظ التغييرات</button>
-                        <a href="index.php?auth=<?php echo urlencode($auth); ?>" class="btn-quick" style="text-decoration: none; padding: 10px 20px; display: inline-block;">إلغاء</a>
-                    </div>
-                </form>
-            </div>
-        <?php endif; ?>
+                </div>
+            <?php endif; ?>
+            <?php if (!empty($crud_msg)): ?>
+                <div class="alert alert-danger">
+                    <?php echo htmlspecialchars($crud_msg); ?>
+                </div>
+            <?php endif; ?>
 
-        <?php if ($crud_act === 'add_column_form' || $crud_act === 'drop_column_form'): 
-            $table_esc = $conn->real_escape_string($crud_table);
-            $res_cols = $conn->query("SHOW COLUMNS FROM `$table_esc`");
-            $cols = [];
-            if ($res_cols) {
-                while ($c = $res_cols->fetch_assoc()) $cols[] = $c;
-            }
-        ?>
-            <div style="background-color: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
-                <h4 style="color: var(--accent); margin-top: 0;">
-                    <?php echo $crud_act === 'add_column_form' ? "إضافة عمود جديد إلى جدول `$crud_table`" : "حذف عمود من جدول `$crud_table`"; ?>
-                </h4>
-                <?php if ($crud_act === 'add_column_form'): ?>
-                    <form method="POST" action="index.php?auth=<?php echo urlencode($auth); ?>&act=add_column&tbl=<?php echo urlencode($crud_table); ?>">
-                        <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);">اسم العمود</label><input type="text" name="col_name" required style="width:100%; height:36px;" /></div>
-                        <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);">نوع العمود (مثال: VARCHAR(255), INT, TEXT)</label><input type="text" name="col_type" value="VARCHAR(255)" required style="width:100%; height:36px;" /></div>
-                        <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);"><input type="checkbox" name="col_null" value="1"> السماح بالقيم الفارغة (NULL)</label></div>
-                        <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);">قيمة افتراضية (اختياري)</label><input type="text" name="col_default" style="width:100%; height:36px;" /></div>
-                        <div style="margin-top: 12px; text-align: left;"><button type="submit" class="btn-run" style="background-color:var(--accent); color:var(--bg-primary);">أضف العمود</button> <a href="index.php?auth=<?php echo urlencode($auth); ?>" class="btn-quick">إلغاء</a></div>
-                    </form>
-                <?php else: ?>
-                    <form method="POST" action="index.php?auth=<?php echo urlencode($auth); ?>&act=drop_column&tbl=<?php echo urlencode($crud_table); ?>" onsubmit="return confirm('هل أنت متأكد من حذف هذا العمود؟ سيتم فقدان البيانات المحتواة فيه.');">
-                        <div style="margin-bottom:12px; text-align:right;"><label style="font-weight:bold; color:var(--text-muted);">اختر العمود للحذف</label>
-                            <select name="col_name" required style="width:100%; height:36px;">
-                                <?php foreach ($cols as $c): ?>
-                                    <option value="<?php echo htmlspecialchars($c['Field']); ?>"><?php echo htmlspecialchars($c['Field'] . ' — ' . $c['Type']); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div style="margin-top: 12px; text-align: left;"><button type="submit" class="btn-run" style="background-color:var(--danger);">احذف العمود</button> <a href="index.php?auth=<?php echo urlencode($auth); ?>" class="btn-quick">إلغاء</a></div>
-                    </form>
-                <?php endif; ?>
-            </div>
-        <?php endif; ?>
-
-        <?php if (!empty($query_error)): ?>
-            <div class="alert alert-danger">
-                <strong>خطأ في الاستعلام:</strong><br>
-                <?php echo htmlspecialchars($query_error); ?>
-            </div>
-        <?php endif; ?>
-
-        <?php if ($query_result !== null): ?>
-            <?php foreach ($query_result as $index => $rows): ?>
-                <?php
-                // فحص ما إذا كان الاستعلام هو SELECT عادي لإظهار أزرار الإجراءات
-                $tableName = '';
-                $primaryKey = '';
-                if (preg_match('/^\s*SELECT\s+\*\s+FROM\s+`?([a-zA-Z0-9_-]+)`?/i', $query, $matches)) {
-                    $tableName = $matches[1];
-                    $res_k = $conn->query("SHOW KEYS FROM `$tableName` WHERE Key_name = 'PRIMARY'");
-                    if ($res_k && $row_k = $res_k->fetch_assoc()) {
-                        $primaryKey = $row_k['Column_name'];
-                    }
+            <?php if ($crud_act === 'edit_form' || $crud_act === 'add_form'): 
+                $table_esc = $conn->real_escape_string($crud_table);
+                $pk_esc = $conn->real_escape_string($crud_pk);
+                $val_esc = $conn->real_escape_string($crud_val);
+                
+                $row_data = [];
+                if ($crud_act === 'edit_form') {
+                    $res_row = $conn->query("SELECT * FROM `$table_esc` WHERE `$pk_esc` = '$val_esc' LIMIT 1");
+                    if ($res_row) $row_data = $res_row->fetch_assoc();
                 }
-                ?>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h4 style="color: var(--accent); margin: 0;">النتيجة #<?php echo $index + 1; ?> (عدد الصفوف: <?php echo count($rows); ?>)</h4>
-                    <?php if (!empty($tableName) && !empty($primaryKey)): ?>
-                        <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=add_form&tbl=<?php echo urlencode($tableName); ?>&pk=<?php echo urlencode($primaryKey); ?>" class="btn-quick" style="text-decoration: none; display: inline-block; background-color: var(--success); color: var(--bg-primary); font-weight: bold;">+ إضافة صف جديد</a>
-                        <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=add_column_form&tbl=<?php echo urlencode($tableName); ?>" class="btn-quick" style="text-decoration: none; display: inline-block;">＋ إضافة عمود</a>
-                        <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=drop_column_form&tbl=<?php echo urlencode($tableName); ?>" class="btn-quick" style="text-decoration: none; display: inline-block;">− حذف عمود</a>
+                
+                $res_cols = $conn->query("SHOW COLUMNS FROM `$table_esc`");
+            ?>
+                <div style="background-color: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
+                    <h4 style="color: var(--accent); margin-top: 0;">
+                        <?php echo $crud_act === 'edit_form' ? "تعديل صف في جدول `$crud_table`" : "إضافة صف جديد في جدول `$crud_table`"; ?>
+                    </h4>
+                    <form method="POST" action="index.php?auth=<?php echo urlencode($auth); ?>&act=<?php echo $crud_act === 'edit_form' ? 'save_edit' : 'save_add'; ?>&tbl=<?php echo urlencode($crud_table); ?>&pk=<?php echo urlencode($crud_pk); ?>&val=<?php echo urlencode($crud_val); ?>">
+                        <?php while ($col = $res_cols->fetch_assoc()): 
+                            $col_name = $col['Field'];
+                            $is_pk = ($col['Key'] === 'PRI' || $col_name === $crud_pk);
+                            $val_input = $row_data[$col_name] ?? '';
+                        ?>
+                            <div style="margin-bottom: 15px; text-align: right;">
+                                <label style="display: block; font-weight: bold; margin-bottom: 5px; color: var(--text-muted);">
+                                    <?php echo htmlspecialchars($col_name); ?> 
+                                    <?php if ($is_pk) echo '<span style="color: var(--danger); font-size: 0.8rem;">(مفتاح أساسي)</span>'; ?>
+                                </label>
+                                <input type="text" name="<?php echo htmlspecialchars($col_name); ?>" 
+                                       value="<?php echo htmlspecialchars($val_input); ?>" 
+                                       style="width: 100%; height: 40px; background-color: var(--bg-primary); border: 1px solid rgba(255,255,255,0.1); color: var(--text-main); padding: 5px 10px; border-radius: 4px; box-sizing: border-box;"
+                                       <?php if ($is_pk && $crud_act === 'edit_form') echo 'readonly'; ?>>
+                            </div>
+                        <?php endwhile; ?>
+                        <div style="margin-top: 20px; text-align: left;">
+                            <button type="submit" name="submit" class="btn-run" style="background-color: var(--success); color: var(--bg-primary);">حفظ التغييرات</button>
+                            <a href="index.php?auth=<?php echo urlencode($auth); ?>" class="btn-quick" style="text-decoration: none; padding: 10px 20px; display: inline-block;">إلغاء</a>
+                        </div>
+                    </form>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($crud_act === 'add_column_form' || $crud_act === 'drop_column_form'): 
+                $table_esc = $conn->real_escape_string($crud_table);
+                $res_cols = $conn->query("SHOW COLUMNS FROM `$table_esc`");
+                $cols = [];
+                if ($res_cols) {
+                    while ($c = $res_cols->fetch_assoc()) $cols[] = $c;
+                }
+            ?>
+                <div style="background-color: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
+                    <h4 style="color: var(--accent); margin-top: 0;">
+                        <?php echo $crud_act === 'add_column_form' ? "إضافة عمود جديد إلى جدول `$crud_table`" : "حذف عمود من جدول `$crud_table`"; ?>
+                    </h4>
+                    <?php if ($crud_act === 'add_column_form'): ?>
+                        <form method="POST" action="index.php?auth=<?php echo urlencode($auth); ?>&act=add_column&tbl=<?php echo urlencode($crud_table); ?>">
+                            <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);">اسم العمود</label><input type="text" name="col_name" required style="width:100%; height:36px;" /></div>
+                            <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);">نوع العمود (مثال: VARCHAR(255), INT, TEXT)</label><input type="text" name="col_type" value="VARCHAR(255)" required style="width:100%; height:36px;" /></div>
+                            <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);"><input type="checkbox" name="col_null" value="1"> السماح بالقيم الفارغة (NULL)</label></div>
+                            <div style="margin-bottom: 12px; text-align: right;"><label style="font-weight:bold; color:var(--text-muted);">قيمة افتراضية (اختياري)</label><input type="text" name="col_default" style="width:100%; height:36px;" /></div>
+                            <div style="margin-top: 12px; text-align: left;"><button type="submit" class="btn-run" style="background-color:var(--accent); color:var(--bg-primary);">أضف العمود</button> <a href="index.php?auth=<?php echo urlencode($auth); ?>" class="btn-quick">إلغاء</a></div>
+                        </form>
+                    <?php else: ?>
+                        <form method="POST" action="index.php?auth=<?php echo urlencode($auth); ?>&act=drop_column&tbl=<?php echo urlencode($crud_table); ?>" onsubmit="return confirm('هل أنت متأكد من حذف هذا العمود؟ سيتم فقدان البيانات المحتواة فيه.');">
+                            <div style="margin-bottom:12px; text-align:right;"><label style="font-weight:bold; color:var(--text-muted);">اختر العمود للحذف</label>
+                                <select name="col_name" required style="width:100%; height:36px;">
+                                    <?php foreach ($cols as $c): ?>
+                                        <option value="<?php echo htmlspecialchars($c['Field']); ?>"><?php echo htmlspecialchars($c['Field'] . ' — ' . $c['Type']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div style="margin-top: 12px; text-align: left;"><button type="submit" class="btn-run" style="background-color:var(--danger);">احذف العمود</button> <a href="index.php?auth=<?php echo urlencode($auth); ?>" class="btn-quick">إلغاء</a></div>
+                        </form>
                     <?php endif; ?>
                 </div>
+            <?php endif; ?>
 
-                <?php if (empty($rows)): ?>
-                    <p class="text-muted" style="margin-bottom: 20px;">تم تنفيذ الاستعلام بنجاح (لم يتم إرجاع أي صفوف أو تم التحديث بنجاح).</p>
-                <?php else: ?>
-                    <div style="overflow-x: auto; margin-bottom: 30px;">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <?php foreach (array_keys($rows[0]) as $col): ?>
-                                        <th><?php echo htmlspecialchars($col); ?></th>
-                                    <?php endforeach; ?>
-                                    <?php if (!empty($tableName) && !empty($primaryKey)): ?>
-                                        <th style="text-align: center;">الإجراءات</th>
-                                    <?php endif; ?>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($rows as $row): ?>
+            <?php if (!empty($query_error)): ?>
+                <div class="alert alert-danger">
+                    <strong>خطأ في الاستعلام:</strong><br>
+                    <?php echo htmlspecialchars($query_error); ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($query_result !== null): ?>
+                <?php foreach ($query_result as $index => $rows): ?>
+                    <?php
+                    // فحص ما إذا كان الاستعلام هو SELECT عادي لإظهار أزرار الإجراءات
+                    $tableName = '';
+                    $primaryKey = '';
+                    if (preg_match('/^\s*SELECT\s+\*\s+FROM\s+`?([a-zA-Z0-9_-]+)`?/i', $query, $matches)) {
+                        $tableName = $matches[1];
+                        $res_k = $conn->query("SHOW KEYS FROM `$tableName` WHERE Key_name = 'PRIMARY'");
+                        if ($res_k && $row_k = $res_k->fetch_assoc()) {
+                            $primaryKey = $row_k['Column_name'];
+                        }
+                    }
+                    ?>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h4 style="color: var(--accent); margin: 0;">النتيجة #<?php echo $index + 1; ?> (عدد الصفوف: <?php echo count($rows); ?>)</h4>
+                        <?php if (!empty($tableName) && !empty($primaryKey)): ?>
+                            <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=add_form&tbl=<?php echo urlencode($tableName); ?>&pk=<?php echo urlencode($primaryKey); ?>" class="btn-quick" style="text-decoration: none; display: inline-block; background-color: var(--success); color: var(--bg-primary); font-weight: bold;">+ إضافة صف جديد</a>
+                            <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=add_column_form&tbl=<?php echo urlencode($tableName); ?>" class="btn-quick" style="text-decoration: none; display: inline-block;">＋ إضافة عمود</a>
+                            <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=drop_column_form&tbl=<?php echo urlencode($tableName); ?>" class="btn-quick" style="text-decoration: none; display: inline-block;">− حذف عمود</a>
+                        <?php endif; ?>
+                    </div>
+
+                    <?php if (empty($rows)): ?>
+                        <p class="text-muted" style="margin-bottom: 20px;">تم تنفيذ الاستعلام بنجاح (لم يتم إرجاع أي صفوف أو تم التحديث بنجاح).</p>
+                    <?php else: ?>
+                        <div style="overflow-x: auto; margin-bottom: 30px;">
+                            <table class="data-table">
+                                <thead>
                                     <tr>
-                                        <?php foreach ($row as $val): ?>
-                                            <td><?php echo htmlspecialchars($val ?? 'NULL'); ?></td>
+                                        <?php foreach (array_keys($rows[0]) as $col): ?>
+                                            <th><?php echo htmlspecialchars($col); ?></th>
                                         <?php endforeach; ?>
                                         <?php if (!empty($tableName) && !empty($primaryKey)): ?>
-                                            <td style="text-align: center;">
-                                                <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=edit_form&tbl=<?php echo urlencode($tableName); ?>&pk=<?php echo urlencode($primaryKey); ?>&val=<?php echo urlencode($row[$primaryKey]); ?>" style="color: var(--accent); margin-left: 12px; text-decoration: none; font-weight: bold;">تعديل</a>
-                                                <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=del&tbl=<?php echo urlencode($tableName); ?>&pk=<?php echo urlencode($primaryKey); ?>&val=<?php echo urlencode($row[$primaryKey]); ?>" onclick="return confirm('هل أنت متأكد من حذف هذا الصف؟')" style="color: var(--danger); text-decoration: none; font-weight: bold;">حذف</a>
-                                            </td>
+                                            <th style="text-align: center;">الإجراءات</th>
                                         <?php endif; ?>
                                     </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                <?php endif; ?>
-            <?php endforeach; ?>
-        <?php else: 
-            // إذا لم يتم كتابة استعلام، ولكن تم الضغط على نموذج إضافة/تعديل من الرابط المباشر
-            if ($crud_act !== 'edit_form' && $crud_act !== 'add_form'):
-        ?>
-            <p style="color: var(--text-muted); text-align: center; margin-top: 50px;">اكتب استعلاماً في الأعلى أو اختر أحد الجداول من الشريط الجانبي لعرض محتوياته.</p>
-        <?php 
-            endif;
-        endif; ?>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($rows as $row): ?>
+                                        <tr>
+                                            <?php foreach ($row as $val): ?>
+                                                <td><?php echo htmlspecialchars($val ?? 'NULL'); ?></td>
+                                            <?php endforeach; ?>
+                                            <?php if (!empty($tableName) && !empty($primaryKey)): ?>
+                                                <td style="text-align: center;">
+                                                    <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=edit_form&tbl=<?php echo urlencode($tableName); ?>&pk=<?php echo urlencode($primaryKey); ?>&val=<?php echo urlencode($row[$primaryKey]); ?>" style="color: var(--accent); margin-left: 12px; text-decoration: none; font-weight: bold;">تعديل</a>
+                                                    <a href="index.php?auth=<?php echo urlencode($auth); ?>&act=del&tbl=<?php echo urlencode($tableName); ?>&pk=<?php echo urlencode($primaryKey); ?>&val=<?php echo urlencode($row[$primaryKey]); ?>" onclick="return confirm('هل أنت متأكد من حذف هذا صف؟')" style="color: var(--danger); text-decoration: none; font-weight: bold;">حذف</a>
+                                                </td>
+                                            <?php endif; ?>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            <?php else: 
+                // إذا لم يتم كتابة استعلام، ولكن تم الضغط على نموذج إضافة/تعديل من الرابط المباشر
+                if ($crud_act !== 'edit_form' && $crud_act !== 'add_form'):
+            ?>
+                <p style="color: var(--text-muted); text-align: center; margin-top: 50px;">اكتب استعلاماً في الأعلى أو اختر أحد الجداول من الشريط الجانبي لعرض محتوياته.</p>
+            <?php 
+                endif;
+            endif; ?>
+        </div>
     </div>
-</div>
+<?php endif; ?>
 
 <script>
 function loadTableQuery(tableName) {

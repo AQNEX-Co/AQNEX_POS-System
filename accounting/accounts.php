@@ -513,8 +513,8 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
     color: #374151;
     padding: 2px 8px;
     border-radius: 4px;
-    font-size: 0.5;
-    font-family: 'Montserrat', sans-serif;
+    font-size: 0.72rem;
+    font-family: 'Tajawal', sans-serif;
     font-weight: 700;
     flex-shrink: 0;
     border: 1px solid #e5e7eb;
@@ -555,8 +555,8 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 }
 
 .balance-item strong {
-    font-size: 0.5rem;
-    font-family: 'Montserrat', sans-serif;
+    font-size: 0.72rem;
+    font-family: 'Tajawal', sans-serif;
     font-weight: 700;
 }
 
@@ -590,8 +590,8 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 }
 
 .node-balance strong {
-    font-size: 0.5rem;
-    font-family: 'Montserrat', sans-serif;
+    font-size: 0.72rem;
+    font-family: 'Tajawal', sans-serif;
     font-weight: 700;
 }
 
@@ -981,6 +981,7 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 }
 </style>
 
+<div class="page-inner">
 <!-- ===== رأس الصفحة ===== -->
 <div class="page-header no-print">
     <h5>
@@ -1058,8 +1059,8 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 <?php endif; ?>
 
 <div class="row">
-    <!-- ===== شجرة الحسابات ===== -->
-    <div class="col-lg-8 mb-4">
+    <!-- ===== شجرة الحسابات (شجرة كاملة العرض) ===== -->
+    <div class="col-lg-12 mb-4">
         <div class="toolbar no-print">
             <div class="search-box">
                 <i class="bi bi-search"></i>
@@ -1083,59 +1084,65 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
         <!-- ملخص الحسابات -->
         <div class="accounts-summary no-print">
             <h6><i class="bi bi-info-circle ml-1"></i> ملخص الدليل المحاسبي</h6>
-            <div class="summary-row">
-                <span class="label">إجمالي عدد الحسابات</span>
-                <span class="value"><?php echo number_format($total_accounts_count); ?> حساب</span>
-            </div>
-            <div class="summary-row">
-                <span class="label">إجمالي الأصول</span>
-                <span class="value" style="color: #86efac;"><?php echo number_format($totals['asset'], 2); ?> ر.ي</span>
-            </div>
-            <div class="summary-row">
-                <span class="label">إجمالي الخصوم + حقوق الملكية</span>
-                <span class="value" style="color: #fca5a5;"><?php echo number_format($totals['liability'] + $totals['equity'], 2); ?> ر.ي</span>
-            </div>
-            <div class="summary-row">
-                <span class="label">صافي الميزانية (أصول - خصوم)</span>
-                <span class="value" style="color: #fcd34d;"><?php echo number_format($net_balance, 2); ?> ر.ي</span>
+            <div class="row text-right">
+                <div class="col-md-3 mb-2">
+                    <span class="label">إجمالي عدد الحسابات:</span>
+                    <strong class="value text-white mr-1"><?php echo number_format($total_accounts_count); ?></strong>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <span class="label">إجمالي الأصول:</span>
+                    <strong class="value text-success mr-1"><?php echo number_format($totals['asset'], 2); ?> ر.ي</strong>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <span class="label">الخصوم + الملكية:</span>
+                    <strong class="value text-danger mr-1"><?php echo number_format($totals['liability'] + $totals['equity'], 2); ?> ر.ي</strong>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <span class="label">صافي الميزانية:</span>
+                    <strong class="value text-warning mr-1"><?php echo number_format($net_balance, 2); ?> ر.ي</strong>
+                </div>
             </div>
         </div>
     </div>
-    
-    <!-- ===== لوحة التحكم ===== -->
-    <div class="col-lg-4 no-print">
-        <div class="control-panel" id="formCard">
-            <div class="panel-header">
-                <h6 id="formTitle"><i class="bi bi-plus-circle ml-1"></i> إضافة حساب جديد</h6>
-                <button type="button" class="btn btn-sm btn-light" id="resetFormBtn" style="display:none; font-size: 0.75rem;">
-                    <i class="bi bi-x-lg"></i>
+</div>
+
+<!-- ===== مودال إضافة وتعديل الحساب ===== -->
+<div class="modal fade no-print text-right" id="accountModal" tabindex="-1" role="dialog" aria-labelledby="accountModalLabel" aria-hidden="true" dir="rtl">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content rounded-0">
+            <div class="modal-header bg-primary text-white py-3">
+                <h6 class="modal-title font-weight-bold" id="formTitle">
+                    <i class="bi bi-plus-circle ml-1"></i> إضافة حساب جديد
+                </h6>
+                <button type="button" class="close text-white rounded p-1" data-dismiss="modal" aria-label="Close" style="background: transparent; border: none; font-size: 1.5rem; line-height: 0.8;">
+                    <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <div class="panel-body">
+            <div class="modal-body">
                 <form method="POST" id="accountForm">
                     <input type="hidden" name="action" value="save">
                     <input type="hidden" name="id" id="acc_id" value="0">
                     
-                    <div class="form-group">
-                        <label class="form-label">الحساب الأب</label>
+                    <div class="form-group mb-3">
+                        <label class="form-label font-weight-bold text-secondary mb-1">الحساب الأب</label>
                         <input type="hidden" name="parent_id" id="acc_parent_id" value="">
-                        <input type="text" id="acc_parent_name" class="form-control bg-light" readonly value="حساب رئيسي (جذر)">
+                        <input type="text" id="acc_parent_name" class="form-control bg-light rounded-0" readonly value="حساب رئيسي (جذر)">
                     </div>
                     
-                    <div class="form-group">
-                        <label class="form-label">كود الحساب *</label>
-                        <input type="text" name="code" id="acc_code" class="form-control font-weight-bold" required placeholder="مثال: 1101002" style="font-family: 'Tajawal', monospace;">
+                    <div class="form-group mb-3">
+                        <label class="form-label font-weight-bold text-secondary mb-1">كود الحساب *</label>
+                        <input type="text" name="code" id="acc_code" class="form-control font-weight-bold rounded-0" required placeholder="مثال: 1101002" style="font-family: 'Tajawal', monospace;">
                         <small class="text-muted" id="codeSuggestLabel">كود فريد للحساب</small>
                     </div>
                     
-                    <div class="form-group">
-                        <label class="form-label">اسم الحساب *</label>
-                        <input type="text" name="name" id="acc_name" class="form-control font-weight-bold" required placeholder="مثال: الصندوق الرئيسي">
+                    <div class="form-group mb-3">
+                        <label class="form-label font-weight-bold text-secondary mb-1">اسم الحساب *</label>
+                        <input type="text" name="name" id="acc_name" class="form-control font-weight-bold rounded-0" required placeholder="مثال: الصندوق الرئيسي">
                     </div>
                     
-                    <div class="form-group" id="typeGroup">
-                        <label class="form-label">نوع الحساب *</label>
-                        <select name="account_type" id="acc_type" class="form-control font-weight-bold" required>
+                    <div class="form-group mb-3" id="typeGroup">
+                        <label class="form-label font-weight-bold text-secondary mb-1">نوع الحساب *</label>
+                        <select name="account_type" id="acc_type" class="form-control font-weight-bold rounded-0" required>
                             <option value="asset">أصول (Assets)</option>
                             <option value="liability">خصوم (Liabilities)</option>
                             <option value="equity">حقوق ملكية (Equity)</option>
@@ -1144,28 +1151,31 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
                         </select>
                     </div>
                     
-                    <div class="form-group">
-                        <label class="form-label">طبيعة الحساب</label>
+                    <div class="form-group mb-3">
+                        <label class="form-label font-weight-bold text-secondary mb-1">طبيعة الحساب</label>
                         <div class="radio-group">
-                            <div class="radio-option">
+                            <div class="radio-option p-2 border mb-1">
                                 <input type="radio" id="is_parent_yes" name="is_parent" value="1">
-                                <label for="is_parent_yes">رئيسي / مجلد (يحتوي حسابات فرعية)</label>
+                                <label for="is_parent_yes" class="mr-2 mb-0" style="cursor:pointer;">رئيسي / مجلد (يحتوي حسابات فرعية)</label>
                             </div>
-                            <div class="radio-option">
+                            <div class="radio-option p-2 border">
                                 <input type="radio" id="is_parent_no" name="is_parent" value="0" checked>
-                                <label for="is_parent_no">فرعي / تحليلي (تُرحل عليه القيود)</label>
+                                <label for="is_parent_no" class="mr-2 mb-0" style="cursor:pointer;">فرعي / تحليلي (تُرحل عليه القيود)</label>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label class="form-label">ملاحظات / وصف</label>
-                        <textarea name="notes" id="acc_notes" class="form-control" rows="2" placeholder="وصف مختصر للحساب..."></textarea>
+                    <div class="form-group mb-3">
+                        <label class="form-label font-weight-bold text-secondary mb-1">ملاحظات / وصف</label>
+                        <textarea name="notes" id="acc_notes" class="form-control rounded-0" rows="2" placeholder="وصف مختصر للحساب..."></textarea>
                     </div>
                     
-                    <button type="submit" class="btn-submit" id="submitFormBtn">
-                        <i class="bi bi-check-lg ml-1"></i> حفظ الحساب
-                    </button>
+                    <div class="text-left mt-3">
+                        <button type="button" class="btn btn-secondary btn-sm rounded-0 ml-2" data-dismiss="modal">إلغاء</button>
+                        <button type="submit" class="btn btn-success btn-sm rounded-0" id="submitFormBtn">
+                            <i class="bi bi-check-lg ml-1"></i> حفظ الحساب
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>
@@ -1314,6 +1324,7 @@ $(document).ready(function() {
         }
         $('#formTitle').html('<i class="bi bi-plus-circle ml-1"></i> إضافة حساب رئيسي');
         $('#resetFormBtn').show();
+        $('#accountModal').modal('show');
     });
 
     // ===== إضافة حساب فرعي =====
@@ -1337,10 +1348,7 @@ $(document).ready(function() {
         $('#formTitle').html('<i class="bi bi-plus-circle ml-1"></i> إضافة حساب فرعي تحت: ' + parentName);
         $('#codeSuggestLabel').html('<span class="text-success font-weight-bold">الكود المقترح: ' + suggestedCode + '</span>');
         $('#resetFormBtn').show();
-        
-        $('html, body').animate({
-            scrollTop: $("#formCard").offset().top - 100
-        }, 500);
+        $('#accountModal').modal('show');
     });
 
     // ===== تعديل الحساب =====
@@ -1377,10 +1385,7 @@ $(document).ready(function() {
         $('#formTitle').html('<i class="bi bi-pencil ml-1"></i> تعديل: ' + name);
         $('#submitFormBtn').html('<i class="bi bi-save ml-1"></i> حفظ التعديلات');
         $('#resetFormBtn').show();
-        
-        $('html, body').animate({
-            scrollTop: $("#formCard").offset().top - 100
-        }, 500);
+        $('#accountModal').modal('show');
     });
 
     // ===== حذف الحساب =====
@@ -1403,3 +1408,5 @@ $(document).ready(function() {
     });
 });
 </script>
+</div><!-- end .page-inner -->
+<?php require_once($dir_prefix . 'includes/footer.php'); ?>

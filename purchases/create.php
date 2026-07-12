@@ -93,6 +93,7 @@ if (isset($_POST['btn_save'])) {
     $product_ids = $_POST['product_id'];
     $barcodes = $_POST['barcode'];
     $categories = $_POST['category_id'];
+    $category_names = $_POST['category_name'] ?? [];
     $quantities = $_POST['quantity'];
     $unit_prices = $_POST['unit_price'];
     $sale_prices = $_POST['sale_price'];
@@ -115,7 +116,7 @@ if (isset($_POST['btn_save'])) {
     $total_remaining_base = max(0, $grand_total_base - $total_paid_base);
 
     // التحقق من رصيد الصندوق
-    if ($pay_from_box && $total_paid_base > 0 && $invoice_type === 'cash') {
+    if ($pay_from_box && $total_paid_base > 0) {
         $box_balance = get_box_balance($conn, $selected_box_id);
         if ($box_balance < $total_paid_base) {
             $save_error = "لا يمكن إتمام العملية لأن رصيد الصندوق المحدد (" . number_format($box_balance, 2) . ") أقل من المبلغ المدفوع (" . number_format($total_paid_base, 2) . ").";
@@ -143,11 +144,15 @@ if (isset($_POST['btn_save'])) {
             $billing_id = $conn->insert_id;
 
             // 2. معالجة كل بند
+            $paid_ratio = ($grand_total_base > 0) ? min(1.0, $total_paid_base / $grand_total_base) : 0;
+            $allocated_paid = 0;
+
             for ($i = 0; $i < $count; $i++) {
                 $p_name = trim($product_names[$i]);
                 $p_id = intval($product_ids[$i]);
                 $barcode = trim($barcodes[$i]);
                 $cat_id = intval($categories[$i]);
+                $cat_name = isset($category_names[$i]) ? trim($category_names[$i]) : '';
                 $qty = intval($quantities[$i]);
                 $u_price = doubleval($unit_prices[$i]);
                 $s_price = doubleval($sale_prices[$i]);
@@ -159,6 +164,18 @@ if (isset($_POST['btn_save'])) {
                 $unit_price_base = $u_price * $exchange_rate;
                 $sale_price_base = $s_price * $exchange_rate;
                 $line_total_base = ($qty * $u_price) * $exchange_rate;
+
+                // التحقق من وجود التصنيف بالاسم إذا لم يتم تحديد معرف تصنيف صالح
+                if ($cat_id <= 0 && !empty($cat_name)) {
+                    $cat_name_esc = $conn->real_escape_string($cat_name);
+                    $chk_c = $conn->query("SELECT catid FROM categories WHERE name = '$cat_name_esc' AND d_s = 0 LIMIT 1");
+                    if ($chk_c && $chk_c->num_rows > 0) {
+                        $cat_id = intval($chk_c->fetch_assoc()['catid']);
+                    } else {
+                        $conn->query("INSERT INTO categories (name, d_s) VALUES ('$cat_name_esc', 0)");
+                        $cat_id = $conn->insert_id;
+                    }
+                }
 
                 // إذا كان المنتج غير موجود (p_id = 0 أو -1)، نقوم بإنشائه
                 if ($p_id <= 0) {
@@ -200,22 +217,47 @@ if (isset($_POST['btn_save'])) {
                     }
                 }
 
+                // حساب المدفوع والمتبقي للبند للتوزيع العادل
+                if ($i === $count - 1) {
+                    $line_paid_base = max(0, $total_paid_base - $allocated_paid);
+                } else {
+                    $line_paid_base = round($line_total_base * $paid_ratio, 2);
+                    $allocated_paid += $line_paid_base;
+                }
+                $line_remaining_base = max(0, $line_total_base - $line_paid_base);
+
+                $conv_factor = isset($_POST['conversion_factor'][$i]) ? doubleval($_POST['conversion_factor'][$i]) : 1.0;
+                if ($conv_factor <= 0) $conv_factor = 1.0;
+                $unit_name = isset($_POST['unit_name'][$i]) ? trim($_POST['unit_name'][$i]) : '';
+                if (empty($unit_name)) {
+                    $unit_name = 'الوحدة الأساسية';
+                }
+
+                $p_name_store = $p_name;
+                if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية' && strpos($p_name_store, "($unit_name)") === false) {
+                    $p_name_store .= " ($unit_name)";
+                }
+                $p_name_store_esc = $conn->real_escape_string($p_name_store);
+                $unit_name_esc = $conn->real_escape_string($unit_name);
+
                 // إدراج بند الفاتورة
-                $sql_item = "INSERT INTO `purchase_items`(`purchase_id`, `buys_date`, `supp_name`, `supp_id`, `name`, `quantity`, `buy_price`, `pushtosupp`, `total_d`, `s`) 
-                             VALUES ('$billing_id', '$build_date', '$supplier_name', $supplier_id, '$p_name_esc', '$qty', '$unit_price_base', '0', '0', 0)";
+                $sql_item = "INSERT INTO `purchase_items`(`purchase_id`, `buys_date`, `supp_name`, `supp_id`, `name`, `quantity`, `buy_price`, `pushtosupp`, `total_d`, `s`, `unit_name`) 
+                             VALUES ('$billing_id', '$build_date', '$supplier_name', $supplier_id, '$p_name_store_esc', '$qty', '$line_total_base', '$line_paid_base', '$line_remaining_base', 0, '$unit_name_esc')";
                 if (!$conn->query($sql_item)) {
                     throw new Exception("فشل إدراج الصنف: " . $p_name);
                 }
 
                 // تحديث المخزون
-                $sql_update_qty = "UPDATE `products` SET `quantity` = `quantity` + $qty, `buy_price` = $unit_price_base, `total` = `quantity` * `buy_price` WHERE `id` = $p_id";
+                $base_qty = $qty * $conv_factor;
+                $base_buy_price = $unit_price_base / $conv_factor;
+                $sql_update_qty = "UPDATE `products` SET `quantity` = `quantity` + $base_qty, `buy_price` = $base_buy_price, `total` = `quantity` * `buy_price` WHERE `id` = $p_id";
                 if (!$conn->query($sql_update_qty)) {
                     throw new Exception("فشل تحديث كمية المخزن للصنف: " . $p_name);
                 }
 
                 // تسجيل حركة المخزون
                 $sql_log = "INSERT INTO `inventory_log` (`product_id`, `product_name`, `type`, `qty_change`, `new_qty`, `reason`, `user`) 
-                            SELECT $p_id, name, 'purchase', $qty, quantity, 'عملية شراء بفاتورة رقم #$billing_id', '$user_display' 
+                            SELECT $p_id, name, 'purchase', $base_qty, quantity, 'عملية شراء بفاتورة رقم #$billing_id', '$user_display' 
                             FROM products WHERE id = $p_id";
                 if (!$conn->query($sql_log)) {
                     throw new Exception("فشل تسجيل حركة المخزون للصنف: " . $p_name);
@@ -678,6 +720,7 @@ if ($res_curr) {
                     <thead>
                         <tr>
                             <th style="width: 18%;">المنتج</th>
+                            <th style="width: 10%;">الوحدة</th>
                             <th style="width: 12%;">الباركود</th>
                             <th style="width: 12%;">التصنيف</th>
                             <th style="width: 8%;">الكمية</th>
@@ -697,9 +740,15 @@ if ($res_curr) {
                                     <input type="hidden" name="product_id[]" class="select-product" value="">
                                     <div class="autocomplete-dropdown d-none"></div>
                                 </div>
+                                <input type="hidden" name="conversion_factor[]" class="conversion-factor" value="1.0000">
+                                <input type="hidden" name="unit_name[]" class="unit-name" value="الوحدة الأساسية">
+                                <input type="hidden" name="unit_id[]" class="unit-id" value="">
                                 <small class="text-muted new-product-indicator d-none">
                                     <span class="new-product-badge">منتج جديد</span> سيتم إنشاؤه عند الحفظ
                                 </small>
+                            </td>
+                            <td>
+                                <input type="text" name="unit_display[]" class="form-control unit-display-input text-center bg-light rounded-0" readonly value="الوحدة الأساسية">
                             </td>
                             <td>
                                 <div class="barcode-search-container">
@@ -716,7 +765,7 @@ if ($res_curr) {
                             </td>
                             <td>
                                 <div class="category-search-container">
-                                    <input type="text" class="form-control category-input rounded-0" placeholder="اختر التصنيف..." autocomplete="off">
+                                    <input type="text" name="category_name[]" class="form-control category-input rounded-0" placeholder="اختر التصنيف..." autocomplete="off">
                                     <input type="hidden" name="category_id[]" class="select-category" value="">
                                     <div class="autocomplete-dropdown d-none"></div>
                                 </div>
@@ -1089,7 +1138,11 @@ document.addEventListener("DOMContentLoaded", function() {
         newRow.querySelector(".sale-price-input").value = "";
         newRow.querySelector(".total-input").value = "0";
         newRow.querySelector(".profit-input").value = "0";
-        newRow.querySelector(".autocomplete-dropdown").forEach(d => {
+        newRow.querySelector(".conversion-factor").value = "1.0000";
+        newRow.querySelector(".unit-name").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-display-input").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-id").value = "";
+        newRow.querySelectorAll(".autocomplete-dropdown").forEach(d => {
             d.classList.add("d-none");
             d.innerHTML = "";
         });
@@ -1299,6 +1352,12 @@ document.addEventListener("DOMContentLoaded", function() {
             html = '<div class="text-center p-2 text-muted">لا توجد تصنيفات مطابقة</div>';
         }
 
+        if (query && !categoriesList.some(cat => cat.name.toLowerCase() === query.toLowerCase())) {
+            html += `<div class="autocomplete-item create-new-category" tabindex="0" data-id="-1" data-name="${escapeHtml(query)}" style="background: #f0fdf4; border-top: 1px dashed #22c55e; color: #166534; font-weight: bold; padding: 8px 12px; cursor: pointer;">
+                <i class="bi bi-plus-circle ml-1"></i> إضافة تصنيف جديد: <strong>${escapeHtml(query)}</strong>
+            </div>`;
+        }
+
         dropdown.innerHTML = html;
 
         dropdown.querySelectorAll('.autocomplete-item').forEach(it => {
@@ -1327,6 +1386,12 @@ document.addEventListener("DOMContentLoaded", function() {
         hiddenInput.value = product.id;
         nameInput.value = product.name;
         hiddenInput.setAttribute("data-base-buy-price", product.buy_price);
+
+        const conversionFactor = parseFloat(product.conversion_factor) || 1.0;
+        row.querySelector(".conversion-factor").value = conversionFactor;
+        row.querySelector(".unit-name").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-display-input").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-id").value = product.unit_id || "";
 
         // ملء الباركود
         if (product.barcode) {
@@ -1416,6 +1481,12 @@ document.addEventListener("DOMContentLoaded", function() {
         input.value = catName;
         hiddenInput.value = catId;
 
+        if (catId == "-1") {
+            if (!categoriesList.some(cat => cat.name.toLowerCase() === catName.toLowerCase())) {
+                categoriesList.push({ catid: "-1", name: catName });
+            }
+        }
+
         dropdown.classList.add("d-none");
         dropdown.innerHTML = "";
     }
@@ -1493,6 +1564,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (activeItem) {
                     activeItem.click();
                 } else {
+                    const typedVal = e.target.value.trim();
+                    if (typedVal) {
+                        selectCategory(row, "-1", typedVal);
+                    }
                     const quantityInput = row.querySelector(".quantity-input");
                     if (quantityInput) {
                         quantityInput.focus();
@@ -1577,7 +1652,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const payFromBox = document.getElementById("payFromBox").checked;
         const invoiceType = document.getElementById("invoiceTypeSelect").value;
         
-        if (payFromBox && invoiceType === 'cash') {
+        if (payFromBox) {
             let boxBalance = 0;
             const boxSelect = document.getElementById("boxSelect");
             const userBoxId = document.getElementById("userBoxId");

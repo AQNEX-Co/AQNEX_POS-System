@@ -422,9 +422,9 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     ?>
     <!-- زر تشغيل المساعد الذكي العائم -->
-    <button id="ai-assistant-toggle" class="no-print" style="position: fixed; bottom: 25px; left: 25px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%); color: #fff; border: none; box-shadow: 0 8px 30px rgba(2, 132, 199, 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; z-index: 10001; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); outline: none;">
+    <!-- <button id="ai-assistant-toggle" class="no-print" style="position: fixed; bottom: 25px; left: 25px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%); color: #fff; border: none; box-shadow: 0 8px 30px rgba(2, 132, 199, 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; z-index: 10001; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); outline: none;">
         <i class="bi bi-robot" id="toggle-icon"></i>
-    </button>
+    </button> -->
 
     <!-- لوحة المساعد الذكي الجانبية (Slide-in Sidebar Drawer) -->
     <div id="ai-assistant-panel" class="no-print" style="position: fixed; top: 0; left: -380px; width: 380px; height: 100vh; background: rgba(15, 23, 42, 0.98); border-right: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 10px 0 40px rgba(0, 0, 0, 0.5); z-index: 10000; display: flex; flex-direction: column; transition: left 0.3s ease; font-family: 'Tajawal', sans-serif;">

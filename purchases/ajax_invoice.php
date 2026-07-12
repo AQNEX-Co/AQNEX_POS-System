@@ -102,6 +102,13 @@ if ($res_items) {
         
         // لا يمكن إرجاع كمية أكبر من المتوفر حالياً في المخزن
         $can_return = min($can_return, $current_stock);
+
+        $unit_name = 'الوحدة الأساسية';
+        if (!empty($row['unit_name'])) {
+            $unit_name = $row['unit_name'];
+        } elseif (preg_match('/\(([^)]+)\)/', $p_name, $matches)) {
+            $unit_name = trim($matches[1]);
+        }
         
         $items[] = [
             'item_id'          => intval($row['buyid']),
@@ -112,7 +119,8 @@ if ($res_items) {
             'already_returned' => $already_returned,
             'unit_price'       => $unit_buy_price_base, // بالعملة الأساسية YER
             'line_total'       => $line_total_base,
-            'current_stock'    => $current_stock
+            'current_stock'    => $current_stock,
+            'unit_name'        => $unit_name
         ];
     }
 }
@@ -141,6 +149,7 @@ echo json_encode([
         'date'          => $invoice['date'],
         'currency_code' => $invoice['currency_code'] ?? 'YER',
         'exchange_rate' => $exchange_rate,
+        'invoice_type'  => $invoice['invoice_type'] ?? (doubleval($invoice['remaining_total']) > 0 ? 'credit' : 'cash'),
     ],
     'items'   => $items,
     'returns_history' => $ret_history,

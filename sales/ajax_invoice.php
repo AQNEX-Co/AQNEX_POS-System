@@ -81,6 +81,13 @@ if ($res_items) {
         $already_returned = $ret_res ? intval($ret_res->fetch_assoc()['returned']) : 0;
         $can_return = intval($row['quantity']) - $already_returned;
 
+        $unit_name = 'الوحدة الأساسية';
+        if (!empty($row['unit_name'])) {
+            $unit_name = $row['unit_name'];
+        } elseif (preg_match('/\(([^)]+)\)/', $name_field, $matches)) {
+            $unit_name = trim($matches[1]);
+        }
+
         $items[] = [
             'item_id'         => intval($row['p_id']),
             'product_id'      => intval($product_id),
@@ -91,6 +98,7 @@ if ($res_items) {
             'unit_price'      => doubleval($row['unit_price']),  // بالعملة الأساسية YER
             'buy_price'       => doubleval($row['current_buy_price'] ?? 0),
             'line_total'      => doubleval($row['all_tot']),
+            'unit_name'       => $unit_name,
         ];
     }
 }

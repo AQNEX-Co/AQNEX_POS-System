@@ -295,6 +295,9 @@ if (isset($_POST['btn_update'])) {
                     $conv_factor = isset($_POST['conversion_factor'][$i]) ? doubleval($_POST['conversion_factor'][$i]) : 1.0;
                     if ($conv_factor <= 0) $conv_factor = 1.0;
                     $unit_name = isset($_POST['unit_name'][$i]) ? trim($_POST['unit_name'][$i]) : '';
+                    if (empty($unit_name)) {
+                        $unit_name = 'الوحدة الأساسية';
+                    }
 
                     $product_field_val = "$p_id $product_name_db";
                     if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية') {
@@ -308,8 +311,9 @@ if (isset($_POST['btn_update'])) {
                     $line_total_base = ($qty * $price) * $exchange_rate;
                     $line_net_base = $paid_base + $rem_base;
 
-                    $sql_item = "INSERT INTO `sales_items`(`sales_id`, `id`, `cust_name`, `name`, `quantity`, `unit_price`, `bush`, `d`, `dis`, `total`, `all_tot`, `build_date`) 
-                                 VALUES ('$invoice_id', '$p_id', '$customer_name', '$product_field_val', '$qty', '$price_base', '$paid_base', '$disc_base', '$rem_base', '$line_net_base', '$line_total_base', '$build_date')";
+                    $unit_name_esc = $conn->real_escape_string($unit_name);
+                    $sql_item = "INSERT INTO `sales_items`(`sales_id`, `id`, `cust_name`, `name`, `quantity`, `unit_price`, `bush`, `d`, `dis`, `total`, `all_tot`, `build_date`, `unit_name`) 
+                                 VALUES ('$invoice_id', '$p_id', '$customer_name', '$product_field_val', '$qty', '$price_base', '$paid_base', '$disc_base', '$rem_base', '$line_net_base', '$line_total_base', '$build_date', '$unit_name_esc')";
                     if (!$conn->query($sql_item)) {
                         throw new Exception("فشل إدراج الصنف: " . $product_name_db);
                     }
@@ -776,7 +780,8 @@ $products_json = '[]';
                 <table class="table-flat" id="itemsTable">
                     <thead>
                         <tr>
-                            <th style="width: 28%;">المنتج</th>
+                            <th style="width: 22%;">المنتج</th>
+                            <th style="width: 8%;">الوحدة</th>
                             <th style="width: 8%;">المخزن</th>
                             <th style="width: 8%;">الكمية</th>
                             <th style="width: 10%;">سعر البيع</th>
@@ -848,6 +853,9 @@ $products_json = '[]';
                                         <small class="text-danger font-weight-bold d-block mb-1">دفعة الصلاحية:</small>
                                         <select class="form-control form-control-sm batch-select rounded-0"></select>
                                     </div>
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control unit-display-input text-center bg-light rounded-0" readonly value="<?php echo htmlspecialchars($unit_name); ?>">
                                 </td>
                                 <td>
                                     <input type="text" class="form-control stock-qty text-center bg-light rounded-0" readonly value="<?php echo $stock_qty; ?>">
@@ -1299,6 +1307,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
         newRow.querySelector(".conversion-factor").value = "1.0000";
         newRow.querySelector(".unit-name").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-display-input").value = "الوحدة الأساسية";
         newRow.querySelector(".unit-id").value = "";
         newRow.querySelector(".row-serial-ids").value = "";
         newRow.querySelector(".row-batch-id").value = "";
@@ -1441,6 +1450,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const conversionFactor = parseFloat(product.conversion_factor) || 1.0;
         row.querySelector(".conversion-factor").value = conversionFactor;
         row.querySelector(".unit-name").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-display-input").value = product.unit_name || "الوحدة الأساسية";
         row.querySelector(".unit-id").value = product.unit_id || "";
 
         const rate = parseFloat(exchangeRateInput.value) || 1.0;

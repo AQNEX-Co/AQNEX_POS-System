@@ -37,6 +37,24 @@ if (isset($_POST['btn_save'])) {
             $sql = "INSERT INTO products(name, barcode, quantity, min_stock_alert, buy_price, sale_price, catid, total, date, delete_status) 
                     VALUES ('$name', '$barcode', '$qty', '$min_stock_alert', '$buy_price', '$sale_price', '$catid', '$total_val', '$today', 0)";
             if ($conn->query($sql)) {
+                $new_product_id = $conn->insert_id;
+                $unit_name = isset($_POST['unit_name']) ? $conn->real_escape_string(trim($_POST['unit_name'])) : 'حبة';
+                if (empty($unit_name)) $unit_name = 'حبة';
+                
+                // إضافة الوحدة الأساسية في جدول الوحدات
+                $conn->query("INSERT INTO product_units (product_id, unit_name, conversion_factor, sale_price, purchase_price, is_base_unit) 
+                              VALUES ($new_product_id, '$unit_name', 1.0000, $sale_price, $buy_price, 1)");
+
+                // إضافة كمية بدفعة صلاحية افتراضية في المخازن لكي يظهر مخزن الصنف
+                $batch_no = 'BATCH-INIT-' . $new_product_id;
+                $conn->query("INSERT INTO product_batches (product_id, batch_number, quantity, cost_price) 
+                              VALUES ($new_product_id, '$batch_no', $qty, $buy_price)");
+                
+                // تهيئة كمية الصنف في مستودع 1
+                $conn->query("INSERT INTO warehouses_stock (warehouse_id, product_id, quantity) 
+                              VALUES (1, $new_product_id, $qty) 
+                              ON DUPLICATE KEY UPDATE quantity = quantity + $qty");
+
                 echo "<script>window.location='index.php';</script>";
                 exit;
             } else {
@@ -108,6 +126,12 @@ if (isset($_POST['btn_save'])) {
                             </select>
                         </div>
 
+                        <!-- الوحدة الأساسية -->
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label font-weight-bold text-secondary">الوحدة الأساسية (مثال: حبة، كرتون) *</label>
+                            <input type="text" name="unit_name" class="form-control rounded-0" placeholder="حبة، كرتون، درزن..." value="حبة" required>
+                        </div>
+
                         <!-- الكمية -->
                         <div class="col-md-3 mb-3">
                             <label class="form-label font-weight-bold text-secondary">الكمية المتوفرة</label>
@@ -142,6 +166,11 @@ if (isset($_POST['btn_save'])) {
                             <label class="form-label font-weight-bold text-muted">إجمالي الأرباح المتوقعة للكمية (تلقائي)</label>
                             <input type="text" id="expected_profit" class="form-control rounded-0 text-center font-weight-bold bg-light text-success" readonly value="0.00">
                         </div>
+                    </div>
+
+                    <div class="alert alert-info rounded-0 p-3 mt-3 text-right" dir="rtl">
+                        <i class="fa fa-info-circle ml-1"></i>
+                        <strong>ملاحظة:</strong> لتهيئة وحدات القياس المتعددة (مثل الكرتون والدرزن)، قم بحفظ وإضافة الصنف أولاً، ثم اذهب لتعديله لربطه بالوحدات المخصصة وتحديد أسعارها ومعامل التحويل.
                     </div>
 
                     <div class="mt-4 text-left">

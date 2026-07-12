@@ -55,17 +55,20 @@ $currency = $settings ? $settings['currency'] : 'ريال يمني';
 @page { size: A4 portrait; margin: 20mm; }
 body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #fff; color: #0f172a; }
 @media print {
-    body { margin:0; padding:0; }
-    .no-print { display:none !important; }
+    body { background: #fff !important; color: #000 !important; margin: 0 !important; padding: 0 !important; font-size: 11pt !important; }
+    .no-print { display: none !important; }
+    #content { padding: 0 !important; margin: 0 !important; }
+    .wrapper { display: block !important; }
+    #sidebar { display: none !important; }
     html, body { width: 210mm; }
-    .inv-box { margin: 0; padding: 0; border: none; }
+    .inv-box { margin: 0; padding: 0; border: none; width: 100% !important; }
     .inv-table thead { display: table-header-group; }
     .inv-table tfoot { display: table-footer-group; }
     .inv-table tr { page-break-inside: avoid; page-break-after: auto; }
-    .inv-header { border-bottom: 1px solid #000; }
+    .inv-header { border-bottom: 2px solid #000 !important; }
 }
 @media screen {
-    .inv-box { max-width: 820px; margin: 20px auto; background: #fff; padding: 24px; border: 1px solid #d1d5db; }
+    .inv-box { max-width: 950px; margin: 20px auto; background: #fff; padding: 30px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); }
 }
 .inv-header { padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid #334155; }
 .inv-store-name { font-size: 1.7rem; font-weight: 700; letter-spacing: 0.02em; }
@@ -84,7 +87,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .inv-table td:first-child { text-align: center; width: 6%; }
 .inv-table td:nth-child(2) { text-align: right; }
 .inv-table td:nth-child(3), .inv-table td:nth-child(4), .inv-table td:nth-child(5) { text-align: center; }
-.inv-summary-bottom { width: 100%; max-width: 430px; margin-top: 10px; }
+.inv-summary-bottom { width: 100%; max-width: 430px; margin-top: 20px; margin-right: auto; border: 1px solid #e2e8f0; }
 .inv-summary-bottom table { width: 100%; border-collapse: collapse; }
 .inv-summary-bottom td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 0.95rem; }
 .inv-summary-bottom tr:last-child td { border-bottom: none; }
@@ -228,6 +231,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
                         <?php endif; ?>
                     </tbody>
                 </table>
+            </div>
+
+            <!-- التوقيعات والتذييل -->
+            <div class="inv-sig" style="display: flex; justify-content: space-between; margin-top: 50px; padding-top: 10px; font-size: 0.85rem; direction: rtl;">
+                <div style="text-align: center; min-width: 150px; border-top: 1px solid #000; padding-top: 5px;">توقيع المستلم/أمين المستودع<br><small>___________________</small></div>
+                <div style="text-align: center; min-width: 150px; border-top: 1px solid #000; padding-top: 5px;">ختم المؤسسة/المتجر<br><small>___________________</small></div>
+                <div style="text-align: center; min-width: 150px; border-top: 1px solid #000; padding-top: 5px;">توقيع المدير المالي/المسؤول<br><small>___________________</small></div>
             </div>
 
             <div class="inv-footer">
