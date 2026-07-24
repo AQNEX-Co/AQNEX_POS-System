@@ -239,16 +239,13 @@
             console.error("Error setting dynamic print title:", e);
         }
 
-        // 5. تأكيد تسجيل الخروج والترحيل للصندوق
+        // 5. تأكيد تسجيل الخروج مباشرة دون المطالبة بالترحيل
         try {
             var logoutLinks = document.querySelectorAll('a[href$="auth/logout.php"], a[href$="/auth/logout.php"]');
             logoutLinks.forEach(function(a) {
                 a.addEventListener('click', function(e) {
                     e.preventDefault();
-                    var proceed = confirm('هل تريد ترحيل رصيد الوردية/اليوم إلى الصندوق الآن قبل تسجيل الخروج؟\nاضغط موافق للترحيل ثم تسجيل الخروج، إلغاء للمتابعة بالخروج دون ترحيل.');
-                    if (proceed) {
-                        window.location.href = (this.getAttribute('href').startsWith('../') ? '../box/close.php' : 'box/close.php');
-                    } else {
+                    if (confirm('هل أنت متأكد من تسجيل الخروج؟')) {
                         window.location.href = this.getAttribute('href');
                     }
                 });
@@ -294,44 +291,144 @@
     </script>
 
 <script>
+// تعطيل شاشة التحميل كلياً للانتقال المباشر والسريع بين الصفحات
 document.addEventListener("DOMContentLoaded", function() {
     var loader = document.getElementById('page-loader');
-
-    function showLoader() {
-        if (loader) loader.classList.add('active');
+    if (loader) {
+        loader.style.display = 'none';
+        loader.classList.remove('active');
     }
+});
 
-    function hideLoader() {
-        if (loader) loader.classList.remove('active');
-    }
-
-    // إخفاء اللودينج عند اكتمال تحميل الصفحة
-    window.addEventListener('load', hideLoader);
-    
-    // إظهار اللودينج عند النقر على الروابط
-    document.querySelectorAll('a').forEach(function(link) {
-        link.addEventListener('click', function(e) {
-            var href = this.getAttribute('href');
-            // استثناء الروابط التي تفتح في نافذة جديدة أو الروابط الداخلية
-            if (href && !href.startsWith('#') && !href.startsWith('javascript:') && !this.target && !this.hasAttribute('data-toggle')) {
-                showLoader();
+// ============================================================
+// تحسين تجربة القوائم المنسدلة والإكمال التلقائي (Select2 & Autocomplete UX)
+// تنظيف نص البحث السابق فور فتح القائمة لإظهار جميع الخيارات
+// ============================================================
+if (typeof $ !== 'undefined') {
+    $(document).on('select2:open', function(e) {
+        // عند فتح أي قائمة Select2 بالنظام، نقوم بتفريغ نص البحث فوراً لكي تظهر جميع الخيارات للمستخدم
+        setTimeout(function() {
+            var searchField = document.querySelector('.select2-container--open .select2-search__field');
+            if (searchField) {
+                searchField.value = '';
+                searchField.focus();
+                searchField.dispatchEvent(new Event('input', { bubbles: true }));
             }
-        });
+        }, 10);
     });
 
-    // إظهار اللودينج عند إرسال النماذج (Forms)
-    document.querySelectorAll('form').forEach(function(form) {
-        form.addEventListener('submit', function(e) {
-            // استثناء النماذج داخل المودالات أو النماذج التي تم إيقاف سلوكها الافتراضي (AJAX)
-            if (form.closest('.modal') || form.hasAttribute('data-ajax') || e.defaultPrevented) {
-                return;
-            }
-            showLoader();
-        });
+    // عند اختيار أي عنصر من Select2 إغلاق القائمة فوراً
+    $(document).on('select2:select', function(e) {
+        $(e.target).select2('close');
     });
+}
 
-    // تحوّط لأي تأخير
-    setTimeout(hideLoader, 500); 
+// اختصار الحفظ الموحد بالنظام زر (F10) وإغلاق القوائم عند الانتقال بزر الانتر
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'F10') {
+        e.preventDefault();
+        var saveBtn = document.querySelector('.btn-save-action, button[name="btn_save"], button[name="btn_save_return"], button[name="btn_save_purchase"], input[type="submit"][name="btn_save"]');
+        if (saveBtn) {
+            saveBtn.click();
+        } else {
+            var activeForm = document.querySelector('form');
+            if (activeForm) {
+                if (typeof activeForm.requestSubmit === 'function') {
+                    activeForm.requestSubmit();
+                } else {
+                    activeForm.submit();
+                }
+            }
+        }
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+        // إغلاق كافة القوائم المنسدلة غير المجهولة فور الانتقال للحقل التالي
+        document.querySelectorAll('.autocomplete-dropdown').forEach(function(d) {
+            d.classList.add('d-none');
+        });
+        if (typeof $ !== 'undefined' && $.fn.select2) {
+            $('.select2-hidden-accessible').select2('close');
+        }
+    }
+});
+
+// دالة إظهار التنبيهات الفورية المنبثقة (Enterprise Popup Alert)
+window.showSystemAlert = function(title, message, type) {
+    type = type || 'warning';
+    var iconClass = 'bi-exclamation-triangle-fill text-warning';
+    var headerBg = 'linear-gradient(135deg, #7c2d12 0%, #b45309 100%)';
+    if (type === 'danger' || type === 'error') {
+        iconClass = 'bi-x-circle-fill text-danger';
+        headerBg = 'linear-gradient(135deg, #881337 0%, #be123c 100%)';
+    } else if (type === 'success') {
+        iconClass = 'bi-check-circle-fill text-success';
+        headerBg = 'linear-gradient(135deg, #064e3b 0%, #047857 100%)';
+    } else if (type === 'info') {
+        iconClass = 'bi-info-circle-fill text-info';
+        headerBg = 'linear-gradient(135deg, #0c4a6e 0%, #0284c7 100%)';
+    }
+
+    var alertModalHtml = `
+    <div class="modal fade" id="systemAlertModal" tabindex="-1" role="dialog" aria-hidden="true" style="z-index: 99999;">
+        <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 440px;">
+            <div class="modal-content" style="border-radius: 6px !important; overflow: hidden; border: none; box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
+                <div class="modal-header" style="background: ${headerBg} !important; color: #fff; padding: 12px 18px;">
+                    <h5 class="modal-title" style="font-size: 1rem; font-weight: 700; color: #fff; margin: 0; display: flex; align-items: center; gap: 8px;">
+                        <i class="bi ${iconClass}" style="font-size: 1.2rem; color: #fff !important;"></i>
+                        <span>${title}</span>
+                    </h5>
+                    <button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="إغلاق" style="color: #fff; opacity: 0.9; background: none; border: none; font-size: 1.4rem;">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body text-right" style="padding: 20px; font-size: 0.92rem; color: #1e293b; line-height: 1.6; background: #fff !important;">
+                    ${message}
+                </div>
+                <div class="modal-footer" style="padding: 10px 18px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
+                    <button type="button" class="btn btn-dark btn-sm px-4" data-dismiss="modal" data-bs-dismiss="modal" style="font-weight: 700; border-radius: 4px !important;">حسناً (Enter)</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    var existingModal = document.getElementById('systemAlertModal');
+    if (existingModal) existingModal.remove();
+
+    document.body.insertAdjacentHTML('beforeend', alertModalHtml);
+
+    var $alertModal = $('#systemAlertModal');
+    if ($alertModal && typeof $alertModal.modal === 'function') {
+        $alertModal.modal('show');
+        $alertModal.on('shown.bs.modal', function() {
+            $(this).find('button').focus();
+        });
+    } else {
+        alert(title + "\n" + message);
+    }
+};
+
+// التنقل التلقائي بين حقول الإدخال عند ضغط مفتاح Enter بدون الحاجة للماوس
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        var target = e.target;
+        var isInputField = target.tagName === 'INPUT' || target.tagName === 'SELECT';
+        var isTextArea = target.tagName === 'TEXTAREA';
+        var isSubmitBtn = target.type === 'submit' || target.classList.contains('btn-save-action');
+
+        if (isInputField && !isSubmitBtn && !isTextArea && !target.closest('.aqnex-select-container')) {
+            var form = target.form;
+            if (form) {
+                var focusables = Array.from(form.querySelectorAll('input:not([type="hidden"]):not([disabled]):not([readonly]), select:not([disabled]), button:not([disabled])'));
+                var index = focusables.indexOf(target);
+                if (index > -1 && index < focusables.length - 1) {
+                    e.preventDefault();
+                    focusables[index + 1].focus();
+                    if (focusables[index + 1].select) {
+                        focusables[index + 1].select();
+                    }
+                }
+            }
+        }
+    }
 });
 </script>
     
@@ -731,6 +828,289 @@ document.addEventListener("DOMContentLoaded", function() {
             debounceTimer = setTimeout(filterSidebar, 120);
         });
     });
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 🚀 AQNEX POS - إضافة ميزات التنقل بزر Enter والـ Autocomplete الشامل
+    // ────────────────────────────────────────────────────────────────────────
+    
+    // 1. حقن تنسيق الاستايل الفاخر للـ Autocomplete
+    (function() {
+        var style = document.createElement('style');
+        style.innerHTML = `
+            .aqnex-select-container {
+                position: relative;
+                display: inline-block;
+                width: 100%;
+            }
+            .aqnex-select-input {
+                width: 100%;
+                padding: 8px 12px;
+                font-family: 'Tajawal', sans-serif;
+                font-size: 0.95rem;
+                font-weight: 600;
+                border: 1px solid #ced4da;
+                background-color: #fff;
+                color: #495057;
+                outline: none;
+                transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+                cursor: pointer;
+            }
+            .aqnex-select-input:focus {
+                border-color: #1d6bff;
+                box-shadow: 0 0 0 0.2rem rgba(29, 107, 255, 0.25);
+            }
+            .aqnex-select-dropdown {
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                z-index: 1050;
+                display: none;
+                max-height: 250px;
+                overflow-y: auto;
+                margin-top: 2px;
+                padding: 5px 0;
+                background-color: #fff;
+                border: 1px solid rgba(0, 0, 0, 0.15);
+                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.175);
+                direction: rtl;
+                text-align: right;
+            }
+            .aqnex-select-item {
+                padding: 8px 15px;
+                font-size: 0.9rem;
+                color: #212529;
+                cursor: pointer;
+                transition: background-color 0.15s;
+            }
+            .aqnex-select-item:hover, .aqnex-select-item.active {
+                background-color: #f1f5f9;
+                color: #1d6bff;
+                font-weight: bold;
+            }
+            .aqnex-select-item.selected-val {
+                background-color: #e2e8f0;
+                color: #0f172a;
+                font-weight: bold;
+            }
+            .aqnex-select-item.no-results {
+                color: #7d8590;
+                text-align: center;
+                cursor: default;
+                font-style: italic;
+            }
+        `;
+        document.head.appendChild(style);
+    })();
+
+    // 2. التنقل بين الحقول عبر زر Enter ومنع الحفظ التلقائي بالفورم
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            var activeEl = document.activeElement;
+            if (!activeEl) return;
+
+            // استثناء الـ Textarea وأزرار الحفظ والإرسال الفعلية
+            var tagName = activeEl.tagName.toLowerCase();
+            var typeAttr = (activeEl.getAttribute('type') || '').toLowerCase();
+            
+            if (tagName === 'textarea' || typeAttr === 'submit' || activeEl.classList.contains('btn-submit') || activeEl.classList.contains('save-btn')) {
+                return; // دع زر الانتر يقوم بعمله الطبيعي هنا
+            }
+
+            e.preventDefault(); // منع إرسال الفورم
+
+            // البحث عن الفورم الحالي للعنصر النشط
+            var form = activeEl.form || activeEl.closest('form');
+            if (!form) return;
+
+            // جلب كافة العناصر القابلة للتفاعل ومرئية في الفورم
+            var focusableElements = Array.prototype.slice.call(
+                form.querySelectorAll('input, select, textarea, button, [tabindex="0"]')
+            ).filter(function(el) {
+                var style = window.getComputedStyle(el);
+                return el.tabIndex >= 0 && 
+                       !el.disabled && 
+                       style.display !== 'none' && 
+                       style.visibility !== 'hidden' &&
+                       el.offsetHeight > 0 &&
+                       !el.classList.contains('no-focus-enter');
+            });
+
+            var index = focusableElements.indexOf(activeEl);
+            if (index > -1 && index < focusableElements.length - 1) {
+                var nextEl = focusableElements[index + 1];
+                nextEl.focus();
+                if (nextEl.tagName.toLowerCase() === 'input' && typeof nextEl.select === 'function') {
+                    nextEl.select(); // تحديد النص لسهولة الكتابة فوقه
+                }
+            }
+        }
+    });
+
+    // 3. تحويل كافة حقول الـ select تلقائياً إلى autocomplete ذكي
+    document.addEventListener('DOMContentLoaded', function() {
+        initAqnexAutocomplete();
+    });
+
+    // تفعيل التحديث التلقائي للحقول الجديدة بعد تحميلها بـ AJAX
+    var ajaxObserver = new MutationObserver(function(mutations) {
+        var needsInit = false;
+        mutations.forEach(function(mutation) {
+            if (mutation.addedNodes.length) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType === 1 && (node.tagName.toLowerCase() === 'select' || node.querySelector('select'))) {
+                        needsInit = true;
+                    }
+                });
+            }
+        });
+        if (needsInit) {
+            initAqnexAutocomplete();
+        }
+    });
+    ajaxObserver.observe(document.body, { childList: true, subtree: true });
+
+    function initAqnexAutocomplete() {
+        var selects = document.querySelectorAll('select:not(.no-autocomplete):not([multiple])');
+        selects.forEach(function(select) {
+            if (select.dataset.aqnexInit === 'true' || select.style.display === 'none') {
+                return; // تم تهيئته مسبقاً أو حقل مخفي مخصص
+            }
+            select.dataset.aqnexInit = 'true';
+            
+            // إنشاء الحاوية والعنصر البديل
+            var container = document.createElement('div');
+            container.className = 'aqnex-select-container';
+            if (select.className) {
+                container.classList.add('original-' + select.className);
+            }
+            
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'aqnex-select-input';
+            if (select.classList.contains('form-control')) {
+                input.classList.add('form-control');
+            }
+            // نسخ الكلاسات المخصصة والتنسيق للانسجام مع واجهة الصفحة
+            input.style.borderRadius = '0px'; // الحفاظ على الحواف الكلاسيكية للنظام
+            input.placeholder = select.options[0] ? select.options[0].text : 'اختر...';
+            
+            // قائمة الخيارات العائمة
+            var dropdown = document.createElement('div');
+            dropdown.className = 'aqnex-select-dropdown';
+            
+            // إخفاء الـ select الأصلي ووضع الحاوية بدلاً منه
+            select.style.display = 'none';
+            select.parentNode.insertBefore(container, select);
+            container.appendChild(input);
+            container.appendChild(dropdown);
+            
+            // تحديث قيمة حقل الإدخال بالخيار النشط حالياً
+            function updateInputFromSelect() {
+                var selectedOpt = select.options[select.selectedIndex];
+                input.value = selectedOpt ? selectedOpt.text : '';
+            }
+            updateInputFromSelect();
+            
+            // بناء وتعبئة الخيارات في القائمة المنسدلة المخصصة
+            function buildDropdownItems() {
+                dropdown.innerHTML = '';
+                var searchTerm = input.value.toLowerCase().trim();
+                var hasVisible = false;
+                
+                for (var i = 0; i < select.options.length; i++) {
+                    var option = select.options[i];
+                    // تجاوز الخيارات الفارغة أو الغير نشطة
+                    var text = option.text;
+                    var val = option.value;
+                    
+                    if (text.toLowerCase().indexOf(searchTerm) !== -1 || searchTerm === '') {
+                        hasVisible = true;
+                        var item = document.createElement('div');
+                        item.className = 'aqnex-select-item';
+                        item.textContent = text;
+                        item.dataset.value = val;
+                        item.dataset.index = i;
+                        
+                        if (i === select.selectedIndex) {
+                            item.classList.add('selected-val');
+                        }
+                        
+                        item.addEventListener('click', function(e) {
+                            select.selectedIndex = parseInt(this.dataset.index);
+                            updateInputFromSelect();
+                            dropdown.style.display = 'none';
+                            // إطلاق حدث التغيير لتعمل العمليات التفاعلية (كاحتساب الإجماليات وتحديث أسعار الصرف)
+                            var changeEvent = new Event('change', { bubbles: true });
+                            select.dispatchEvent(changeEvent);
+                        });
+                        dropdown.appendChild(item);
+                    }
+                }
+                
+                if (!hasVisible) {
+                    var noRes = document.createElement('div');
+                    noRes.className = 'aqnex-select-item no-results';
+                    noRes.textContent = 'لا توجد نتائج مطابقة';
+                    dropdown.appendChild(noRes);
+                }
+            }
+            
+            // إدارة الأحداث والظهور
+            input.addEventListener('focus', function() {
+                // إظهار وتحديث القائمة
+                buildDropdownItems();
+                dropdown.style.display = 'block';
+                input.select(); // تحديد النص لسهولة البحث مباشرة
+            });
+            
+            input.addEventListener('input', function() {
+                dropdown.style.display = 'block';
+                buildDropdownItems();
+            });
+            
+            // إغلاق القائمة المنسدلة عند النقر في الخارج
+            document.addEventListener('click', function(e) {
+                if (!container.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                    updateInputFromSelect(); // إعادة النص للخيار المختار فعلياً في حال إلغاء البحث
+                }
+            });
+            
+            // دعم أزرار الكيبورد (أعلى/أسفل للتنقل، Enter للتأكيد)
+            input.addEventListener('keydown', function(e) {
+                var items = dropdown.querySelectorAll('.aqnex-select-item:not(.no-results)');
+                if (dropdown.style.display === 'none' || !items.length) {
+                    return;
+                }
+                
+                var activeItem = dropdown.querySelector('.aqnex-select-item.active');
+                var activeIdx = -1;
+                if (activeItem) {
+                    activeIdx = Array.prototype.indexOf.call(items, activeItem);
+                }
+                
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (activeItem) activeItem.classList.remove('active');
+                    var nextIdx = (activeIdx + 1) % items.length;
+                    items[nextIdx].classList.add('active');
+                    items[nextIdx].scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (activeItem) activeItem.classList.remove('active');
+                    var prevIdx = (activeIdx - 1 + items.length) % items.length;
+                    items[prevIdx].classList.add('active');
+                    items[prevIdx].scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'Enter') {
+                    if (activeItem) {
+                        e.preventDefault();
+                        activeItem.click();
+                    }
+                }
+            });
+        });
+    }
     </script>
     </body>
     </html>

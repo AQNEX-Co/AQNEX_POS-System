@@ -59,6 +59,25 @@ $is_admin = ($active_user_role === 'admin' || empty($active_user_role));
 $settings = $global_settings;
 $save_error = '';
 
+$editing_invoice_id = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['edit_id']) ? intval($_GET['edit_id']) : 0);
+$editing_invoice = null;
+$editing_items = [];
+
+if ($editing_invoice_id > 0) {
+    $res_edit_mst = $conn->query("SELECT * FROM sales WHERE id = $editing_invoice_id AND delete_status = 0 LIMIT 1");
+    if ($res_edit_mst && $res_edit_mst->num_rows > 0) {
+        $editing_invoice = $res_edit_mst->fetch_assoc();
+        $res_edit_dtl = $conn->query("SELECT * FROM sales_items WHERE sales_id = $editing_invoice_id ORDER BY id ASC");
+        if ($res_edit_dtl) {
+            while ($item_row = $res_edit_dtl->fetch_assoc()) {
+                $editing_items[] = $item_row;
+            }
+        }
+    } else {
+        $editing_invoice_id = 0;
+    }
+}
+
 if (isset($_POST['btn_save'])) {
     $build_date = date('Y-m-d', strtotime($_POST['build_date']));
     $customer_name = $conn->real_escape_string($_POST['customer_name']);
@@ -132,12 +151,50 @@ if (isset($_POST['btn_save'])) {
     if (empty($save_error)) {
         $conn->begin_transaction();
         try {
-        $sql_insert = "INSERT INTO `sales`(`build_date`, `cust_name`, `total`, `prifet`, `remark`, `delete_status`, `currency_code`, `exchange_rate`, `remaining_total`, `box_id`, `invoice_type`, `payment_method`, `wallet_type`) 
-                       VALUES ('$build_date', '$customer_name', '$invoice_total_base', '$grand_profit_base', '$remark', 0, '$currency_code', '$exchange_rate', '$total_remaining_base', $active_box_id, '$invoice_type', '$payment_method', '$wallet_type')";
-        if (!$conn->query($sql_insert)) {
-            throw new Exception("فشل حفظ رأس الفاتورة في قاعدة البيانات");
-        }
-        $billing_id = $conn->insert_id;
+            // جلب العميل أو إنشائه تلقائياً إذا لم يكن موجوداً
+            $customer_id = 0;
+            if (!empty($customer_name) && $customer_name !== 'عميل نقدي') {
+                $cust_res = $conn->query("SELECT cust_id FROM customers WHERE cust_name = '$customer_name' AND d_s = 0 LIMIT 1");
+                if ($cust_res && $cust_res->num_rows > 0) {
+                    $customer_id = intval($cust_res->fetch_assoc()['cust_id']);
+                } else {
+                    // إنشاء العميل الجديد تلقائياً
+                    $conn->query("INSERT INTO customers (cust_name, cust_madeen, cust_daain, sale_date, d_s) VALUES ('$customer_name', 0, 0, '$build_date', 0)");
+                    $customer_id = $conn->insert_id;
+                }
+            }
+            $editing_invoice_id = isset($_POST['editing_invoice_id']) ? intval($_POST['editing_invoice_id']) : 0;
+
+            if ($editing_invoice_id > 0) {
+                // 1. إرجاع الكميات المخصومة سابقاً إلى المخزن
+                $prev_items = $conn->query("SELECT product_id, bush FROM sales_items WHERE sales_id = $editing_invoice_id");
+                if ($prev_items) {
+                    while ($prev = $prev_items->fetch_assoc()) {
+                        $p_id_prev = intval($prev['product_id']);
+                        $qty_prev = intval($prev['bush']);
+                        if ($p_id_prev > 0 && $qty_prev > 0) {
+                            $conn->query("UPDATE products SET quantity = quantity + $qty_prev, total = (quantity + $qty_prev) * buy_price WHERE id = $p_id_prev");
+                        }
+                    }
+                }
+                // 2. إلغاء القيود والتفاصيل القديمة
+                $conn->query("DELETE FROM sales_items WHERE sales_id = $editing_invoice_id");
+                $conn->query("DELETE FROM journal_entries WHERE ref_id = $editing_invoice_id AND ref_type = 'sale'");
+
+                // 3. تحديث الفاتورة الحالية
+                $sql_update = "UPDATE `sales` SET `build_date` = '$build_date', `cust_name` = '$customer_name', `total` = '$invoice_total_base', `prifet` = '$grand_profit_base', `remark` = '$remark', `currency_code` = '$currency_code', `exchange_rate` = '$exchange_rate', `remaining_total` = '$total_remaining_base', `box_id` = $active_box_id, `invoice_type` = '$invoice_type', `payment_method` = '$payment_method', `wallet_type` = '$wallet_type' WHERE `id` = $editing_invoice_id";
+                if (!$conn->query($sql_update)) {
+                    throw new Exception("فشل تحديث الفاتورة رقم #" . $editing_invoice_id);
+                }
+                $billing_id = $editing_invoice_id;
+            } else {
+                $sql_insert = "INSERT INTO `sales`(`build_date`, `cust_name`, `total`, `prifet`, `remark`, `delete_status`, `currency_code`, `exchange_rate`, `remaining_total`, `box_id`, `invoice_type`, `payment_method`, `wallet_type`) 
+                               VALUES ('$build_date', '$customer_name', '$invoice_total_base', '$grand_profit_base', '$remark', 0, '$currency_code', '$exchange_rate', '$total_remaining_base', $active_box_id, '$invoice_type', '$payment_method', '$wallet_type')";
+                if (!$conn->query($sql_insert)) {
+                    throw new Exception("فشل حفظ رأس الفاتورة في قاعدة البيانات");
+                }
+                $billing_id = $conn->insert_id;
+            }
 
         for ($i = 0; $i < $count; $i++) {
             $p_id = intval($products[$i]);
@@ -160,11 +217,11 @@ if (isset($_POST['btn_save'])) {
                 if ($conv_factor <= 0) $conv_factor = 1.0;
                 $unit_name = isset($_POST['unit_name'][$i]) ? trim($_POST['unit_name'][$i]) : '';
                 if (empty($unit_name)) {
-                    $unit_name = 'الوحدة الأساسية';
+                    $unit_name = 'حبة';
                 }
 
                 $product_field_val = "$p_id $product_name_db";
-                if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية') {
+                if (!empty($unit_name) && $unit_name !== 'حبة') {
                     $product_field_val .= " ($unit_name)";
                 }
 
@@ -643,140 +700,225 @@ if ($res_curr) {
     </div>
 </div>
 
-<div class="card-flat">
-    <div class="card-header">
-        <h5><?php echo get_icon('sales', 'ml-2 text-primary'); ?> إضافة فاتورة مبيعات جديدة</h5>
-        <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-            <?php echo get_icon('logout', 'ml-1'); ?> عودة
-        </a>
+<!-- Onyx Pro System Window Header Bar -->
+<div class="aqnex-window-header no-print">
+    <div>
+        <i class="bi bi-window-stack text-primary ml-1"></i>
+        <span>أنظمة العملاء - نظام إدارة المبيعات - فاتورة المبيعات</span>
     </div>
-    <div class="card-body">
-        <?php if (!empty($save_error)): ?>
-            <div class="alert alert-danger rounded-0 mb-4">
-                <strong>خطأ في حفظ الفاتورة:</strong> <?php echo htmlspecialchars($save_error); ?>
+    <div>
+        <span class="ml-3">المستخدم: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong></span>
+        <span>التاريخ: <strong><?php echo date('Y/m/d'); ?></strong></span>
+    </div>
+</div>
+
+<!-- Onyx Pro Action Toolbar (Large Icon Buttons with Hover Tooltips) -->
+<div class="aqnex-toolbar no-print">
+    <div style="display: flex; align-items: center; gap: 5px;">
+        <!-- ➕ جديد (F2) -->
+        <button type="button" class="tool-btn btn-new" title="جديد (F2) - فتح فاتورة جديدة بالمتصفح" onclick="window.open('create.php', '_blank');">
+            <i class="bi bi-file-earmark-plus-fill"></i>
+        </button>
+
+        <!-- 💾 حفظ الفاتورة (F4 / Ctrl+S) -->
+        <button type="submit" form="salesForm" name="btn_save" class="tool-btn btn-save btn-save-action" title="حفظ وترحيل الفاتورة (F10)">
+            <i class="bi bi-floppy-fill"></i>
+        </button>
+
+        <!-- ✏️ تعديل الفاتورة -->
+        <button type="button" class="tool-btn" title="تعديل فاتورة مبيعات محفوظة (F6)" onclick="openSearchInvoiceModal('edit');">
+            <i class="bi bi-pencil-square" style="color: #d97706;"></i>
+        </button>
+
+        <!-- 🔍 البحث عن فاتورة مبيعات سابقة (F3) -->
+        <button type="button" class="tool-btn btn-search" title="البحث عن فاتورة مبيعات سابقة (F3)" onclick="openSearchInvoiceModal('view');">
+            <i class="bi bi-search"></i>
+        </button>
+
+        <!-- 🗑 حذف الفاتورة -->
+        <button type="button" class="tool-btn btn-delete" title="حذف وتصفية الفاتورة الحالية" onclick="if(confirm('هل أنت تأكد من رغبتك في حذف وتصفية الفاتورة؟')) resetSalesForm();">
+            <i class="bi bi-trash-fill"></i>
+        </button>
+
+        <!-- 📖 عرض القيود المحاسبية للفاتورة (F8) -->
+        <button type="button" class="tool-btn" title="عرض القيود المحاسبية الآلية للفاتورة (F8)" onclick="openJournalModal();" style="color: #7c3aed; border-color: #ddd6fe;">
+            <i class="bi bi-journal-bookmark-fill"></i>
+        </button>
+
+        <!-- 🔄 تراجع وتصفية الفاتورة -->
+        <button type="button" class="tool-btn" title="تراجع وتصفية بيانات الفاتورة" onclick="resetSalesForm();">
+            <i class="bi bi-arrow-counterclockwise" style="color: #0284c7;"></i>
+        </button>
+    </div>
+
+    <!-- أزرار الجانب الأيسر -->
+    <div style="margin-right: auto; display: flex; align-items: center; gap: 5px;">
+        <!-- 💵 سند قبض -->
+        <button type="button" class="tool-btn" title="تسجيل سند قبض جديد" onclick="window.location.href='../receipts/create.php';" style="color: #16a34a; border-color: #86efac;">
+            <i class="bi bi-journal-plus"></i>
+        </button>
+
+        <!-- ↩️ مرتجع مبيعات -->
+        <button type="button" class="tool-btn" title="الانتقال لشاشة مرتجعات المبيعات" onclick="window.location.href='returns.php';" style="color: #dc2626; border-color: #fca5a5;">
+            <i class="bi bi-arrow-return-left"></i>
+        </button>
+
+        <!-- 🖨 طباعة (F9) -->
+        <button type="button" class="tool-btn btn-print" title="طباعة تقرير الفاتورة (F9)" onclick="window.print();">
+            <i class="bi bi-printer-fill"></i>
+        </button>
+    </div>
+</div>
+
+<form method="POST" id="salesForm">
+<input type="hidden" name="editing_invoice_id" value="<?php echo $editing_invoice_id; ?>">
+
+<?php if ($editing_invoice_id > 0): ?>
+    <div class="alert alert-warning rounded-0 mb-3 text-right no-print" style="border: 1px solid #fbbf24; border-right: 4px solid #d97706 !important; background-color: #fffbeb; color: #92400e; padding: 10px 14px;">
+        <i class="bi bi-pencil-square ml-1 font-weight-bold"></i>
+        <strong>تأكيد التعديل:</strong> أنت تشاهد وتعدل الآن الفاتورة رقم <strong>#<?php echo $editing_invoice_id; ?></strong> (بتاريخ: <?php echo htmlspecialchars($editing_invoice['build_date'] ?? ''); ?> - العميل: <?php echo htmlspecialchars($editing_invoice['cust_name'] ?? ''); ?>). يمكنك تعديل أي حقل أو صنف ثم الضغط على <strong>حفظ (F10)</strong> لتحديث الفاتورة.
+    <a href="create.php" class="btn btn-xs btn-outline-danger bg-gradient-danger font-weight-bold mr-3">الغاء التعديل والدخول لفاتورة جديدة</a>
+    </div>
+<?php endif; ?>
+
+<?php if (!empty($save_error)): ?>
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        if (typeof showSystemAlert === 'function') {
+            showSystemAlert("خطأ في حفظ الفاتورة", <?php echo json_encode($save_error); ?>, "danger");
+        }
+    });
+    </script>
+    <div class="alert alert-danger rounded-0 mb-3">
+        <strong>خطأ في حفظ الفاتورة:</strong> <?php echo htmlspecialchars($save_error); ?>
+    </div>
+<?php endif; ?>
+
+<!-- Onyx Pro Form Grid (البيانات الرئيسية) -->
+<div class="aqnex-form-grid">
+    <div class="row">
+        <!-- العمود الأول -->
+        <div class="col-md-4">
+            <div class="aqnex-form-group">
+                <label class="aqnex-label">القطاع / المركز:</label>
+                <select name="sector_id" class="aqnex-select">
+                    <option value="">عام</option>
+                    <?php
+                    $res_sec = $conn->query("SELECT id, name FROM sectors ORDER BY name ASC");
+                    if ($res_sec) {
+                        while($sec = $res_sec->fetch_assoc()) {
+                            echo "<option value='{$sec['id']}'>" . htmlspecialchars($sec['name']) . "</option>";
+                        }
+                    }
+                    ?>
+                </select>
             </div>
-        <?php endif; ?>
-        <!-- شريط التبويبات المتعددة (Multi-Invoice Tabs) -->
-        <div class="sales-tabs-bar no-print mb-4" style="display:flex; align-items:center; justify-content:space-between; border-bottom:2px solid #e2e8f0; padding-bottom:10px;">
-            <div id="sales-tabs-list" style="display:flex; gap:6px; flex-wrap:wrap;">
-                <!-- سيتولد برمجياً عبر JS -->
+            <div class="aqnex-form-group">
+                <label class="aqnex-label">طريقة الدفع:</label>
+                <select name="invoice_type" id="invoiceTypeSelect" class="aqnex-select" onchange="toggleSalesInvoiceType(this.value)" required>
+                    <option value="cash" <?php echo ($editing_invoice && ($editing_invoice['invoice_type'] ?? '') === 'cash') ? 'selected' : ''; ?>>نقداً</option>
+                    <option value="credit" <?php echo ($editing_invoice && ($editing_invoice['invoice_type'] ?? '') === 'credit') ? 'selected' : ''; ?>>آجل</option>
+                    <option value="account" <?php echo ($editing_invoice && ($editing_invoice['invoice_type'] ?? '') === 'account') ? 'selected' : ''; ?>>من حساب</option>
+                </select>
             </div>
-            <button type="button" class="btn btn-sm btn-outline-primary font-weight-bold" onclick="openNewSalesTab()" style="font-size:0.8rem; border-radius:0; height: 34px;">
-                <i class="bi bi-plus-lg ml-1"></i> فاتورة جديدة (F2)
-            </button>
         </div>
 
-        <form method="POST" id="salesForm">
-            <div class="row mb-3">
-                <div class="col-md-2 col-sm-6 mb-3">
-                    <label class="form-label font-weight-bold text-secondary">تاريخ البيع</label>
-                    <input type="date" name="build_date" class="form-control rounded-0" value="<?php echo date('Y-m-d'); ?>" required>
-                </div>
+        <!-- العمود الثاني -->
+        <div class="col-md-4">
+            <div class="aqnex-form-group">
+                <label class="aqnex-label">رقم الصندوق:</label>
+                <?php if ($is_admin): ?>
+                    <?php $default_box_id = $editing_invoice ? intval($editing_invoice['box_id']) : get_user_box_id($conn, $active_user_id); ?>
+                    <select name="box_id" id="boxSelect" class="aqnex-select" required>
+                        <option value=""></option>
+                        <?php
+                        $res_b = $conn->query("SELECT box_id, name, mony FROM treasury WHERE is_active = 1 ORDER BY box_id ASC");
+                        if ($res_b) {
+                            while($b = $res_b->fetch_assoc()) {
+                                $selected_attr = ($b['box_id'] == $default_box_id) ? 'selected' : '';
+                                echo "<option value='{$b['box_id']}' data-balance='{$b['mony']}' $selected_attr>" . htmlspecialchars($b['name']) . "</option>";
+                            }
+                        }
+                        ?>
+                    </select>
+                <?php else: ?>
+                    <?php 
+                    $user_box_id = get_user_box_id($conn, $active_user_id); 
+                    $box_res = $conn->query("SELECT mony FROM treasury WHERE box_id = $user_box_id");
+                    $box_mony = ($box_res && $box_res->num_rows > 0) ? floatval($box_res->fetch_assoc()['mony']) : 0;
+                    ?>
+                    <input type="hidden" name="box_id" value="<?php echo $user_box_id; ?>" id="userBoxId" data-balance="<?php echo $box_mony; ?>">
+                    <input type="text" class="aqnex-input" readonly value="<?php echo htmlspecialchars(get_box_name($conn, $user_box_id)); ?>">
+                <?php endif; ?>
+            </div>
 
-                <div class="col-md-3 col-sm-6 mb-3">
-                    <div class="d-flex justify-content-between align-items-center mb-1">
-                        <label class="form-label font-weight-bold text-secondary mb-0">العميل</label>
-                        <a href="javascript:void(0)" class="small font-weight-bold text-decoration-none" data-toggle="modal" data-target="#quickAddCustomerModal">
-                            <i class="fa fa-plus-circle ml-1"></i>عميل جديد
-                        </a>
-                    </div>
-                    <select name="customer_name" id="select2" class="form-control rounded-0" required>
-                        <option value="">-- اختر عميل --</option>
-                        <option value="عميل نقدي" selected>عميل نقدي</option>
+            <div class="aqnex-form-group">
+                <label class="aqnex-label">العملة و الصرف:</label>
+                <div style="display: flex; gap: 4px; width: 100%;">
+                    <select name="currency_code" id="currencySelect" class="aqnex-select" required style="width: 60%;">
+                        <?php foreach($currencies_list as $c): ?>
+                            <option value="<?php echo htmlspecialchars($c['code']); ?>" data-rate="<?php echo $c['exchange_rate']; ?>" data-symbol="<?php echo htmlspecialchars($c['symbol']); ?>" <?php echo ($editing_invoice ? ($editing_invoice['currency_code'] === $c['code']) : ($c['code'] === 'YER')) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($c['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <input type="number" step="any" name="exchange_rate" id="exchangeRateInput" class="aqnex-input text-center" value="<?php echo $editing_invoice ? $editing_invoice['exchange_rate'] : '1.0'; ?>" readonly required style="width: 40%;">
+                </div>
+            </div>
+
+            <div class="aqnex-form-group">
+                <label class="aqnex-label">تاريخ الفاتورة:</label>
+                <input type="date" name="build_date" class="aqnex-input" value="<?php echo $editing_invoice ? htmlspecialchars($editing_invoice['build_date']) : date('Y-m-d'); ?>" required>
+            </div>
+        </div>
+
+        <!-- العمود الثالث -->
+        <div class="col-md-4">
+            <div class="aqnex-form-group">
+                <label class="aqnex-label">اسم العميل:</label>
+                <div style="display: flex; gap: 4px; width: 100%;">
+                    <select name="customer_name" id="select2" class="aqnex-select" required>
+                        <option value="عميل نقدي" <?php echo (!$editing_invoice || $editing_invoice['cust_name'] === 'عميل نقدي') ? 'selected' : ''; ?>>عميل نقدي</option>
                         <?php
                         $sql_cust = "SELECT cust_name FROM customers WHERE d_s = 0 ORDER BY cust_id DESC";
                         $res_cust = $conn->query($sql_cust);
                         if ($res_cust) {
                             while($row = $res_cust->fetch_assoc()) {
-                                echo "<option value='".htmlspecialchars($row['cust_name'])."'>".htmlspecialchars($row['cust_name'])."</option>";
+                                $sel_c = ($editing_invoice && $editing_invoice['cust_name'] === $row['cust_name']) ? 'selected' : '';
+                                echo "<option value='".htmlspecialchars($row['cust_name'])."' $sel_c>".htmlspecialchars($row['cust_name'])."</option>";
                             }
                         }
                         ?>
                     </select>
-                </div>
-
-                <div class="col-md-2 col-sm-6 mb-3">
-                    <label class="form-label font-weight-bold text-secondary">نوع الفاتورة</label>
-                    <select name="invoice_type" id="invoiceTypeSelect" class="form-control rounded-0" onchange="toggleSalesInvoiceType(this.value)" required>
-                        <option value="cash">نقد</option>
-                        <option value="credit">آجل</option>
-                        <option value="account">من حساب</option>
-                    </select>
-                </div>
-
-                <div class="col-md-2 col-sm-6 mb-3">
-                    <label class="form-label font-weight-bold text-secondary">عملة الفاتورة</label>
-                    <select name="currency_code" id="currencySelect" class="form-control rounded-0" required>
-                        <?php foreach($currencies_list as $c): ?>
-                            <option value="<?php echo htmlspecialchars($c['code']); ?>" data-rate="<?php echo $c['exchange_rate']; ?>" data-symbol="<?php echo htmlspecialchars($c['symbol']); ?>" <?php echo ($c['code'] === 'YER') ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($c['name']); ?> (<?php echo htmlspecialchars($c['symbol']); ?>)
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="col-md-2 col-sm-6 mb-3">
-                    <label class="form-label font-weight-bold text-secondary">سعر الصرف (YER)</label>
-                    <input type="number" step="any" name="exchange_rate" id="exchangeRateInput" class="form-control rounded-0 font-weight-bold text-center bg-light" value="1.0" readonly required>
+                    <button type="button" class="btn btn-sm btn-outline-primary px-2" style="height: 26px; padding: 0 6px;" data-toggle="modal" data-target="#quickAddCustomerModal" title="عميل جديد">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
                 </div>
             </div>
 
-            <div class="row mb-3" id="salesPaymentRow">
-                <div class="col-md-3 col-sm-6 mb-3" id="salesBoxSection">
-                    <label class="form-label font-weight-bold text-secondary">الصندوق (للمقبوضات النقدية)</label>
-                    <?php if ($is_admin): ?>
-                        <?php $default_box_id = get_user_box_id($conn, $active_user_id); ?>
-                        <select name="box_id" id="boxSelect" class="form-control rounded-0" required>
-                            <?php
-                            $res_b = $conn->query("SELECT box_id, name, mony FROM treasury WHERE is_active = 1 ORDER BY box_id ASC");
-                            if ($res_b) {
-                                while($b = $res_b->fetch_assoc()) {
-                                    $selected_attr = ($b['box_id'] == $default_box_id) ? 'selected' : '';
-                                    echo "<option value='{$b['box_id']}' data-balance='{$b['mony']}' $selected_attr>" . htmlspecialchars($b['name']) . "</option>";
-                                }
-                            }
-                            ?>
-                        </select>
-                    <?php else: ?>
-                        <?php 
-                        $user_box_id = get_user_box_id($conn, $active_user_id); 
-                        $box_res = $conn->query("SELECT mony FROM treasury WHERE box_id = $user_box_id");
-                        $box_mony = ($box_res && $box_res->num_rows > 0) ? floatval($box_res->fetch_assoc()['mony']) : 0;
-                        ?>
-                        <input type="hidden" name="box_id" value="<?php echo $user_box_id; ?>" id="userBoxId" data-balance="<?php echo $box_mony; ?>">
-                        <input type="text" class="form-control text-center font-weight-bold bg-light rounded-0" readonly value="<?php echo htmlspecialchars(get_box_name($conn, $user_box_id)); ?>">
-                    <?php endif; ?>
-                </div>
-
-                <div class="col-md-3 col-sm-6 mb-3" id="salesPaymentMethodSection">
-                    <label class="form-label font-weight-bold text-secondary">طريقة الدفع</label>
-                    <select name="payment_method" id="salesPaymentMethodSelect" class="form-control rounded-0" onchange="toggleSalesWalletSection(this.value)">
-                        <option value="cash">نقداً</option>
-                        <option value="wallet">محفظة إلكترونية / بنك</option>
-                    </select>
-                </div>
-
-                <div class="col-md-3 col-sm-6 mb-3 d-none" id="salesWalletTypeSection">
-                    <label class="form-label font-weight-bold text-secondary">نوع المحفظة / البنك</label>
-                    <select id="salesWalletTypeSelect" class="form-control rounded-0">
-                        <option value="">-- اختر --</option>
-                        <optgroup label="محافظ إلكترونية">
-                            <option value="جيب">جيب </option>
-                            <option value="فلوسك">فلوسك</option>
-                            <option value="جوالي">جوالي</option>
-                            <option value="ايزي">ايزي </option>
-                            <option value="محفظة أخرى">محفظة أخرى</option>
-                        </optgroup>
-                        <optgroup label="بنوك">
-                            <option value="بنك الكريمي">بنك الكريمي</option>
-                            <option value="بنك اليمن والخليج">بنك اليمن والخليج</option>
-                            <option value="بنك التضامن">بنك التضامن</option>
-                            <option value="بنك آخر">بنك آخر</option>
-                        </optgroup>
-                    </select>
-                </div>
-                <input type="hidden" name="wallet_type" id="salesWalletTypeHidden" value="">
+            <div class="aqnex-form-group" id="salesPaymentMethodSection">
+                <label class="aqnex-label">طريقة المحفظة:</label>
+                <select name="payment_method" id="salesPaymentMethodSelect" class="aqnex-select" onchange="toggleSalesWalletSection(this.value)">
+                <option value=""></option>    
+                <option value="cash">نقداً</option>
+                    <option value="wallet">محفظة إلكترونية / بنك</option>
+                </select>
             </div>
+
+            <div class="aqnex-form-group d-none" id="salesWalletTypeSection">
+                <label class="aqnex-label">الجهة البنكية:</label>
+                <select id="salesWalletTypeSelect" class="aqnex-select">
+<option value=""></option>
+                    <option value="بنك الكريمي">بنك الكريمي</option>
+                    <option value="جيب">جيب</option>
+                    <option value="جوالي">جوالي</option>
+                    <option value="بنك آخر">بنك آخر</option>
+                </select>
+            </div>
+            <input type="hidden" name="wallet_type" id="salesWalletTypeHidden" value="">
+        </div>
+    </div>
+</div>
 
             <div class="card p-3 bg-light border-0 mb-4 no-print">
                 <div class="row align-items-center">
@@ -803,12 +945,12 @@ if ($res_curr) {
             <div id="creditLimitWarning" class="alert alert-warning d-none mb-3 text-right" dir="rtl"></div>
 
             <div class="table-responsive">
-                <table class="table-flat" id="itemsTable">
+                <table class="aqnex-grid-table" id="itemsTable">
                     <thead>
                         <tr>
-                            <th style="width: 22%;">المنتج ومسار التعقب</th>
+                            <th style="width: 25%;">اسم الصنف</th>
                             <th style="width: 8%;">الوحدة</th>
-                            <th style="width: 8%;">المخزن</th>
+                            <th style="width: 8%;">المتوفر في المخزن</th>
                             <th style="width: 8%;">الكمية</th>
                             <th style="width: 10%;">سعر البيع</th>
                             <th style="width: 10%;">المجموع</th>
@@ -819,21 +961,98 @@ if ($res_curr) {
                         </tr>
                     </thead>
                     <tbody id="itemsContainer">
+                        <?php if ($editing_invoice_id > 0 && !empty($editing_items)): ?>
+                            <?php foreach ($editing_items as $ei): ?>
+                            <?php
+                                // Fetch current stock for this product
+                                $ei_stock = 0;
+                                $ei_product_id = intval($ei['p_id'] ?? 0);  // actual column: p_id
+                                if ($ei_product_id > 0) {
+                                    $stock_res = $conn->query("SELECT quantity FROM products WHERE id = $ei_product_id LIMIT 1");
+                                    if ($stock_res && $stock_res->num_rows > 0) {
+                                        $ei_stock = floatval($stock_res->fetch_assoc()['quantity']);
+                                    }
+                                }
+                                $ei_qty        = floatval($ei['quantity'] ?? 1);
+                                $ei_price      = floatval($ei['unit_price'] ?? 0);
+                                $ei_total      = floatval($ei['total'] ?? ($ei_qty * $ei_price));
+                                $ei_paid       = floatval($ei['d'] ?? 0);          // column: d = paid
+                                $ei_discount   = floatval($ei['dis'] ?? 0);        // column: dis = discount
+                                $ei_remaining  = floatval($ei['remaining'] ?? 0);
+                                $ei_buy        = 0;  // not stored in sales_items
+                                $ei_unit_name  = htmlspecialchars($ei['unit_name'] ?? 'حبة');
+                                $ei_conv       = 1;
+                                $ei_pname      = htmlspecialchars($ei['name'] ?? '');  // column: name
+                            ?>
+                            <tr class="item-row">
+                                <td>
+                                    <div class="product-search-container">
+                                        <input type="text" class="aqnex-input product-search-input" placeholder="اكتب اسم أو باركود الصنف للبحث..." autocomplete="off" required style="height: 26px; text-align: right;" value="<?php echo $ei_pname; ?>">
+                                        <input type="hidden" name="product_id[]" class="select-product" value="<?php echo $ei_product_id; ?>">
+                                        <div class="autocomplete-dropdown d-none"></div>
+                                    </div>
+                                    <input type="hidden" name="buy_price[]" class="buy-price" value="<?php echo $ei_buy; ?>">
+                                    <input type="hidden" name="conversion_factor[]" class="conversion-factor" value="<?php echo $ei_conv; ?>">
+                                    <input type="hidden" name="unit_name[]" class="unit-name" value="<?php echo $ei_unit_name; ?>">
+                                    <input type="hidden" name="unit_id[]" class="unit-id" value="">
+                                    <input type="hidden" name="serial_ids[]" class="row-serial-ids" value="">
+                                    <input type="hidden" name="batch_id[]" class="row-batch-id" value="">
+                                    <div class="serial-sec d-none mt-2 text-right">
+                                        <small class="text-primary font-weight-bold d-block mb-1">الأرقام التسلسلية المطلوبة (IMEI):</small>
+                                        <select class="form-control form-control-sm serial-select select-multiple" multiple style="height: 60px; font-size: 0.8rem;"></select>
+                                    </div>
+                                    <div class="batch-sec d-none mt-2 text-right">
+                                        <small class="text-danger font-weight-bold d-block mb-1">دفعة الصلاحية (FEFO تلقائي):</small>
+                                        <select class="form-control form-control-sm batch-select rounded-0"></select>
+                                    </div>
+                                </td>
+                                <td>
+                                    <input type="text" class="aqnex-input unit-display-input text-center bg-light" readonly value="<?php echo $ei_unit_name; ?>">
+                                </td>
+                                <td>
+                                    <input type="text" class="aqnex-input stock-qty text-center bg-light" readonly value="<?php echo $ei_stock; ?>">
+                                </td>
+                                <td>
+                                    <input type="number" name="quantity[]" class="aqnex-input quantity-input text-center" min="1" value="<?php echo $ei_qty; ?>" required>
+                                    <span class="row-stock-warning text-danger font-weight-bold d-none" style="font-size:0.75rem; display:block; margin-top:4px; text-align:center;"></span>
+                                </td>
+                                <td>
+                                    <input type="number" step="any" name="unit_price[]" class="aqnex-input price-input text-center" required value="<?php echo $ei_price; ?>">
+                                </td>
+                                <td>
+                                    <input type="text" class="aqnex-input total-input text-center bg-light" readonly value="<?php echo number_format($ei_total, 2, '.', ''); ?>">
+                                </td>
+                                <td>
+                                    <input type="number" step="any" name="paid_amount[]" class="aqnex-input paid-input text-center" value="<?php echo $ei_paid; ?>">
+                                </td>
+                                <td>
+                                    <input type="number" step="any" name="discount_amount[]" class="aqnex-input discount-input text-center" value="<?php echo $ei_discount; ?>">
+                                </td>
+                                <td>
+                                    <input type="text" name="remaining_amount[]" class="aqnex-input remaining-input text-center bg-light" readonly value="<?php echo number_format($ei_remaining, 2, '.', ''); ?>">
+                                    <input type="hidden" class="profit-input" name="profit[]" value="0">
+                                </td>
+                                <td class="no-print text-center">
+                                    <button type="button" class="btn btn-sm btn-outline-danger p-1 remove-item-btn" style="height:24px; line-height:1;">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
                         <tr class="item-row">
                             <td>
                                 <div class="product-search-container">
-                                    <input type="text" class="form-control product-search-input rounded-0" placeholder="اكتب اسم أو باركود الصنف للبحث..." autocomplete="off" required>
+                                    <input type="text" class="aqnex-input product-search-input" placeholder="اكتب اسم أو باركود الصنف للبحث..." autocomplete="off" required style="height: 26px; text-align: right;">
                                     <input type="hidden" name="product_id[]" class="select-product" value="">
                                     <div class="autocomplete-dropdown d-none"></div>
                                 </div>
                                 <input type="hidden" name="buy_price[]" class="buy-price" value="0">
-
                                 <input type="hidden" name="conversion_factor[]" class="conversion-factor" value="1.0000">
-                                <input type="hidden" name="unit_name[]" class="unit-name" value="الوحدة الأساسية">
+                                <input type="hidden" name="unit_name[]" class="unit-name" value="حبةحبة">
                                 <input type="hidden" name="unit_id[]" class="unit-id" value="">
                                 <input type="hidden" name="serial_ids[]" class="row-serial-ids" value="">
                                 <input type="hidden" name="batch_id[]" class="row-batch-id" value="">
-
                                 <div class="serial-sec d-none mt-2 text-right">
                                     <small class="text-primary font-weight-bold d-block mb-1">الأرقام التسلسلية المطلوبة (IMEI):</small>
                                     <select class="form-control form-control-sm serial-select select-multiple" multiple style="height: 60px; font-size: 0.8rem;"></select>
@@ -844,101 +1063,95 @@ if ($res_curr) {
                                 </div>
                             </td>
                             <td>
-                                <input type="text" class="form-control unit-display-input text-center bg-light rounded-0" readonly value="الوحدة الأساسية">
+                                <input type="text" class="aqnex-input unit-display-input text-center bg-light" readonly value="حبة">
                             </td>
                             <td>
-                                <input type="text" class="form-control stock-qty text-center bg-light rounded-0" readonly value="0">
+                                <input type="text" class="aqnex-input stock-qty text-center bg-light" readonly value="0">
                             </td>
                             <td>
-                                <input type="number" name="quantity[]" class="form-control quantity-input text-center rounded-0" min="1" value="1" required>
+                                <input type="number" name="quantity[]" class="aqnex-input quantity-input text-center" min="1" value="1" required>
                                 <span class="row-stock-warning text-danger font-weight-bold d-none" style="font-size:0.75rem; display:block; margin-top:4px; text-align:center;"></span>
                             </td>
                             <td>
-                                <input type="number" step="any" name="unit_price[]" class="form-control price-input text-center rounded-0" required>
+                                <input type="number" step="any" name="unit_price[]" class="aqnex-input price-input text-center" required>
                             </td>
                             <td>
-                                <input type="text" class="form-control total-input text-center bg-light rounded-0" readonly value="0">
+                                <input type="text" class="aqnex-input total-input text-center bg-light" readonly value="0">
                             </td>
                             <td>
-                                <input type="number" step="any" name="paid_amount[]" class="form-control paid-input text-center rounded-0" value="0">
+                                <input type="number" step="any" name="paid_amount[]" class="aqnex-input paid-input text-center" value="0">
                             </td>
                             <td>
-                                <input type="number" step="any" name="discount_amount[]" class="form-control discount-input text-center rounded-0" value="0">
+                                <input type="number" step="any" name="discount_amount[]" class="aqnex-input discount-input text-center" value="0">
                             </td>
                             <td>
-                                <input type="text" name="remaining_amount[]" class="form-control remaining-input text-center bg-light rounded-0" readonly value="0">
+                                <input type="text" name="remaining_amount[]" class="aqnex-input remaining-input text-center bg-light" readonly value="0">
                                 <input type="hidden" class="profit-input" name="profit[]" value="0">
                             </td>
-                            <td class="no-print">
-                                <button type="button" class="btn-flat btn-flat-danger btn-sm py-1 px-2 remove-item-btn">
-                                    <?php echo get_icon('trash'); ?>
+                            <td class="no-print text-center">
+                                <button type="button" class="btn btn-sm btn-outline-danger p-1 remove-item-btn" style="height:24px; line-height:1;">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </td>
                         </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>
 
-            <div class="mt-3 no-print">
-                <button type="button" id="addItemBtn" class="btn-flat btn-flat-success btn-sm">
-                    <?php echo get_icon('plus', 'ml-1'); ?> إضافة صنف آخر
+            <div class="mt-2 no-print">
+                <button type="button" id="addItemBtn" class="btn btn-sm btn-outline-primary font-weight-bold" style="font-size:0.78rem;">
+                    <i class="bi bi-plus-circle ml-1"></i> إضافة صنف آخر إلى الفاتورة (F4)
                 </button>
             </div>
 
-            <hr class="my-4">
-
-            <div class="row">
-                <div class="col-lg-6 mb-3">
-                    <label class="form-label font-weight-bold text-secondary">ملاحظات الفاتورة</label>
-                    <textarea name="remark" class="form-control rounded-0" rows="3" placeholder="ملاحظات حول عملية البيع..."></textarea>
-                            <div class="mt-4 no-print text-center">
-                <button type="submit" name="btn_save" id="btnSaveSales" class="btn-flat btn-flat-primary btn-lg px-5">
-                    <?php echo get_icon('check', 'ml-1'); ?> حفظ الفاتورة وترحيلها
-                </button>
-            </div>
+            <!-- Onyx Summary Box -->
+            <div class="row mt-3">
+                <div class="col-md-7">
+                    <div class="aqnex-form-group">
+                        <label class="aqnex-label">بيان الفاتورة:</label>
+                        <input type="text" name="remark" class="aqnex-input" placeholder="ملاحظات الفاتورة وبيان العملية..." value="<?php echo htmlspecialchars($editing_invoice['remark'] ?? ''); ?>">
+                    </div>
                 </div>
-                
-                    <div class="invoice-summary text-right" dir="rtl">
-                        <table style="width:100%;">
-                            <tr>
-                                <td class="total-label py-1">إجمالي البنود (Subtotal)</td>
-                                <td class="total-value py-1 text-left font-weight-bold">
-                                    <span id="summarySubtotal">0.00</span> <span class="currency-symbol">ر.ي</span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="total-label py-1">الضريبة (VAT <?php echo floatval($global_settings['tax_percent'] ?? 0); ?>%)</td>
-                                <td class="total-value py-1 text-left font-weight-bold text-warning">
-                                    <span id="summaryTax">0.00</span> <span class="currency-symbol">ر.ي</span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="total-label py-1 font-weight-bold">صافي الفاتورة الإجمالي (Net Total)</td>
-                                <td class="total-value py-1 text-left font-weight-bold text-primary">
-                                    <span id="summaryNetTotal">0.00</span> <span class="currency-symbol">ر.ي</span>
-                                </td>
-                            </tr>
-                            <tr style="border-top: 1px solid #cbd5e1;">
-                                <td class="total-label py-1 font-weight-bold">إجمالي المدفوع (المقبوض)</td>
-                                <td class="total-value py-1">
-                                    <input type="text" id="grandPaidDisplay" name="grand_paid" class="form-control text-left font-weight-bold bg-transparent border-0 rounded-0 p-0 text-success" style="height:auto; font-size:1.1rem;" readonly value="0">
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="total-label py-1 font-weight-bold">إجمالي المتبقي (المديونية)</td>
-                                <td class="total-value py-1 text-danger font-weight-bold" style="font-size:1.1rem;">
-                                    <span id="grandRemainingDisplay">0.00</span> <span class="currency-symbol">ر.ي</span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="total-label py-1">الربح المتوقع</td>
-                                <td class="total-value py-1">
-                                    <input type="text" id="grandProfitDisplay" name="grand_profit" class="form-control text-left font-weight-bold bg-transparent border-0 rounded-0 p-0 text-info" style="height:auto;" readonly value="0">
-                                </td>
-                            </tr>
-                        </table>
+
+                <div class="col-md-5">
+                    <div class="aqnex-summary-box">
+                        <div class="aqnex-summary-item">
+                            <span class="label">إجمالي البنود:</span>
+                            <span class="value"><span id="summarySubtotal">0.00</span> <small class="currency-symbol">ر.ي</small></span>
+                        </div>
+                        <div class="aqnex-summary-item">
+                            <span class="label">الضريبة / الأعباء:</span>
+                            <span class="value text-warning"><span id="summaryTax">0.00</span> <small class="currency-symbol">ر.ي</small></span>
+                        </div>
+                        <div class="aqnex-summary-item" style="background:#eff6ff; border-color:#93c5fd;">
+                            <span class="label font-weight-bold" style="color:#1d4ed8;">الصافي الإجمالي:</span>
+                            <span class="value text-primary" style="font-size:1.1rem;"><span id="summaryNetTotal">0.00</span> <small class="currency-symbol">ر.ي</small></span>
+                        </div>
+                        <div class="aqnex-summary-item">
+                            <span class="label font-weight-bold" style="color:#15803d;">إجمالي المقبوض:</span>
+                            <span class="value text-success"><input type="text" id="grandPaidDisplay" name="grand_paid" class="border-0 bg-transparent text-left font-weight-bold text-success p-0" style="width:90px; height:auto; outline:none;" readonly value="0"> <small class="currency-symbol">ر.ي</small></span>
+                        </div>
+                        <div class="aqnex-summary-item">
+                            <span class="label font-weight-bold" style="color:#b91c1c;">إجمالي المتبقي:</span>
+                            <span class="value text-danger"><span id="grandRemainingDisplay">0.00</span> <small class="currency-symbol">ر.ي</small></span>
+                        </div>
                     </div>
-                    </div>
+                </div>
+            </div>
+
+            <!-- Onyx Pro User Audit Bar -->
+            <div class="aqnex-audit-bar no-print">
+                <div>
+                    <i class="bi bi-person-fill ml-1"></i> مدخل السجل: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong>
+                </div>
+                <div>
+                    <i class="bi bi-clock-history ml-1"></i> تاريخ الإدخال: <strong><?php echo date('Y-m-d H:i'); ?></strong>
+                </div>
+                <div>
+                    <i class="bi bi-pc-display ml-1"></i> الجهاز: <strong><?php echo gethostbyaddr($_SERVER['REMOTE_ADDR']); ?></strong>
+                </div>
+            </div>
 
                     <div class="accounting-guide">
                         <h6><i class="fa fa-book ml-2"></i>الدليل المحاسبي - القيود المالية</h6>
@@ -1046,7 +1259,7 @@ function resetRow(row) {
     row.querySelector('.product-search-input').value = '';
     row.querySelector('.buy-price').value = '0';
     row.querySelector('.conversion-factor').value = '1.0000';
-    row.querySelector('.unit-name').value = 'الوحدة الأساسية';
+    row.querySelector('.unit-name').value = 'حبة';
     row.querySelector('.unit-id').value = '';
     row.querySelector('.row-serial-ids').value = '';
     row.querySelector('.row-batch-id').value = '';
@@ -1059,7 +1272,7 @@ function resetRow(row) {
     row.querySelector('.discount-input').value = '0';
     row.querySelector('.remaining-input').value = '0.00';
     row.querySelector('.profit-input').value = '0.00';
-    row.querySelector('.unit-display-input').value = 'الوحدة الأساسية';
+    row.querySelector('.unit-display-input').value = 'حبة';
     row.querySelector('.serial-sec').classList.add('d-none');
     row.querySelector('.serial-select').innerHTML = '';
     row.querySelector('.batch-sec').classList.add('d-none');
@@ -1382,13 +1595,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // تهيئة أو استرجاع التبويبات بعد تحميل الصفحة تماماً
+    const editingInvoiceId = <?php echo intval($editing_invoice_id); ?>;
+
     setTimeout(() => {
-        const loaded = loadTabsFromLocalStorage();
-        if (!loaded) {
+        if (editingInvoiceId > 0) {
+            // وضع التعديل: لا نستعيد من localStorage حتى لا يطغى على الأصناف المحملة من PHP
+            localStorage.removeItem('aqnex_sales_tabs');
+            localStorage.removeItem('aqnex_sales_active_tab_id');
+
             const firstTabId = nextTabId++;
             tabs.push({
                 id: firstTabId,
-                name: "فاتورة عميل 1",
+                name: "تعديل فاتورة #" + editingInvoiceId,
                 build_date: document.querySelector('[name="build_date"]').value,
                 customer_name: document.querySelector('#select2').value,
                 invoice_type: document.querySelector('#invoiceTypeSelect').value,
@@ -1401,8 +1619,41 @@ document.addEventListener('DOMContentLoaded', function() {
                 items: []
             });
             activeTabId = firstTabId;
-            saveCurrentTabState(); // Capture existing items/state
+            saveCurrentTabState();
             renderTabs();
+
+            // احسب الإجماليات من الأصناف المحملة
+            document.querySelectorAll("#itemsContainer .item-row").forEach(row => {
+                updateRowCalculations(row);
+            });
+            updateGrandTotals();
+
+            // طبّق حالة نوع الفاتورة (آجل يقفل المدفوع)
+            const invType = document.querySelector('#invoiceTypeSelect');
+            if (invType) toggleSalesInvoiceType(invType.value);
+
+        } else {
+            const loaded = loadTabsFromLocalStorage();
+            if (!loaded) {
+                const firstTabId = nextTabId++;
+                tabs.push({
+                    id: firstTabId,
+                    name: "فاتورة عميل 1",
+                    build_date: document.querySelector('[name="build_date"]').value,
+                    customer_name: document.querySelector('#select2').value,
+                    invoice_type: document.querySelector('#invoiceTypeSelect').value,
+                    currency_code: document.querySelector('#currencySelect').value,
+                    exchange_rate: document.querySelector('#exchangeRateInput').value,
+                    box_id: document.querySelector('#boxSelect') ? document.querySelector('#boxSelect').value : '',
+                    payment_method: document.querySelector('#paymentMethodSelect') ? document.querySelector('#paymentMethodSelect').value : 'cash',
+                    wallet_type: document.querySelector('#salesWalletTypeSelect') ? document.querySelector('#salesWalletTypeSelect').value : '',
+                    remark: document.querySelector('[name="remark"]').value,
+                    items: []
+                });
+                activeTabId = firstTabId;
+                saveCurrentTabState(); // Capture existing items/state
+                renderTabs();
+            }
         }
     }, 150);
 
@@ -1439,22 +1690,31 @@ function toggleSalesInvoiceType(val) {
     const paymentSection  = document.getElementById('salesPaymentMethodSection');
 
     if (val === 'credit') {
-        boxSection.classList.add('d-none');
-        paymentSection.classList.add('d-none');
+        if (boxSection) boxSection.classList.add('d-none');
+        if (paymentSection) paymentSection.classList.add('d-none');
         document.querySelectorAll('.paid-input').forEach(inp => {
             inp.value = '0';
+            inp.setAttribute('readonly', 'readonly');
             inp.setAttribute('data-manually-edited', 'true');
-            inp.dispatchEvent(new Event('input', { bubbles: true }));
         });
     } else {
-        boxSection.classList.remove('d-none');
-        paymentSection.classList.remove('d-none');
+        if (boxSection) boxSection.classList.remove('d-none');
+        if (paymentSection) paymentSection.classList.remove('d-none');
+        document.querySelectorAll('.paid-input').forEach(inp => {
+            inp.removeAttribute('readonly');
+            inp.removeAttribute('data-manually-edited');
+        });
         if (val === 'cash') {
-            boxSection.classList.remove('d-none');
+            if (boxSection) boxSection.classList.remove('d-none');
         } else {
-            boxSection.classList.add('d-none');
+            if (boxSection) boxSection.classList.add('d-none');
         }
     }
+
+    document.querySelectorAll(".item-row").forEach(function(row) {
+        updateRowCalculations(row);
+    });
+    updateGrandTotals();
     checkRealTimeWarnings();
 }
 
@@ -1497,19 +1757,16 @@ document.addEventListener("DOMContentLoaded", function() {
         const modalEl = document.getElementById('quickProductSearchModal');
         if (!modalEl) return;
         
-        // استخدام jQuery للإغلاق إن وجد
         if (typeof $ !== 'undefined' && typeof $.fn.modal === 'function') {
             $(modalEl).modal('hide');
         }
         
-        // إزالة الكلاسات والأنماط يدوياً لضمان الإغلاق الكامل
         modalEl.classList.remove('show');
         modalEl.setAttribute('aria-hidden', 'true');
         modalEl.style.display = 'none';
         document.body.classList.remove('modal-open');
         document.body.style.paddingRight = '';
         
-        // إزالة الخلفية المعتمة
         const backdrop = document.querySelector('.modal-backdrop');
         if (backdrop) {
             backdrop.remove();
@@ -1517,6 +1774,9 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function updateRowCalculations(row) {
+        const invTypeSelect = document.getElementById('invoiceTypeSelect');
+        const invType = invTypeSelect ? invTypeSelect.value : 'cash';
+
         const qty = parseInt(row.querySelector(".quantity-input").value) || 0;
         const price = parseFloat(row.querySelector(".price-input").value) || 0;
 
@@ -1524,15 +1784,22 @@ document.addEventListener("DOMContentLoaded", function() {
         row.querySelector(".total-input").value = lineTotal.toFixed(2);
 
         const paidInput = row.querySelector(".paid-input");
-        if (!paidInput.hasAttribute("data-manually-edited")) {
-            paidInput.value = lineTotal.toFixed(2);
+
+        if (invType === 'credit') {
+            paidInput.value = '0';
+            paidInput.setAttribute('readonly', 'readonly');
+        } else {
+            paidInput.removeAttribute('readonly');
+            if (!paidInput.hasAttribute("data-manually-edited")) {
+                paidInput.value = lineTotal.toFixed(2);
+            }
         }
 
-        const paid = parseFloat(paidInput.value) || 0;
+        const paid = (invType === 'credit') ? 0 : (parseFloat(paidInput.value) || 0);
         const disc = parseFloat(row.querySelector(".discount-input").value) || 0;
         const buyPrice = parseFloat(row.querySelector(".buy-price").value) || 0;
 
-        const remaining = Math.max(0, lineTotal - paid - disc);
+        const remaining = (invType === 'credit') ? Math.max(0, lineTotal - disc) : Math.max(0, lineTotal - paid - disc);
         row.querySelector(".remaining-input").value = remaining.toFixed(2);
 
         const profit = lineTotal - (buyPrice * qty) - disc;
@@ -1543,6 +1810,9 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function updateGrandTotals() {
+        const invTypeSelect = document.getElementById('invoiceTypeSelect');
+        const invType = invTypeSelect ? invTypeSelect.value : 'cash';
+
         let subtotal = 0;
         let totalPaid = 0;
         let totalDiscount = 0;
@@ -1552,10 +1822,17 @@ document.addEventListener("DOMContentLoaded", function() {
         document.querySelectorAll(".item-row").forEach(function(row) {
             const qty = parseInt(row.querySelector(".quantity-input").value) || 0;
             const price = parseFloat(row.querySelector(".price-input").value) || 0;
-            const paid = parseFloat(row.querySelector(".paid-input").value) || 0;
             const disc = parseFloat(row.querySelector(".discount-input").value) || 0;
-            const rem = parseFloat(row.querySelector(".remaining-input").value) || 0;
             const profit = parseFloat(row.querySelector(".profit-input").value) || 0;
+
+            let paid = parseFloat(row.querySelector(".paid-input").value) || 0;
+            if (invType === 'credit') {
+                paid = 0;
+                row.querySelector(".paid-input").value = '0';
+                row.querySelector(".paid-input").setAttribute('readonly', 'readonly');
+            }
+
+            const rem = (invType === 'credit') ? Math.max(0, (qty * price) - disc) : parseFloat(row.querySelector(".remaining-input").value) || 0;
 
             subtotal += (qty * price);
             totalPaid += paid;
@@ -1567,6 +1844,11 @@ document.addEventListener("DOMContentLoaded", function() {
         const taxVal = (subtotal * taxPercent) / 100;
         const netTotal = subtotal + taxVal - totalDiscount;
 
+        if (invType === 'credit') {
+            totalPaid = 0;
+            totalRemaining = netTotal;
+        }
+
         const subtotalEl = document.getElementById("summarySubtotal");
         if (subtotalEl) subtotalEl.textContent = subtotal.toFixed(2);
         
@@ -1576,13 +1858,22 @@ document.addEventListener("DOMContentLoaded", function() {
         const netTotalEl = document.getElementById("summaryNetTotal");
         if (netTotalEl) netTotalEl.textContent = netTotal.toFixed(2);
 
-        document.getElementById("grandPaidDisplay").value = totalPaid.toFixed(2);
-        document.getElementById("grandRemainingDisplay").textContent = totalRemaining.toFixed(2);
-        document.getElementById("grandProfitDisplay").value = totalProfit.toFixed(2);
+        const grandPaidEl = document.getElementById("grandPaidDisplay");
+        if (grandPaidEl) grandPaidEl.value = totalPaid.toFixed(2);
+
+        const grandRemEl = document.getElementById("grandRemainingDisplay");
+        if (grandRemEl) grandRemEl.textContent = totalRemaining.toFixed(2);
+
+        const grandProfEl = document.getElementById("grandProfitDisplay");
+        if (grandProfEl) grandProfEl.value = totalProfit.toFixed(2);
+
         checkRealTimeWarnings();
     }
 
     function updateAccountingGuide() {
+        const invTypeSelect = document.getElementById('invoiceTypeSelect');
+        const invType = invTypeSelect ? invTypeSelect.value : 'cash';
+
         let totalPaid = 0;
         let totalRemaining = 0;
         let totalDiscount = 0;
@@ -1593,7 +1884,7 @@ document.addEventListener("DOMContentLoaded", function() {
             if (!productId) return;
 
             const qty = parseInt(row.querySelector(".quantity-input").value) || 0;
-            const paid = parseFloat(row.querySelector(".paid-input").value) || 0;
+            const paid = (invType === 'credit') ? 0 : (parseFloat(row.querySelector(".paid-input").value) || 0);
             const remaining = parseFloat(row.querySelector(".remaining-input").value) || 0;
             const discount = parseFloat(row.querySelector(".discount-input").value) || 0;
             const buyPrice = parseFloat(row.querySelector(".buy-price").value) || 0;
@@ -1673,8 +1964,8 @@ document.addEventListener("DOMContentLoaded", function() {
         newRow.querySelector(".profit-input").value = "0";
 
         newRow.querySelector(".conversion-factor").value = "1.0000";
-        newRow.querySelector(".unit-name").value = "الوحدة الأساسية";
-        newRow.querySelector(".unit-display-input").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-name").value = "حبة";
+        newRow.querySelector(".unit-display-input").value = "حبة";
         newRow.querySelector(".unit-id").value = "";
         newRow.querySelector(".row-serial-ids").value = "";
         newRow.querySelector(".row-batch-id").value = "";
@@ -1820,11 +2111,22 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     window.openProductModalAndFocusSearch = openProductModalAndFocusSearch;
 
-    // عند التركيز على حقل البحث عن المنتج، يتم تحديد الصف النشط
+    // عند التركيز أو النقر على حقل البحث عن المنتج، يتم حذف النص فوراً لسهولة البحث وإظهار القائمة الكاملة
+    itemsContainer.addEventListener("click", function(e) {
+        if (e.target.matches(".product-search-input")) {
+            const row = e.target.closest(".item-row");
+            window.activeSearchRow = row;
+            e.target.value = "";
+            showProductAutocompleteOptions(row, "");
+        }
+    });
+
     itemsContainer.addEventListener("focusin", function(e) {
         if (e.target.matches(".product-search-input")) {
             const row = e.target.closest(".item-row");
             window.activeSearchRow = row;
+            e.target.value = "";
+            showProductAutocompleteOptions(row, "");
         }
     });
 
@@ -1832,43 +2134,42 @@ document.addEventListener("DOMContentLoaded", function() {
     itemsContainer.addEventListener("input", function(e) {
         if (e.target.matches(".product-search-input")) {
             const row = e.target.closest(".item-row");
-            const dropdown = row.querySelector(".autocomplete-dropdown");
             const q = e.target.value.trim();
-
-            if (q.length < 1) {
-                dropdown.classList.add("d-none");
-                dropdown.innerHTML = "";
-                return;
-            }
-
-            fetch(`../api/search_products.php?q=${encodeURIComponent(q)}`)
-                .then(res => res.json())
-                .then(data => {
-                    let html = "";
-                    if (data && data.length > 0) {
-                        data.forEach(p => {
-                            const pJson = escapeHtml(JSON.stringify(p));
-                            html += `
-                                <div class="autocomplete-item text-right" data-product="${pJson}" style="padding: 6px 12px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
-                                    <div class="font-weight-bold" style="font-size: 0.85rem;">${escapeHtml(p.name)}</div>
-                                    <div style="font-size: 0.72rem; color: #64748b;">
-                                        باركود: ${escapeHtml(p.barcode || '—')} | المخزون: ${p.quantity} | السعر: ${p.sale_price} ر.ي
-                                    </div>
-                                </div>
-                            `;
-                        });
-                        dropdown.innerHTML = html;
-                        dropdown.classList.remove("d-none");
-                    } else {
-                        dropdown.innerHTML = '<div style="padding: 8px; color: #94a3b8; font-size: 0.8rem; text-align: center;">لا توجد نتائج</div>';
-                        dropdown.classList.remove("d-none");
-                    }
-                })
-                .catch(err => {
-                    console.error("Autocomplete error:", err);
-                });
+            showProductAutocompleteOptions(row, q);
         }
     });
+
+    function showProductAutocompleteOptions(row, q) {
+        const dropdown = row.querySelector(".autocomplete-dropdown");
+        if (!dropdown) return;
+
+        fetch(`../api/search_products.php?q=${encodeURIComponent(q)}`)
+            .then(res => res.json())
+            .then(data => {
+                let html = "";
+                if (data && data.length > 0) {
+                    data.forEach(p => {
+                        const pJson = escapeHtml(JSON.stringify(p));
+                        html += `
+                            <div class="autocomplete-item text-right" data-product="${pJson}" style="padding: 4px 8px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
+                                <div class="font-weight-bold" style="font-size: 0.75rem;">${escapeHtml(p.name)}</div>
+                                <div style="font-size: 0.70rem; color: #64748b;">
+                                    باركود: ${escapeHtml(p.barcode || '—')} | المخزون: ${p.quantity} | السعر: ${p.sale_price} ر.ي
+                                </div>
+                            </div>
+                        `;
+                    });
+                    dropdown.innerHTML = html;
+                    dropdown.classList.remove("d-none");
+                } else {
+                    dropdown.innerHTML = '<div style="padding: 6px; color: #94a3b8; font-size: 0.73rem; text-align: center;">لا توجد نتائج</div>';
+                    dropdown.classList.remove("d-none");
+                }
+            })
+            .catch(err => {
+                console.error("Autocomplete error:", err);
+            });
+    }
 
     function selectProductForRow(row, product) {
         const container = row.querySelector(".product-search-container");
@@ -1883,8 +2184,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
         const conversionFactor = parseFloat(product.conversion_factor) || 1.0;
         row.querySelector(".conversion-factor").value = conversionFactor;
-        row.querySelector(".unit-name").value = product.unit_name || "الوحدة الأساسية";
-        row.querySelector(".unit-display-input").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-name").value = product.unit_name || "حبة";
+        row.querySelector(".unit-display-input").value = product.unit_name || "حبة";
         row.querySelector(".unit-id").value = product.unit_id || "";
 
         const rate = parseFloat(exchangeRateInput.value) || 1.0;
@@ -1896,7 +2197,17 @@ document.addEventListener("DOMContentLoaded", function() {
 
         const salePriceConverted = (product.sale_price / rate).toFixed(2);
         row.querySelector(".price-input").value = salePriceConverted;
-        row.querySelector(".paid-input").value = salePriceConverted;
+
+        // تطبيق قاعدة الفاتورة الآجلة: إذا كانت الفاتورة آجلة يتم إيقاف المدفوع وجعله 0
+        const invType = document.getElementById('invoiceTypeSelect') ? document.getElementById('invoiceTypeSelect').value : 'cash';
+        if (invType === 'credit') {
+            row.querySelector(".paid-input").value = 0;
+            row.querySelector(".paid-input").setAttribute('readonly', 'readonly');
+        } else {
+            row.querySelector(".paid-input").value = salePriceConverted;
+            row.querySelector(".paid-input").removeAttribute('readonly');
+        }
+
         row.querySelector(".paid-input").removeAttribute("data-manually-edited");
         row.querySelector(".quantity-input").value = 1;
         row.querySelector(".discount-input").value = 0;
@@ -1988,13 +2299,27 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     // معالجة التنقل بأزرار الانتر بين الحقول داخل الصفوف
-    // الترتيب: الكمية -> المدفوع -> الخصم -> صف جديد
+    // الترتيب: الصنف -> الكمية -> السعر -> المدفوع -> الخصم -> الباقي -> صف جديد وتلقائي
     itemsContainer.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
             const row = e.target.closest(".item-row");
             if (!row) return;
 
-            if (e.target.classList.contains("quantity-input")) {
+            if (e.target.classList.contains("product-search-input")) {
+                e.preventDefault();
+                const qtyInput = row.querySelector(".quantity-input");
+                if (qtyInput) {
+                    qtyInput.focus();
+                    qtyInput.select();
+                }
+            } else if (e.target.classList.contains("quantity-input")) {
+                e.preventDefault();
+                const priceInput = row.querySelector(".price-input");
+                if (priceInput) {
+                    priceInput.focus();
+                    priceInput.select();
+                }
+            } else if (e.target.classList.contains("price-input")) {
                 e.preventDefault();
                 const paidInput = row.querySelector(".paid-input");
                 if (paidInput) {
@@ -2008,14 +2333,13 @@ document.addEventListener("DOMContentLoaded", function() {
                     discountInput.focus();
                     discountInput.select();
                 }
-            } else if (e.target.classList.contains("discount-input")) {
+            } else if (e.target.classList.contains("discount-input") || e.target.classList.contains("remaining-input")) {
                 e.preventDefault();
                 const nextRow = row.nextElementSibling;
                 if (nextRow && nextRow.classList.contains("item-row")) {
                     const nextSearch = nextRow.querySelector(".product-search-input");
                     if (nextSearch) {
                         nextSearch.focus();
-                        // فتح المودال تلقائياً عند الانتقال لصف جديد
                         window.activeSearchRow = nextRow;
                         openProductModalAndFocusSearch('');
                     }
@@ -2028,6 +2352,7 @@ document.addEventListener("DOMContentLoaded", function() {
                             const lastSearch = lastRow.querySelector(".product-search-input");
                             if (lastSearch) {
                                 window.activeSearchRow = lastRow;
+                                lastSearch.focus();
                                 openProductModalAndFocusSearch('');
                             }
                         }
@@ -2687,14 +3012,359 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 </script>
 
+<!-- Modal: البحث عن فواتير مبيعات سابقة -->
+<div class="modal fade" id="searchInvoiceModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content" style="border-radius: 4px; border: 1px solid #94a3b8;">
+            <div class="modal-header" style="background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%); padding: 8px 12px;">
+                <h6 class="modal-title font-weight-bold" style="color: #0f172a; font-size: 0.85rem;">
+                    <i class="bi bi-search text-primary ml-1"></i> البحث عن فواتير مبيعات سابقة
+                </h6>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body p-3">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <input type="text" id="searchInvoiceQuery" class="aqnex-input" placeholder="أدخل رقم الفاتورة أو اسم العميل للبحث..." onkeyup="filterPastInvoicesList()">
+                    </div>
+                    <div class="col-md-4">
+                        <input type="date" id="searchInvoiceDate" class="aqnex-input" onchange="filterPastInvoicesList()">
+                    </div>
+                    <div class="col-md-2">
+                        <button type="button" class="btn btn-sm btn-primary btn-block font-weight-bold" onclick="filterPastInvoicesList()" style="height: 24px; padding: 0 6px;">
+                            <i class="bi bi-search ml-1"></i> بحث
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive" style="max-height: 320px; overflow-y: auto;">
+                    <table class="aqnex-grid-table">
+                        <thead>
+                            <tr>
+                                <th>رقم الفاتورة</th>
+                                <th>تاريخ الفاتورة</th>
+                                <th>اسم العميل</th>
+                                <th>نوع الفاتورة</th>
+                                <th>الصافي الإجمالي</th>
+                                <th>إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pastInvoicesTableBody">
+                            <?php
+                            $res_past = $conn->query("SELECT id, build_date, cust_name, invoice_type, total FROM sales WHERE delete_status = 0 ORDER BY id DESC LIMIT 50");
+                            if ($res_past && $res_past->num_rows > 0):
+                                $first = true;
+                                while($inv = $res_past->fetch_assoc()):
+                                    $cls = $first ? 'past-inv-row table-primary font-weight-bold' : 'past-inv-row';
+                                    $first = false;
+                            ?>
+                            <tr class="<?php echo $cls; ?>" data-id="<?php echo $inv['id']; ?>" data-cust="<?php echo htmlspecialchars($inv['cust_name']); ?>" data-date="<?php echo $inv['build_date']; ?>" style="cursor:pointer;" onclick="selectPastInvoice(<?php echo $inv['id']; ?>)">
+                                <td><strong>#<?php echo $inv['id']; ?></strong></td>
+                                <td><?php echo $inv['build_date']; ?></td>
+                                <td><?php echo htmlspecialchars($inv['cust_name']); ?></td>
+                                <td><span class="badge badge-info"><?php echo ($inv['invoice_type'] === 'cash' || empty($inv['invoice_type'])) ? 'نقد' : 'آجل'; ?></span></td>
+                                <td class="font-weight-bold text-primary"><?php echo number_format($inv['total'], 2); ?> ر.ي</td>
+                                <td>
+                                    <button type="button" class="btn btn-xs btn-primary py-0 px-2" onclick="selectPastInvoice(<?php echo $inv['id']; ?>)">
+                                        <i class="bi bi-pencil-square ml-1"></i> فتح / تعديل
+                                    </button>
+                                    <button type="button" class="btn btn-xs btn-outline-danger py-0 px-2 ml-1" onclick="deletePastInvoice(<?php echo $inv['id']; ?>, event)" title="حذف الفاتورة نهائياً">
+                                        <i class="bi bi-trash-fill"></i> حذف
+                                    </button>
+                                </td>
+                            </tr>
+                            <?php endwhile; else: ?>
+                            <tr>
+                                <td colspan="6" class="text-muted py-3">لا توجد فواتير مبيعات مسجلة حالياً.</td>
+                            </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: عرض القيود المحاسبية الآلية للفاتورة -->
+<div class="modal fade" id="viewJournalModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content" style="border-radius: 4px; border: 1px solid #94a3b8;">
+            <div class="modal-header" style="background: linear-gradient(180deg, #f3e8ff 0%, #e9d5ff 100%); padding: 8px 12px;">
+                <h6 class="modal-title font-weight-bold" style="color: #6b21a8; font-size: 0.85rem;">
+                    <i class="bi bi-journal-bookmark-fill ml-1"></i> القيود المحاسبية الآلية للفاتورة (Double-Entry Journal)
+                </h6>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body p-3">
+                <div class="alert alert-info rounded-0 p-2 mb-3" style="font-size: 0.73rem;">
+                    <i class="bi bi-info-circle ml-1"></i> القيود المحاسبية المتوازنة الناتجة عن عملية البيع الحالية:
+                </div>
+
+                <div class="table-responsive">
+                    <table class="aqnex-grid-table">
+                        <thead>
+                            <tr>
+                                <th>رقم الحساب</th>
+                                <th>اسم الحساب</th>
+                                <th>مدين (Debit)</th>
+                                <th>دائن (Credit)</th>
+                                <th>البيان / الشرح</th>
+                            </tr>
+                        </thead>
+                        <tbody id="journalEntriesTableBody">
+                            <!-- Populated via JS -->
+                        </tbody>
+                        <tfoot style="background: #f1f5f9; font-weight: bold;">
+                            <tr>
+                                <td colspan="2" class="text-right">الإجمالي المتوازن:</td>
+                                <td id="journalTotalDebit" class="text-success">0.00</td>
+                                <td id="journalTotalCredit" class="text-danger">0.00</td>
+                                <td>-</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedPastInvoiceIndex = -1;
+
+// فتح مودل البحث عن فواتير سابقة
+function openSearchInvoiceModal(mode) {
+    $('#searchInvoiceModal').modal('show');
+    selectedPastInvoiceIndex = -1;
+    setTimeout(() => {
+        const inp = document.getElementById('searchInvoiceQuery');
+        if (inp) {
+            inp.focus();
+            inp.select();
+        }
+    }, 250);
+}
+
+function deletePastInvoice(id, e) {
+    if (e) e.stopPropagation();
+    if (confirm(`تأكيد الحذف النهائي:\n\nهل أنت متأكد من رغبتك في حذف فاتورة المبيعات رقم #${id}؟\nسيتم إلغاء تأثير الكميات من المخزون وتأثير رصيد العميل والصندوق والقيود المحاسبية نهائياً، ولن يمكن التراجع عن هذا الإجراء.`)) {
+        window.location.href = 'delete.php?id=' + id;
+    }
+}
+
+// التنقل بالأسهم واختيار الفاتورة بزر الانتر والحذف بزر ديليت داخل الموديل
+document.addEventListener('keydown', function(e) {
+    const modal = document.getElementById('searchInvoiceModal');
+    if (modal && (modal.classList.contains('show') || $(modal).is(':visible'))) {
+        const rows = Array.from(document.querySelectorAll('.past-inv-row')).filter(r => r.style.display !== 'none');
+        if (rows.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            selectedPastInvoiceIndex = (selectedPastInvoiceIndex + 1) % rows.length;
+            highlightPastInvoiceRow(rows, selectedPastInvoiceIndex);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            selectedPastInvoiceIndex = (selectedPastInvoiceIndex - 1 + rows.length) % rows.length;
+            highlightPastInvoiceRow(rows, selectedPastInvoiceIndex);
+        } else if (e.key === 'Enter' && selectedPastInvoiceIndex >= 0 && selectedPastInvoiceIndex < rows.length) {
+            e.preventDefault();
+            const selectedRow = rows[selectedPastInvoiceIndex];
+            const invId = selectedRow.getAttribute('data-id');
+            if (invId) selectPastInvoice(invId);
+        } else if (e.key === 'Delete' && selectedPastInvoiceIndex >= 0 && selectedPastInvoiceIndex < rows.length) {
+            e.preventDefault();
+            const selectedRow = rows[selectedPastInvoiceIndex];
+            const invId = selectedRow.getAttribute('data-id');
+            if (invId) deletePastInvoice(invId);
+        }
+    }
+});
+
+function highlightPastInvoiceRow(rows, index) {
+    rows.forEach((r, idx) => {
+        if (idx === index) {
+            r.style.backgroundColor = '#dbeafe';
+            r.style.fontWeight = 'bold';
+            r.scrollIntoView({ block: 'nearest' });
+        } else {
+            r.style.backgroundColor = '';
+            r.style.fontWeight = '';
+        }
+    });
+}
+
+// تصفية الفواتير في المودل
+function filterPastInvoicesList() {
+    const q = (document.getElementById('searchInvoiceQuery').value || '').toLowerCase();
+    const d = document.getElementById('searchInvoiceDate').value;
+    selectedPastInvoiceIndex = -1;
+
+    document.querySelectorAll('.past-inv-row').forEach(row => {
+        const id = row.getAttribute('data-id').toLowerCase();
+        const cust = row.getAttribute('data-cust').toLowerCase();
+        const date = row.getAttribute('data-date');
+
+        let match = (id.includes(q) || cust.includes(q));
+        if (d && date !== d) match = false;
+
+        row.style.display = match ? '' : 'none';
+        row.style.backgroundColor = '';
+    });
+}
+
+
+// اختيار فاتورة من المودل والتوجيه لتعديلها في نفس الصفحة
+function selectPastInvoice(invoiceId) {
+    window.location.href = 'create.php?id=' + invoiceId;
+}
+
+// فتح مودل القيود المحاسبية
+function openJournalModal() {
+    const netTotal = parseFloat(document.getElementById('summaryNetTotal').innerText) || 0;
+    const taxTotal = parseFloat(document.getElementById('summaryTax').innerText) || 0;
+    const subTotal = parseFloat(document.getElementById('summarySubtotal').innerText) || 0;
+    const paidAmount = parseFloat(document.getElementById('grandPaidDisplay').value) || 0;
+    const invoiceType = document.getElementById('invoiceTypeSelect').value;
+
+    const tbody = document.getElementById('journalEntriesTableBody');
+    tbody.innerHTML = '';
+
+    if (netTotal <= 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-muted py-3">قم بإضافة أصناف أولاً لعرض القيود المحاسبية المتوقعة.</td></tr>';
+        document.getElementById('journalTotalDebit').innerText = '0.00';
+        document.getElementById('journalTotalCredit').innerText = '0.00';
+        $('#viewJournalModal').modal('show');
+        return;
+    }
+
+    let rowsHtml = '';
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    // 1. حساب المدين (الصندوق أو العميل)
+    if (invoiceType === 'cash') {
+        rowsHtml += `<tr>
+            <td><code>110101</code></td>
+            <td class="font-weight-bold text-right">حساب الخزينة / الصندوق الرئيسي</td>
+            <td class="text-success font-weight-bold">${paidAmount.toFixed(2)}</td>
+            <td>0.00</td>
+            <td class="text-right">إثبات المقبوضات النقدية مبيعات</td>
+        </tr>`;
+        totalDebit += paidAmount;
+
+        if (netTotal - paidAmount > 0.01) {
+            const rem = netTotal - paidAmount;
+            rowsHtml += `<tr>
+                <td><code>110201</code></td>
+                <td class="font-weight-bold text-right">حساب الذمم والعملاء</td>
+                <td class="text-success font-weight-bold">${rem.toFixed(2)}</td>
+                <td>0.00</td>
+                <td class="text-right">إثبات الجزء المتبقي آجل على العميل</td>
+            </tr>`;
+            totalDebit += rem;
+        }
+    } else {
+        rowsHtml += `<tr>
+            <td><code>110201</code></td>
+            <td class="font-weight-bold text-right">حساب العملاء والذمم المدينة</td>
+            <td class="text-success font-weight-bold">${netTotal.toFixed(2)}</td>
+            <td>0.00</td>
+            <td class="text-right">إثبات فاتورة بيع آجل على العميل</td>
+        </tr>`;
+        totalDebit += netTotal;
+    }
+
+    // 2. حساب الدائن (إيراد المبيعات)
+    rowsHtml += `<tr>
+        <td><code>410101</code></td>
+        <td class="font-weight-bold text-right">حساب إيرادات المبيعات</td>
+        <td>0.00</td>
+        <td class="text-danger font-weight-bold">${subTotal.toFixed(2)}</td>
+        <td class="text-right">إثبات صافي مبيعات البضاعة</td>
+    </tr>`;
+    totalCredit += subTotal;
+
+    // 3. حساب الضريبة إذا وجدت
+    if (taxTotal > 0) {
+        rowsHtml += `<tr>
+            <td><code>210301</code></td>
+            <td class="font-weight-bold text-right">حساب ضريبة المبيعات المستحقة</td>
+            <td>0.00</td>
+            <td class="text-danger font-weight-bold">${taxTotal.toFixed(2)}</td>
+            <td class="text-right">إثبات قيمة الضريبة المضافة</td>
+        </tr>`;
+        totalCredit += taxTotal;
+    }
+
+    tbody.innerHTML = rowsHtml;
+    document.getElementById('journalTotalDebit').innerText = totalDebit.toFixed(2) + ' ر.ي';
+    document.getElementById('journalTotalCredit').innerText = totalCredit.toFixed(2) + ' ر.ي';
+
+    $('#viewJournalModal').modal('show');
+}
+
+// تصفية الفاتورة وتفريغ كافة البيانات
+function resetSalesForm() {
+    const itemsContainer = document.getElementById('itemsContainer');
+    if (itemsContainer) {
+        const rows = itemsContainer.querySelectorAll('.item-row');
+        rows.forEach((r, idx) => {
+            if (idx > 0) r.remove();
+            else {
+                r.querySelector('.product-search-input').value = '';
+                r.querySelector('.select-product').value = '';
+                r.querySelector('.quantity-input').value = '1';
+                r.querySelector('.price-input').value = '0';
+                r.querySelector('.total-input').value = '0';
+                r.querySelector('.paid-input').value = '0';
+                r.querySelector('.discount-input').value = '0';
+                r.querySelector('.remaining-input').value = '0';
+            }
+        });
+    }
+
+    document.getElementById('summarySubtotal').innerText = '0.00';
+    document.getElementById('summaryTax').innerText = '0.00';
+    document.getElementById('summaryNetTotal').innerText = '0.00';
+    document.getElementById('grandPaidDisplay').value = '0';
+    document.getElementById('grandRemainingDisplay').innerText = '0.00';
+
+    if (typeof showSystemAlert === 'function') {
+        showSystemAlert("تم تصفية الفاتورة", "تم تصفية وإعادة تعيين بيانات الفاتورة بنجاح.", "info");
+    }
+}
+
+// تحسين تجربة Autocomplete On Focus
+document.addEventListener('focusin', function(e) {
+    if (e.target && e.target.classList.contains('product-search-input')) {
+        e.target.value = "";
+    }
+});
+
+// تحسين تجربة Autocomplete On Focus
+document.addEventListener('focusin', function(e) {
+    if (e.target && e.target.classList.contains('aqnex-form-group')) {
+        e.target.value = "";
+    }
+});
+</script>
+
 <!-- F-Keys Shortcuts Script -->
 <script>
 document.addEventListener('keydown', function(e) {
     if (e.key === 'F2') {
         e.preventDefault();
-        if (typeof openNewSalesTab === 'function') {
-            openNewSalesTab();
-        }
+        window.open('create.php', '_blank');
+    }
+    if (e.key === 'F3') {
+        e.preventDefault();
+        openSearchInvoiceModal('view');
     }
     if (e.key === 'F4') {
         e.preventDefault();
@@ -2702,40 +3372,19 @@ document.addEventListener('keydown', function(e) {
             openProductModalAndFocusSearch('');
         }
     }
+    if (e.key === 'F6') {
+        e.preventDefault();
+        openSearchInvoiceModal('edit');
+    }
     if (e.key === 'F8') {
         e.preventDefault();
-        const activeInput = document.activeElement;
-        const row = activeInput ? activeInput.closest('.item-row') : null;
-        if (row) {
-            const totalVal = parseFloat(row.querySelector('.total-input').value) || 0;
-            const paidInput = row.querySelector('.paid-input');
-            const currentPaid = parseFloat(paidInput.value) || 0;
-            if (Math.abs(currentPaid - totalVal) < 0.01) {
-                paidInput.value = "0.00";
-            } else {
-                paidInput.value = totalVal.toFixed(2);
-            }
-            paidInput.setAttribute("data-manually-edited", "true");
-            const event = new Event('input', { bubbles: true });
-            paidInput.dispatchEvent(event);
-        } else {
-            let allPaid = true;
-            document.querySelectorAll('.item-row').forEach(r => {
-                const tot = parseFloat(r.querySelector('.total-input').value) || 0;
-                const pd = parseFloat(r.querySelector('.paid-input').value) || 0;
-                if (Math.abs(pd - tot) > 0.01) allPaid = false;
-            });
-            document.querySelectorAll('.item-row').forEach(r => {
-                const tot = parseFloat(r.querySelector('.total-input').value) || 0;
-                const paidInput = r.querySelector('.paid-input');
-                paidInput.value = allPaid ? "0.00" : tot.toFixed(2);
-                paidInput.setAttribute("data-manually-edited", "true");
-                const event = new Event('input', { bubbles: true });
-                paidInput.dispatchEvent(event);
-            });
-        }
+        openJournalModal();
     }
-    if (e.key === 'F10') {
+    if (e.key === 'F9') {
+        e.preventDefault();
+        window.print();
+    }
+    if (e.key === 'F10' || (e.ctrlKey && e.key.toLowerCase() === 's')) {
         e.preventDefault();
         const form = document.getElementById('salesForm');
         if (form) {

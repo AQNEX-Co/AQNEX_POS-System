@@ -4,13 +4,12 @@ $module = 'suppliers';
 require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'inventory']);
-// جلب جميع الموردين الذين لم يتم حذفهم (d_s = 0) مع رصيدهم الفعلي في اليومية
-$sql = "SELECT s.*, 
-          (SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE credit_entity_type = 'supplier' AND credit_entity_id = s.supp_id) -
-          (SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE debit_entity_type = 'supplier' AND debit_entity_id = s.supp_id) AS real_balance
-        FROM suppliers s 
-        WHERE s.d_s='0' 
-        ORDER BY s.supp_id DESC";
+
+// جلب البيانات مباشرة من أعمدة الرصيد في جدول الموردين (المصدر الموثوق)
+$sql = "SELECT supp_id, supp_name, phone, buy_date, supp_daain, supp_madeen 
+        FROM suppliers 
+        WHERE d_s = '0' 
+        ORDER BY supp_id DESC";
 $result = $conn->query($sql);
 ?>
 <title>إدارة الموردين</title>
@@ -51,8 +50,8 @@ $result = $conn->query($sql);
                 <thead>
                     <tr>
                         <th>اسم المورد</th>
-                        <th>دائن \ له</th>
-                        <th>مدين \ عليه</th>
+                        <th>دائن \ له علينا</th>
+                        <th>مدين \ له لدينا</th>
                         <th>رقم الجوال</th>
                         <th>تاريخ الإضافة</th>
                         <th class="no-print">الإجراءات</th>
@@ -60,11 +59,16 @@ $result = $conn->query($sql);
                 </thead>
                 <tbody>
                     <?php if ($result && $result->num_rows > 0): ?>
-                        <?php while ($row = $result->fetch_assoc()): ?>
+                        <?php while ($row = $result->fetch_assoc()): 
+                            // قراءة الرصيد مباشرة من الأعمدة المحدثة
+                            $daain = floatval($row['supp_daain'] ?? 0);
+                            $madeen = floatval($row['supp_madeen'] ?? 0);
+                            $real_balance = $daain - $madeen;
+                        ?>
                             <tr>
                                 <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($row['supp_name']); ?></td>
-                                <td class="text-success font-weight-bold"><?php echo number_format($row['real_balance'] > 0 ? $row['real_balance'] : 0, 2); ?></td>
-                                <td class="text-danger font-weight-bold"><?php echo number_format($row['real_balance'] < 0 ? abs($row['real_balance']) : 0, 2); ?></td>
+                                <td class="text-success font-weight-bold"><?php echo number_format($real_balance > 0 ? $real_balance : 0, 2); ?></td>
+                                <td class="text-danger font-weight-bold"><?php echo number_format($real_balance < 0 ? abs($real_balance) : 0, 2); ?></td>
                                 <td><?php echo htmlspecialchars($row['phone']); ?></td>
                                 <td><?php echo htmlspecialchars($row['buy_date']); ?></td>
                                 <td class="no-print">
@@ -79,7 +83,7 @@ $result = $conn->query($sql);
                                     </a>
                                     <?php if (!empty($row['phone'])): ?>
                                         <a href="https://web.whatsapp.com/send?phone=967<?php echo preg_replace('/\D/', '', $row['phone']); ?>&text&type=phone_number&app_absent=0" target="_blank" class="btn-flat btn-flat-success btn-sm py-1 px-2 text-decoration-none" title="واتساب">
-                                            <i class="fa fa-whatsapp"></i>ارسال عبر واتساب
+                                            <i class="fa fa-whatsapp"></i> واتساب
                                         </a>
                                     <?php endif; ?>
                                 </td>
@@ -119,6 +123,4 @@ function filterSuppliers() {
 }
 </script>
 
-<?php
-require_once($dir_prefix . 'includes/footer.php');
-?>
+<?php require_once($dir_prefix . 'includes/footer.php'); ?>

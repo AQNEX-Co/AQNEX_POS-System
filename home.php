@@ -17,54 +17,65 @@ function db_val($conn, $sql, $field, $default = 0) {
     return $row[$field] ?? $default;
 }
 
-// إحصائيات اليوم
-$box_mony       = (float) db_val($conn, "SELECT COALESCE(SUM(mony),0) as v FROM treasury", 'v');
-$today_sales    = (float) db_val($conn, "SELECT COALESCE(SUM(total),0) as v FROM sales WHERE build_date='$today' AND delete_status=0", 'v');
-$today_sales    = $today_sales - (float) db_val($conn, "SELECT COALESCE(SUM(sr.refund_amount),0) as v FROM sales_returns sr JOIN sales s ON sr.sales_id=s.id WHERE sr.return_date='$today' AND sr.status='active' AND s.delete_status=0", 'v');
-$today_profit   = (float) db_val($conn, "SELECT COALESCE(SUM(prifet),0) as v FROM sales WHERE build_date='$today' AND delete_status=0", 'v');
-// طرح تأثير أرباح مرتجعات اليوم
-$today_ret_profit = (float) db_val($conn, "SELECT COALESCE(SUM(profit_impact),0) as v FROM sales_returns WHERE return_date='$today' AND status='active'", 'v');
-$today_profit   = $today_profit + $today_ret_profit; // profit_impact سالب، فالجمع يعني الطرح
+// ════ إحصائيات اليوم (باستخدام الجداول الجديدة Master-Detail) ════
+$box_mony = (float) db_val($conn, "SELECT COALESCE(SUM(mony),0) as v FROM treasury", 'v');
 
-$invoices_count = (int)   db_val($conn, "SELECT COUNT(*) as v FROM sales WHERE build_date='$today' AND delete_status=0", 'v');
-$today_expenses = (float) db_val($conn, "SELECT COALESCE(SUM(sprice),0) as v FROM treasury_expenses WHERE sdate='$today'", 'v');
-$today_receipts = (float) db_val($conn, "SELECT COALESCE(SUM(q_price),0) as v FROM receipts WHERE q_date='$today'", 'v');
-$today_purchases= (float) db_val($conn, "SELECT COALESCE(SUM(total),0) as v FROM purchases WHERE date='$today'", 'v');
-$today_purchases = $today_purchases - (float) db_val($conn, "SELECT COALESCE(SUM(refund_amount),0) as v FROM purchase_returns WHERE return_date='$today' AND status='active'", 'v');
+// مبيعات اليوم (صافية بعد خصم المرتجعات)
+$today_sales     = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_invoices_mst WHERE invoice_date='$today' AND d_s=0", 'v');
+$today_sales_ret = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_returns_mst WHERE return_date='$today' AND d_s=0", 'v');
+$today_sales     = $today_sales - $today_sales_ret;
 
-$yesterday_sales = (float) db_val($conn, "SELECT COALESCE(SUM(total),0) as v FROM sales WHERE build_date='$yesterday' AND delete_status=0", 'v');
-$yesterday_sales = $yesterday_sales - (float) db_val($conn, "SELECT COALESCE(SUM(sr.refund_amount),0) as v FROM sales_returns sr JOIN sales s ON sr.sales_id=s.id WHERE sr.return_date='$yesterday' AND sr.status='active' AND s.delete_status=0", 'v');
-$sales_change    = ($yesterday_sales > 0) ? (($today_sales - $yesterday_sales) / $yesterday_sales * 100) : 0;
+// أرباح اليوم
+$today_profit = (float) db_val($conn, "SELECT COALESCE(SUM(profit_total),0) as v FROM sales_invoices_mst WHERE invoice_date='$today' AND d_s=0", 'v');
 
-// إحصائيات الشهر
-$month_sales  = (float) db_val($conn, "SELECT COALESCE(SUM(total),0) as v FROM sales WHERE build_date BETWEEN '$month_start' AND '$month_end' AND delete_status=0", 'v');
-$month_sales  = $month_sales - (float) db_val($conn, "SELECT COALESCE(SUM(sr.refund_amount),0) as v FROM sales_returns sr JOIN sales s ON sr.sales_id=s.id WHERE sr.return_date BETWEEN '$month_start' AND '$month_end' AND sr.status='active' AND s.delete_status=0", 'v');
-$month_profit = (float) db_val($conn, "SELECT COALESCE(SUM(prifet),0) as v FROM sales WHERE build_date BETWEEN '$month_start' AND '$month_end' AND delete_status=0", 'v');
-// طرح تأثير أرباح مرتجعات الشهر
-$month_ret_profit = (float) db_val($conn, "SELECT COALESCE(SUM(profit_impact),0) as v FROM sales_returns WHERE return_date BETWEEN '$month_start' AND '$month_end' AND status='active'", 'v');
-$month_profit   = $month_profit + $month_ret_profit; // profit_impact سالب، فالجمع يعني الطرح
+$invoices_count = (int) db_val($conn, "SELECT COUNT(*) as v FROM sales_invoices_mst WHERE invoice_date='$today' AND d_s=0", 'v');
 
-// ذمم
+// المصروفات والمقبوضات (من جدول السندات المحاسبية الجديد)
+$today_expenses = (float) db_val($conn, "SELECT COALESCE(SUM(amount),0) as v FROM accounting_vouchers WHERE voucher_type='payment' AND voucher_date='$today' AND status='posted'", 'v');
+$today_receipts = (float) db_val($conn, "SELECT COALESCE(SUM(amount),0) as v FROM accounting_vouchers WHERE voucher_type='receipt' AND voucher_date='$today' AND status='posted'", 'v');
+
+// مشتريات اليوم (صافية بعد خصم المرتجعات)
+$today_purchases = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM purchase_invoices_mst WHERE invoice_date='$today' AND d_s=0", 'v');
+$today_pur_ret   = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM purchase_returns_mst WHERE return_date='$today' AND d_s=0", 'v');
+$today_purchases = $today_purchases - $today_pur_ret;
+
+// مقارنة مع أمس
+$yesterday_sales     = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_invoices_mst WHERE invoice_date='$yesterday' AND d_s=0", 'v');
+$yesterday_sales_ret = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_returns_mst WHERE return_date='$yesterday' AND d_s=0", 'v');
+$yesterday_sales     = $yesterday_sales - $yesterday_sales_ret;
+$sales_change        = ($yesterday_sales > 0) ? (($today_sales - $yesterday_sales) / $yesterday_sales * 100) : 0;
+
+// ════ إحصائيات الشهر ════
+$month_sales     = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_invoices_mst WHERE invoice_date BETWEEN '$month_start' AND '$month_end' AND d_s=0", 'v');
+$month_sales_ret = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_returns_mst WHERE return_date BETWEEN '$month_start' AND '$month_end' AND d_s=0", 'v');
+$month_sales     = $month_sales - $month_sales_ret;
+
+$month_profit = (float) db_val($conn, "SELECT COALESCE(SUM(profit_total),0) as v FROM sales_invoices_mst WHERE invoice_date BETWEEN '$month_start' AND '$month_end' AND d_s=0", 'v');
+
+// ════ الذمم والإحصائيات العامة ════
 $res_debt = $conn->query("SELECT COALESCE(SUM(cust_madeen),0) as v FROM customers WHERE d_s=0");
 $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_assoc()['v'] ?? 0) : 0.0;
+
 $res_sdebt = $conn->query("SELECT COALESCE(SUM(supp_daain),0) as v FROM suppliers WHERE d_s=0");
 $suppliers_debt = ($res_sdebt && !is_bool($res_sdebt)) ? (float)($res_sdebt->fetch_assoc()['v'] ?? 0) : 0.0;
 
-// إحصائيات المتجر
 $total_products  = (int) db_val($conn, "SELECT COUNT(*) as v FROM products WHERE delete_status=0", 'v');
-$res_cust = $conn->query("SELECT COUNT(*) as v FROM customers WHERE d_s=0"); $total_customers = ($res_cust && !is_bool($res_cust)) ? (int)($res_cust->fetch_assoc()['v'] ?? 0) : 0;
-$res_supp = $conn->query("SELECT COUNT(*) as v FROM suppliers WHERE d_s=0"); $total_suppliers = ($res_supp && !is_bool($res_supp)) ? (int)($res_supp->fetch_assoc()['v'] ?? 0) : 0;
+$res_cust = $conn->query("SELECT COUNT(*) as v FROM customers WHERE d_s=0"); 
+$total_customers = ($res_cust && !is_bool($res_cust)) ? (int)($res_cust->fetch_assoc()['v'] ?? 0) : 0;
+
+$res_supp = $conn->query("SELECT COUNT(*) as v FROM suppliers WHERE d_s=0"); 
+$total_suppliers = ($res_supp && !is_bool($res_supp)) ? (int)($res_supp->fetch_assoc()['v'] ?? 0) : 0;
 
 // تنبيهات المخزون
 $low_stock_threshold = intval($global_settings['low_stock_threshold'] ?? 5);
 $res_low = $conn->query("SELECT name, quantity, COALESCE(NULLIF(min_stock_alert, 0), $low_stock_threshold) AS min_quantity FROM products WHERE delete_status=0 AND quantity <= COALESCE(NULLIF(min_stock_alert, 0), $low_stock_threshold) ORDER BY quantity ASC LIMIT 8");
 $low_stock_items = ($res_low && !is_bool($res_low)) ? $res_low->fetch_all(MYSQLI_ASSOC) : [];
 
-// آخر المبيعات والمشتريات
-$res_recent = $conn->query("SELECT id, cust_name, total, prifet, build_date FROM sales WHERE delete_status=0 ORDER BY id DESC LIMIT 8");
+// آخر المبيعات والمشتريات (من الجداول الجديدة)
+$res_recent = $conn->query("SELECT id, cust_name, total_amount as total, profit_total as prifet, invoice_date as build_date FROM sales_invoices_mst WHERE d_s=0 ORDER BY id DESC LIMIT 8");
 $recent_sales = ($res_recent && !is_bool($res_recent)) ? $res_recent->fetch_all(MYSQLI_ASSOC) : [];
 
-$res_recent_pur = $conn->query("SELECT id, supp_name, total, date FROM purchases ORDER BY id DESC LIMIT 5");
+$res_recent_pur = $conn->query("SELECT id, supp_name, total_amount as total, invoice_date as date FROM purchase_invoices_mst WHERE d_s=0 ORDER BY id DESC LIMIT 5");
 $recent_purchases = ($res_recent_pur && !is_bool($res_recent_pur)) ? $res_recent_pur->fetch_all(MYSQLI_ASSOC) : [];
 
 // الأقساط
@@ -72,23 +83,28 @@ $due_installments = 0;
 $res_inst = $conn->query("SELECT COUNT(*) as v FROM installment_schedule WHERE due_date <= '$today' AND status='pending'");
 if ($res_inst && !is_bool($res_inst)) $due_installments = (int)($res_inst->fetch_assoc()['v'] ?? 0);
 
-// بيانات الرسم البياني
+// ════ بيانات الرسم البياني (آخر 7 أيام) ════
 $weekly_data = [];
 for ($i = 6; $i >= 0; $i--) {
     $d = date('Y-m-d', strtotime("-$i days"));
     $weekly_data[$d] = ['label' => date('d/m', strtotime($d)), 'sales' => 0, 'expenses' => 0];
 }
-$res_ws = $conn->query("SELECT build_date, SUM(total) as s FROM sales WHERE build_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND delete_status=0 GROUP BY build_date");
+
+$res_ws = $conn->query("SELECT invoice_date as build_date, SUM(total_amount) as s FROM sales_invoices_mst WHERE invoice_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND d_s=0 GROUP BY invoice_date");
 if ($res_ws && !is_bool($res_ws)) while ($r = $res_ws->fetch_assoc()) { if (isset($weekly_data[$r['build_date']])) $weekly_data[$r['build_date']]['sales'] = $r['s']; }
-$res_we = $conn->query("SELECT sdate, SUM(sprice) as e FROM treasury_expenses WHERE sdate >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY sdate");
+
+$res_we = $conn->query("SELECT voucher_date as sdate, SUM(amount) as e FROM accounting_vouchers WHERE voucher_type='payment' AND voucher_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND status='posted' GROUP BY voucher_date");
 if ($res_we && !is_bool($res_we)) while ($r = $res_we->fetch_assoc()) { if (isset($weekly_data[$r['sdate']])) $weekly_data[$r['sdate']]['expenses'] = $r['e']; }
+
 $chart_labels = []; $chart_sales = []; $chart_expenses = [];
 foreach ($weekly_data as $d => $v) { $chart_labels[] = $v['label']; $chart_sales[] = $v['sales']; $chart_expenses[] = $v['expenses']; }
 
-$today_cash_returns = (float) db_val($conn, "SELECT COALESCE(SUM(refund_amount),0) as v FROM sales_returns WHERE return_date='$today' AND refund_method='cash' AND refund_source='box' AND status='active'", 'v');
+// صافي التدفق النقدي
+$today_cash_returns = (float) db_val($conn, "SELECT COALESCE(SUM(total_amount),0) as v FROM sales_returns_mst WHERE return_date='$today' AND refund_method='cash' AND d_s=0", 'v');
 $net = $today_sales + $today_receipts - $today_expenses - $today_purchases - $today_cash_returns;
 $cur = $global_settings['currency'] ?? 'ر.ي';
 
+// ════ رصيد الصندوق الرئيسي الحي ════
 $main_box_id = (int) db_val($conn, "SELECT box_id as v FROM treasury WHERE name = 'الصندوق الرئيسي' LIMIT 1", 'v');
 if ($main_box_id <= 0) {
     $main_box_id = (int) db_val($conn, "SELECT box_id as v FROM treasury WHERE is_active = 1 ORDER BY box_id ASC LIMIT 1", 'v');
@@ -98,16 +114,16 @@ $res_main_box = false;
 if ($main_box_id > 0) {
     $res_main_box = $conn->query("SELECT t.box_id, t.name AS box_name, t.mony AS box_balance,
            u.full_name AS cashier,
-           COALESCE((SELECT SUM(s.total) FROM sales s WHERE s.box_id = t.box_id AND s.build_date='$today' AND s.delete_status=0 AND (s.pay_type='cash' OR s.pay_type IS NULL OR s.pay_type='')),0) AS today_cash_sales,
-           COALESCE((SELECT SUM(r.q_price) FROM receipts r WHERE r.box_id = t.box_id AND r.q_date='$today'),0) AS today_receipts,
-           COALESCE((SELECT SUM(e.sprice) FROM treasury_expenses e WHERE e.box_id = t.box_id AND e.sdate='$today'),0) AS today_expenses,
-           COALESCE((SELECT SUM(p.total) FROM purchases p WHERE p.box_id = t.box_id AND p.date='$today'),0) AS today_purchases
+           COALESCE((SELECT SUM(s.total_amount) FROM sales_invoices_mst s WHERE s.box_id = t.box_id AND s.invoice_date='$today' AND s.d_s=0 AND s.invoice_type='cash'),0) AS today_cash_sales,
+           COALESCE((SELECT SUM(v.amount) FROM accounting_vouchers v WHERE v.voucher_type='receipt' AND v.voucher_date='$today' AND v.status='posted'),0) AS today_receipts,
+           COALESCE((SELECT SUM(v.amount) FROM accounting_vouchers v WHERE v.voucher_type='payment' AND v.voucher_date='$today' AND v.status='posted'),0) AS today_expenses,
+           COALESCE((SELECT SUM(p.total_amount) FROM purchase_invoices_mst p WHERE p.box_id = t.box_id AND p.invoice_date='$today' AND p.d_s=0 AND p.invoice_type='cash'),0) AS today_purchases
     FROM treasury t
     LEFT JOIN users u ON t.user_id = u.userid
     WHERE t.box_id = $main_box_id
     LIMIT 1");
 }
-// capture SQL error for debugging when query fails
+
 $main_box_error = '';
 if ($res_main_box === false) {
     $main_box_error = $conn->error;
@@ -121,16 +137,10 @@ if ($res_main_box && !is_bool($res_main_box)) {
     }
 }
 $box_live_balance = $main_box ? $main_box['live_balance'] : 0.0;
-
-// ذمم العملاء (لبطاقة KPI)
-$res_debt = $conn->query("SELECT COALESCE(SUM(cust_madeen),0) as v FROM customers WHERE d_s=0");
-$debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_assoc()['v'] ?? 0) : 0.0;
-
-
 ?>
 <title>لوحة التحكم</title>
 <style>
-/* dashboard overrides — لا border-radius لأن custom.css يُلغيها */
+/* dashboard overrides */
 .kpi-card { background:#fff; border:1px solid #dde3ec; padding:16px 18px; height:100%; display:flex; align-items:center; gap:14px; position:relative; overflow:hidden; }
 .kpi-icon { width:44px; height:44px; display:flex; align-items:center; justify-content:center; font-size:1.3rem; flex-shrink:0; border:1px solid #dde3ec; }
 .kpi-icon.c1 { background:#eef2ff; color:#3730a3; border-color:#c7d2fe; }
@@ -141,10 +151,8 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
 .kpi-value { font-size:1.4rem; font-weight:700; color:#0f172a; line-height:1.1; }
 .kpi-sub   { font-size:.7rem; color:#94a3b8; margin-top:3px; }
 .kpi-sub.up { color:#15803d; } .kpi-sub.dn { color:#dc2626; }
-/* زر إدارة فوق كل بطاقة */
 .kpi-mgmt-btn { position:absolute; top:7px; left:9px; font-size:.6rem; color:#b0bec5; text-decoration:none; border:1px solid #e8ecf0; padding:1px 6px; border-radius:2px; background:#f8fafc; transition:color .15s, border-color .15s; line-height:1.7; white-space:nowrap; }
 .kpi-mgmt-btn:hover { color:#1d4ed8 !important; border-color:#1d4ed8 !important; background:#eff6ff; }
-
 
 .month-strip { background:#f8fafc; border:1px solid #dde3ec; padding:12px 16px; height:100%; display:flex; align-items:center; gap:10px; }
 .month-label { font-size:.72rem; color:#64748b; }
@@ -183,7 +191,6 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
 .db-link-sm:hover { background:#f1f5f9; color:#1e293b; }
 
 .alert-inst { background:#fffbeb; border:1px solid #fde68a; border-right:4px solid #d97706; padding:9px 14px; font-size:.82rem; color:#78350f; display:flex; align-items:center; gap:10px; margin-bottom:14px; }
-
 .mb14 { margin-bottom:14px; }
 </style>
 
@@ -198,7 +205,6 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
 
 <!-- ════ بطاقات KPI ════ -->
 <div class="row g-2 mb14">
-
     <!-- 1. الصندوق الرئيسي الحي -->
     <div class="col-xl-3 col-md-6">
         <div class="kpi-card">
@@ -218,7 +224,6 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
             </div>
         </div>
     </div>
-                
 
     <!-- 2. مبيعات اليوم -->
     <div class="col-xl-3 col-md-6">
@@ -263,7 +268,6 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
     </div>
 </div>
 
-
 <!-- ════ إحصائيات الشهر (مدير فقط) ════ -->
 <?php if ($is_admin): ?>
 <div class="row g-2 mb14">
@@ -296,7 +300,6 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
 
 <!-- ════ الوسط: وصول سريع + ملخص اليوم + المخزون ════ -->
 <div class="row g-2 mb14">
-
     <!-- وصول سريع -->
     <div class="col-lg-3 col-md-6">
         <div class="db-panel h-100">
@@ -310,15 +313,15 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
                     <a href="products/index.php"    class="qbtn"><i class="bi bi-tools"></i><span>قسم الصيانة</span></a>
                     <a href="products/index.php"    class="qbtn"><i class="bi bi-boxes"></i><span>المخزون</span></a>
                     <a href="customers/index.php"   class="qbtn"><i class="bi bi-person"></i><span>العملاء</span></a>
-                    <a href="products/index.php"    class="qbtn"><i class="bi bi-person-plus"></i><span>الموردين</span></a>
-                    <a href="receipts/index.php"   class="qbtn"><i class="bi bi-arrow-up-left"></i><span>سندات القبض</span></a>
-                    <a href="expenses/index.php"   class="qbtn"><i class="bi bi-arrow-up-right"></i><span>سندات الصرف</span></a>
+                    <a href="suppliers/index.php"   class="qbtn"><i class="bi bi-person-plus"></i><span>الموردين</span></a>
+                    <a href="receipts/create.php"   class="qbtn"><i class="bi bi-arrow-down-circle-fill" style="color:#10b981;"></i><span>سند القبض</span></a>
+                    <a href="expenses/create.php"   class="qbtn"><i class="bi bi-arrow-up-circle-fill" style="color:#ef4444;"></i><span>سند الصرف</span></a>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ملخص اليوم + إحصائيات المتجر -->
+    <!-- ملخص اليوم -->
     <div class="col-lg-5 col-md-6">
         <div class="db-panel mb14">
             <div class="db-panel-hdr"><span><i class="bi bi-clipboard-data"></i> ملخص اليوم المالي</span></div>
@@ -333,14 +336,6 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
                 </div>
             </div>
         </div>
-        <!-- <div class="db-panel">
-            <div class="db-panel-hdr"><span><i class="bi bi-info-circle"></i> إحصائيات المتجر</span></div>
-            <div class="db-panel-body p0">
-                <div class="sumrow"><span class="lbl"><i class="bi bi-box-seam me-1 text-muted"></i>إجمالي المنتجات</span><span class="val"><?php echo number_format($total_products); ?></span></div>
-                <div class="sumrow"><span class="lbl"><i class="bi bi-people me-1 text-muted"></i>إجمالي العملاء</span><span class="val"><?php echo number_format($total_customers); ?></span></div>
-                <div class="sumrow"><span class="lbl"><i class="bi bi-truck me-1 text-muted"></i>إجمالي الموردين</span><span class="val"><?php echo number_format($total_suppliers); ?></span></div>
-            </div>
-        </div> -->
     </div>
 
     <!-- تنبيهات المخزون -->
@@ -378,7 +373,7 @@ $debtors_total = ($res_debt && !is_bool($res_debt)) ? (float)($res_debt->fetch_a
 </div>
 
 <?php if ($is_admin): 
-    $res_boxes_dashboard = $conn->query("SELECT t.box_id, t.name as box_name, t.mony as box_balance, u.username as cashier_username, u.full_name as cashier_fullname, (SELECT COALESCE(SUM(s.total), 0) FROM sales s WHERE s.box_id = t.box_id AND s.is_transferred_to_box = 0 AND s.delete_status = 0) as pending_sales FROM treasury t LEFT JOIN users u ON t.user_id = u.userid WHERE t.is_active = 1 ORDER BY t.box_id ASC");
+    $res_boxes_dashboard = $conn->query("SELECT t.box_id, t.name as box_name, t.mony as box_balance, u.username as cashier_username, u.full_name as cashier_fullname, (SELECT COALESCE(SUM(s.total_amount), 0) FROM sales_invoices_mst s WHERE s.box_id = t.box_id AND s.is_transferred_to_box = 0 AND s.d_s = 0) as pending_sales FROM treasury t LEFT JOIN users u ON t.user_id = u.userid WHERE t.is_active = 1 ORDER BY t.box_id ASC");
     $boxes_dashboard = [];
     if ($res_boxes_dashboard) {
         while($b_row = $res_boxes_dashboard->fetch_assoc()) {

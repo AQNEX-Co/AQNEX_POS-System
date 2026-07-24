@@ -91,7 +91,7 @@ if ($res_p) {
 
 <?php
 $active_tab = 'printers';
-require_once 'settings_nav.php';
+require_once 'setup_nav.php';
 ?>
 
 <div class="card-flat">

@@ -14,38 +14,46 @@ $per_page    = 25;
 $page        = max(1, intval($_GET['page'] ?? 1));
 $offset      = ($page - 1) * $per_page;
 
-// بناء شرط الاستعلام
-$where = "WHERE 1=1";
-if (!empty($search))      $where .= " AND (supp_name LIKE '%" . $conn->real_escape_string($search) . "%' OR id LIKE '%" . $conn->real_escape_string($search) . "%' OR remark LIKE '%" . $conn->real_escape_string($search) . "%')";
-if (!empty($from_date))   $where .= " AND date >= '" . $conn->real_escape_string($from_date) . "'";
-if (!empty($to_date))     $where .= " AND date <= '" . $conn->real_escape_string($to_date) . "'";
-if (!empty($supp_filter)) $where .= " AND supp_name = '" . $conn->real_escape_string($supp_filter) . "'";
+// بناء شرط الاستعلام (مع إضافة شرط الحذف الناعم d_s = 0)
+$where = "WHERE p.d_s = 0";
+if (!empty($search))      $where .= " AND (p.supp_name LIKE '%" . $conn->real_escape_string($search) . "%' OR p.id LIKE '%" . $conn->real_escape_string($search) . "%' OR p.invoice_no LIKE '%" . $conn->real_escape_string($search) . "%' OR p.remark LIKE '%" . $conn->real_escape_string($search) . "%')";
+if (!empty($from_date))   $where .= " AND p.invoice_date >= '" . $conn->real_escape_string($from_date) . "'";
+if (!empty($to_date))     $where .= " AND p.invoice_date <= '" . $conn->real_escape_string($to_date) . "'";
+if (!empty($supp_filter)) $where .= " AND p.supp_name = '" . $conn->real_escape_string($supp_filter) . "'";
 
 // إجمالي السجلات للترقيم
-$total_rows  = (int)($conn->query("SELECT COUNT(*) as c FROM purchases $where")->fetch_assoc()['c'] ?? 0);
+$total_rows  = (int)($conn->query("SELECT COUNT(*) as c FROM purchase_invoices_mst p $where")->fetch_assoc()['c'] ?? 0);
 $total_pages = max(1, ceil($total_rows / $per_page));
 
-// السجلات الحالية
-// إصلاح: كان عدّ الأصناف يعتمد على مطابقة buys_date + supp_name فقط، وهذا غير دقيق
-// (يفشل عند وجود أكثر من فاتورة لنفس المورد بنفس التاريخ، أو فروقات تنسيق التاريخ)
-// الآن نعتمد أولاً على purchase_id (المُستخدم في كل الفواتير الجديدة)، ونستخدم
-// المطابقة القديمة بالتاريخ+المورد فقط كـ fallback لبنود لا تحمل purchase_id (بيانات قديمة).
-$result = $conn->query("SELECT p.*, 
-    (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) 
-    + 
-    (SELECT COUNT(*) FROM purchase_items pi2 WHERE (pi2.purchase_id = 0 OR pi2.purchase_id IS NULL) AND pi2.buys_date = p.date AND pi2.supp_name = p.supp_name)
-    as items_count 
-    FROM purchases p $where ORDER BY p.id DESC LIMIT $per_page OFFSET $offset");
+// السجلات الحالية مع حساب عدد الأصناف من جدول التفاصيل الجديد
+$result = $conn->query("SELECT p.id, p.invoice_no, p.invoice_date, p.supp_name, p.total_amount, p.currency_code, p.remark,
+    (SELECT COUNT(*) FROM purchase_invoices_dtl d WHERE d.invoice_id = p.id AND d.d_s = 0) as items_count 
+    FROM purchase_invoices_mst p 
+    $where 
+    ORDER BY p.id DESC 
+    LIMIT $per_page OFFSET $offset");
 
-// الإحصائيات الإجمالية للمجموعة المفلترة
-$stats = $conn->query("SELECT COALESCE(SUM(p.total),0) - COALESCE(SUM(r.refund_amount),0) as total_purchases, COUNT(*) as count FROM purchases p LEFT JOIN (SELECT purchase_id, SUM(refund_amount) as refund_amount FROM purchase_returns WHERE status='active' GROUP BY purchase_id) r ON r.purchase_id = p.id $where")->fetch_assoc();
-$stat_purchases = (float)$stats['total_purchases'];
-$stat_count     = (int)$stats['count'];
+// الإحصائيات الإجمالية للمجموعة المفلترة (مع خصم المرتجعات النشطة)
+$stats_sql = "SELECT 
+    COALESCE(SUM(p.total_amount), 0) - COALESCE(SUM(r.refund_amount), 0) as total_purchases,
+    COUNT(DISTINCT p.id) as count 
+    FROM purchase_invoices_mst p
+    LEFT JOIN (
+        SELECT original_purchase_id, SUM(total_amount) as refund_amount
+        FROM purchase_returns_mst
+        WHERE d_s = 0
+        GROUP BY original_purchase_id
+    ) r ON r.original_purchase_id = p.id 
+    $where";
+$stats = $conn->query($stats_sql)->fetch_assoc();
+$stat_purchases = (float)($stats['total_purchases'] ?? 0);
+$stat_count     = (int)($stats['count'] ?? 0);
 
 // الذمم للموردين (المبالغ الآجلة غير مدفوعة)
 $supp_debt = (float)($conn->query("SELECT COALESCE(SUM(supp_daain),0) as v FROM suppliers WHERE d_s=0")->fetch_assoc()['v'] ?? 0);
 
 $currency = $global_settings['currency'] ?? 'ر.ي';
+$is_admin = (trim($_SESSION['SESS_LAST_NAME']) === 'admin' || empty($_SESSION['SESS_LAST_NAME']));
 
 // رسائل التغذية الراجعة
 $msg = $_GET['msg'] ?? '';
@@ -100,7 +108,7 @@ $msg = $_GET['msg'] ?? '';
         <div class="row g-3 mb-4 no-print">
             <div class="col-md-4 col-6">
                 <div style="background:linear-gradient(135deg,#4facfe,#00f2fe);border-radius:12px;padding:16px 20px;color:#fff;">
-                    <div style="font-size:.8rem;opacity:.9;">إجمالي المشتريات</div>
+                    <div style="font-size:.8rem;opacity:.9;">صافي المشتريات</div>
                     <div style="font-size:1.4rem;font-weight:700;"><?php echo number_format($stat_purchases, 0); ?></div>
                     <div style="font-size:.75rem;opacity:.8;"><?php echo $currency; ?> &bull; <?php echo $stat_count; ?> فاتورة</div>
                 </div>
@@ -115,7 +123,7 @@ $msg = $_GET['msg'] ?? '';
             <div class="col-md-4 col-6">
                 <div style="background:linear-gradient(135deg,#43e97b,#38f9d7);border-radius:12px;padding:16px 20px;color:#fff;">
                     <div style="font-size:.8rem;opacity:.9;">المسدّد للموردين</div>
-                    <div style="font-size:1.4rem;font-weight:700;"><?php echo number_format($stat_purchases - $supp_debt, 0); ?></div>
+                    <div style="font-size:1.4rem;font-weight:700;"><?php echo number_format(max(0, $stat_purchases - $supp_debt), 0); ?></div>
                     <div style="font-size:.75rem;opacity:.8;"><?php echo $currency; ?></div>
                 </div>
             </div>
@@ -125,7 +133,7 @@ $msg = $_GET['msg'] ?? '';
         <form method="GET" class="no-print mb-3">
             <div class="row g-2 align-items-end">
                 <div class="col-md-3">
-                    <label class="form-label small text-muted mb-1">بحث (رقم فاتورة / مورد / ملاحظات)</label>
+                    <label class="form-label small text-muted mb-1">بحث (رقم الفاتورة / المورد / ملاحظات)</label>
                     <input type="text" name="search" class="form-control form-control-sm" placeholder="ابحث هنا..." value="<?php echo htmlspecialchars($search); ?>">
                 </div>
                 <div class="col-md-2">
@@ -148,7 +156,7 @@ $msg = $_GET['msg'] ?? '';
                         <i class="bi bi-x-circle ml-2"></i> مسح
                     </a>
                     <a href="index.php?from_date=<?php echo date('Y-m-d'); ?>&to_date=<?php echo date('Y-m-d'); ?>" class="btn-flat btn-flat-primary btn-sm text-decoration-none text-center" style="background:#e2e8f0;color:#475569;white-space:nowrap;">
-                      <i class="bi bi-calendar ml-2"></i>  اليوم
+                      <i class="bi bi-calendar ml-2"></i> اليوم
                     </a>
                 </div>
             </div>
@@ -166,7 +174,7 @@ $msg = $_GET['msg'] ?? '';
                         <th style="width:140px;">إجمالي الفاتورة</th>
                         <th style="width:80px;">العملة</th>
                         <th>ملاحظات</th>
-                        <th class="no-print text-center" style="width:120px;">الإجراءات</th>
+                        <th class="no-print text-center" style="width:150px;">الإجراءات</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -175,18 +183,21 @@ $msg = $_GET['msg'] ?? '';
                         while ($row = $result->fetch_assoc()) {
                             $cc = $row['currency_code'] ?? 'YER';
                             ?>
-                            <tr class="fw-bold" style="font-size:.85rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                                <td><strong class="text-primary">#<?php echo $row['id']; ?></strong></td>
+                            <tr class="fw-bold" style="font-size:.85rem;">
+                                <td>
+                                    <strong class="text-primary">#<?php echo $row['id']; ?></strong><br>
+                                    <small class="text-muted"><?php echo htmlspecialchars($row['invoice_no'] ?? ''); ?></small>
+                                </td>
                                 <td>
                                     <?php echo htmlspecialchars($row['supp_name'] ?: 'مورد عام'); ?>
                                 </td>
-                                <td class="text-muted"><?php echo htmlspecialchars($row['date']); ?></td>
+                                <td class="text-muted"><?php echo htmlspecialchars($row['invoice_date']); ?></td>
                                 <td class="text-center">
                                     <span style="background:#e0e7ff;color:#3730a3;padding:2px 10px;border-radius:20px;font-size:.8rem;font-weight:600;">
                                         <?php echo (int)$row['items_count']; ?> صنف
                                     </span>
                                 </td>
-                                <td class="fw-bold"><?php echo number_format($row['total'], 0); ?> <small class="text-muted"><?php echo $currency; ?></small></td>
+                                <td class="fw-bold"><?php echo number_format($row['total_amount'], 0); ?> <small class="text-muted"><?php echo $currency; ?></small></td>
                                 <td>
                                     <span class="badge badge-secondary px-2 py-1" style="font-size:.75rem;font-weight:600;">
                                         <?php echo htmlspecialchars($cc); ?>
@@ -203,11 +214,9 @@ $msg = $_GET['msg'] ?? '';
                                     <a href="edit.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-secondary btn-sm py-1 px-2 text-decoration-none" title="تعديل">
                                         <?php echo get_icon('edit', 'ml-1'); ?> تعديل
                                     </a>
-                                    <a href="delete.php?id=<?php echo $row['id']; ?>"                                         class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none" title="حذف"
-
-                                       onclick="return confirm('تأكيد حذف فاتورة #<?php echo $row['id']; ?>\nسيتم استرجاع الكميات للمخزن، وتعديل مديونية المورد ورصيد الصندوق.\nهذا الإجراء لا يمكن التراجع عنه!')"
-                                       title="حذف">
-                                                                                <i class="fa fa-trash ml-1"></i>مسح
+                                    <a href="delete.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none" title="حذف"
+                                       onclick="return confirm('تأكيد حذف فاتورة #<?php echo $row['id']; ?>\nسيتم استرجاع الكميات للمخزن، وتعديل مديونية المورد ورصيد الصندوق.\nهذا الإجراء لا يمكن التراجع عنه!')">
+                                        <i class="fa fa-trash ml-1"></i> مسح
                                     </a>
                                     <?php endif; ?>
                                 </td>

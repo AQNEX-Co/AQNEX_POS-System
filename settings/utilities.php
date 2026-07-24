@@ -9,7 +9,7 @@ check_permission(['admin']);
 <div class="settings-shell">
 <?php
 $active_tab = 'utilities';
-require_once 'settings_nav.php';
+require_once 'setup_nav.php';
 ?>
 
 <div class="row mb-4 no-print align-items-center">
@@ -118,16 +118,7 @@ require_once 'settings_nav.php';
 
 </div>
 
-<style>
-.card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 .5rem 1rem rgba(0,0,0,.08)!important;
-}
-.btn-outline-warning:hover {
-    background-color: #b9892f !important;
-    color: #fff !important;
-}
-</style>
+<link rel="stylesheet" href="<?php echo $prefix; ?>assets/css/settings.css">
 
 <?php
 require_once($dir_prefix . 'includes/footer.php');

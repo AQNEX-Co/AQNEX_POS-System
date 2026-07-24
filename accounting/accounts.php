@@ -313,7 +313,6 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 
 .stat-card {
     background: #fff;
-    border-radius: 8px;
     padding: 15px;
     border: 1px solid #e5e7eb;
     position: relative;
@@ -879,51 +878,21 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 }
 
 /* ===== رأس الصفحة ===== */
-.page-header {
-    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
-    color: #fff;
-    padding: 15px 20px;
-    border-radius: 8px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
+.page-title-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0 14px; border-bottom: 2px solid #e2e8f0;
+    margin-bottom: 18px; flex-wrap: wrap; gap: 10px;
 }
-
-.page-header h5 {
-    margin: 0;
-    font-size: 1.05rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+.page-title-bar .ptb-left { display: flex; align-items: center; gap: 10px; }
+.page-title-bar .icon-wrap {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 1rem;
 }
-
-.page-header .actions {
-    display: flex;
-    gap: 8px;
-}
-
-.page-header .btn {
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    border: 1px solid rgba(255,255,255,0.3);
-    background: rgba(255,255,255,0.1);
-    color: #fff;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    transition: all 0.15s ease;
-}
-
-.page-header .btn:hover {
-    background: rgba(255,255,255,0.2);
-    border-color: rgba(255,255,255,0.5);
-}
+.page-title-bar h4 { margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--text-color); }
+.page-title-bar small { font-size: 0.72rem; color: #64748b; display: block; }
+.page-title-bar .ptb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ===== رسائل التنبيه ===== */
 .alert-custom {
@@ -982,21 +951,26 @@ $net_balance = $totals['asset'] - ($totals['liability'] + $totals['equity']);
 </style>
 
 <div class="page-inner">
-<!-- ===== رأس الصفحة ===== -->
-<div class="page-header no-print">
-    <h5>
-        <i class="bi bi-diagram-3"></i>
-        دليل الحسابات المحاسبي (Chart of Accounts)
-    </h5>
-    <div class="actions">
-        <button type="button" id="expandAll" class="btn">
-            <i class="bi bi-arrows-angle-expand"></i> توسيع الكل
+<div class="page-title-bar no-print">
+    <div class="ptb-left">
+        <div class="icon-wrap"><i class="bi bi-diagram-3"></i></div>
+        <div>
+            <h4>دليل الحسابات المحاسبي (Chart of Accounts)</h4>
+            <small>الهيكل الكامل للحسابات المحاسبية — الأصول، الخصوم، حقوق الملكية، الإيرادات، المصروفات</small>
+        </div>
+    </div>
+    <div class="ptb-actions">
+        <button type="button" id="expandAll" class="btn btn-sm btn-light" style="font-size:0.8rem; border:1px solid #cbd5e1;" title="توسيع شجرة الحسابات كاملاً">
+            <i class="bi bi-arrows-angle-expand ml-1"></i> توسيع الكل
         </button>
-        <button type="button" id="collapseAll" class="btn">
-            <i class="bi bi-arrows-angle-contract"></i> طي الكل
+        <button type="button" id="collapseAll" class="btn btn-sm btn-light" style="font-size:0.8rem; border:1px solid #cbd5e1;" title="طي شجرة الحسابات">
+            <i class="bi bi-arrows-angle-contract ml-1"></i> طي الكل
         </button>
-        <a href="../home.php" class="btn">
-            <i class="bi bi-arrow-left"></i> عودة
+        <button onclick="window.print()" class="btn btn-sm btn-light" style="font-size:0.8rem; border:1px solid #cbd5e1;" title="طباعة الدليل المحاسبي">
+            <i class="bi bi-printer ml-1"></i> طباعة
+        </button>
+        <a href="../home.php" class="btn btn-sm btn-light text-decoration-none" style="font-size:0.8rem; border:1px solid #cbd5e1;" title="العودة للرئيسية">
+            <i class="bi bi-arrow-left ml-1"></i> عودة
         </a>
     </div>
 </div>

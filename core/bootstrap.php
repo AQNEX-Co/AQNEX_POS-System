@@ -94,15 +94,58 @@ if (!$verify['status']) {
             $conn->query("INSERT INTO `settings` (`id`, `store_name`, `phone`, `address`, `currency`, `barcode_scanner`, `printer_type`, `tax_percent`, `low_stock_threshold`, `receipt_footer`, `is_configured`, `support_token`) 
                 VALUES (1, 'تكنولوجيا فون', '777777777', 'اليمن - عدن', 'ريال يمني', 1, 'receipt_80mm', 0, 5, 'شكرًا لزيارتكم!', 0, 'ReplaceWithStrongSupportToken123!')
                 ON DUPLICATE KEY UPDATE id=id");
-        } else {
             // التأكد من وجود الأعمدة الجديدة في جدول الإعدادات لتفادي مشاكل الترقية أو التهيئة الأولى
             $checkCol = $conn->query("SHOW COLUMNS FROM `settings` LIKE 'is_configured'");
             if ($checkCol && $checkCol->num_rows == 0) {
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `commercial_register` varchar(100) DEFAULT NULL AFTER `address`");
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `tax_number` varchar(100) DEFAULT NULL AFTER `commercial_register`");
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `logo` varchar(255) DEFAULT NULL AFTER `receipt_footer`");
-                $conn->query("ALTER TABLE `settings` ADD COLUMN `is_configured` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'تحديد إذا ما تم تشغيل معالج الإعداد الأول'");
+                $conn->query("ALTER TABLE `settings` ADD COLUMN `is_configured` TINYINT(1) NOT NULL DEFAULT 0");
             }
+        }
+
+        // ─── التحقق التلقائي وتشغيل الهجرات البرمجية في التطبيق ────────────────
+        $checkBranchesTable = $conn->query("SHOW TABLES LIKE 'branches'");
+        if (!$checkBranchesTable || $checkBranchesTable->num_rows == 0) {
+            $migrationsDir = __DIR__ . '/../DB/migrations';
+            if (is_dir($migrationsDir)) {
+                $files = scandir($migrationsDir);
+                $sqlFiles = [];
+                foreach ($files as $file) {
+                    if (pathinfo($file, PATHINFO_EXTENSION) === 'sql') {
+                        $sqlFiles[] = $file;
+                    }
+                }
+                sort($sqlFiles);
+
+                foreach ($sqlFiles as $sqlFile) {
+                    $fullPath = $migrationsDir . '/' . $sqlFile;
+                    $migrationContent = @file_get_contents($fullPath);
+                    if ($migrationContent !== false) {
+                        $conn->query("SET FOREIGN_KEY_CHECKS = 0");
+                        $currentQuery = '';
+                        foreach (explode("\n", $migrationContent) as $line) {
+                            $trimmed = trim($line);
+                            if (empty($trimmed) || strpos($trimmed, '--') === 0 || strpos($trimmed, '/*') === 0 || strpos($trimmed, '#') === 0) {
+                                continue;
+                            }
+                            $currentQuery .= $line . "\n";
+                            if (substr($trimmed, -1) === ';') {
+                                @$conn->query(trim($currentQuery));
+                                $currentQuery = '';
+                            }
+                        }
+                        $conn->query("SET FOREIGN_KEY_CHECKS = 1");
+                    }
+                }
+            }
+        }
+
+        // ─── التأكد من تلقيم الصندوق الرئيسي تلقائياً ──────────────────────────
+        $checkTreasury = $conn->query("SHOW TABLES LIKE 'treasury'");
+        if ($checkTreasury && $checkTreasury->num_rows > 0) {
+            $res_t = $conn->query("SELECT COUNT(*) as cnt FROM treasury");
+            if ($res_t && $conn->query("SELECT COUNT(*) as cnt FROM treasury")->fetch_assoc()['cnt'] == 0) {
+                $conn->query("INSERT INTO treasury (box_id, name, mony, user_id, is_active) VALUES (1, 'الصندوق الرئيسي', 0.0, 1, 1) ON DUPLICATE KEY UPDATE box_id=box_id");
+            }
+        }
 
             // التأكد من وجود أعمدة إعدادات الواتساب وتكامل الذكاء الاصطناعي في جدول الإعدادات
             $checkWA = $conn->query("SHOW COLUMNS FROM `settings` LIKE 'whatsapp_token'");
@@ -573,5 +616,5 @@ if (!$verify['status']) {
                 exit();
             }
         }
-}}
+}
 ?>

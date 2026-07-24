@@ -1,0 +1,227 @@
+/* =======================================================================
+   تصميم صفحات الإعدادات والتهيئة بهوية مؤسسية (Enterprise Design)
+   ======================================================================= */
+:root {
+    --ink-900: #0f1b2d;
+    --ink-700: #1e3148;
+    --ink-500: #46607e;
+    --ink-300: #8fa3ba;
+    --line: #e1e7ee;
+    --surface: #ffffff;
+    --surface-soft: #f6f8fb;
+    --accent: #1d4ed8;
+    --accent-dark: #1e3a8a;
+    --accent-soft: #eaf0ff;
+    --gold: #b9892f;
+    --good: #15803d;
+    --good-soft: #ecfdf3;
+    --bad: #b91c1c;
+    --bad-soft: #fef2f2;
+    --radius: 4px;
+}
+
+.settings-shell { font-family: inherit; margin-top: 15px; }
+
+.settings-head {
+    border-bottom: 2px solid var(--ink-900);
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+}
+.settings-head .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+    display: block;
+}
+.settings-head h3 {
+    color: var(--ink-900);
+    font-weight: 800;
+    margin-bottom: 2px;
+}
+.settings-head .icon-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    margin-left: 10px;
+}
+.settings-head p { color: var(--ink-500); }
+
+.alert-formal {
+    border-radius: var(--radius);
+    border: 1px solid;
+    padding: 13px 18px;
+    font-weight: 600;
+    font-size: 14px;
+}
+.alert-formal.is-error { background: var(--bad-soft); border-color: #fecaca; color: var(--bad); }
+.alert-formal.is-success { background: var(--good-soft); border-color: #bbf7d0; color: var(--good); }
+
+/* REDESIGNED TABS for Enterprise Look */
+.nav-tabs-custom {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--line);
+    padding-left: 0;
+    margin-bottom: 0;
+    background: transparent;
+    gap: 20px; /* Spacing between tabs */
+}
+.nav-tabs-custom::-webkit-scrollbar { height: 4px; }
+.nav-tabs-custom::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+.nav-tabs-custom .nav-item { margin-bottom: -1px; }
+.nav-tabs-custom .nav-link {
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    font-weight: 600;
+    font-size: 14.5px;
+    color: var(--ink-500) !important;
+    padding: 12px 4px; /* Minimal padding for cleaner look */
+    background: transparent !important;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+.nav-tabs-custom .nav-link:hover {
+    color: var(--ink-900) !important;
+    border-bottom-color: var(--ink-300) !important;
+}
+.nav-tabs-custom .nav-link.active {
+    color: var(--accent) !important;
+    border-bottom-color: var(--accent) !important;
+    font-weight: 800;
+}
+.nav-tabs-custom .nav-link i {
+    font-size: 1.1rem;
+    vertical-align: text-bottom;
+}
+
+/* Remove the heavy borders around tab content */
+.tab-content-custom {
+    background: transparent;
+    padding: 24px 0 0 0;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+}
+.tab-pane-inner { padding: 0; }
+
+.section-heading {
+    color: var(--ink-900);
+    font-weight: 800;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.section-heading::before {
+    content: "";
+    width: 4px;
+    height: 16px;
+    background: var(--accent);
+    display: inline-block;
+    border-radius: 2px;
+}
+
+.field-label {
+    font-weight: 700;
+    font-size: 12.5px;
+    color: var(--ink-700);
+    margin-bottom: 7px;
+    display: block;
+}
+.field-hint {
+    color: var(--ink-300);
+    font-size: 11.5px;
+    margin-top: 5px;
+    display: block;
+}
+.form-control.rounded-0 {
+    border: 1px solid var(--line);
+    border-radius: var(--radius) !important;
+    font-size: 13.5px;
+    color: var(--ink-900);
+    padding: 9px 12px;
+    height: auto;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+.form-control.rounded-0:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft) !important;
+}
+
+.formal-card {
+    border: 1px solid var(--line);
+    border-radius: 6px !important;
+    background: var(--surface);
+    overflow: hidden;
+    margin-bottom: 20px;
+}
+.formal-card-head {
+    background: var(--ink-900);
+    color: #fff;
+    padding: 13px 18px;
+    font-weight: 700;
+    font-size: 13.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.formal-card-head.is-accent { background: var(--surface-soft); color: var(--ink-900); border-bottom: 1px solid var(--line); }
+.formal-card-body { padding: 20px; }
+
+.btn-formal-primary {
+    background: var(--accent);
+    color: #fff;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius) !important;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 10px 22px;
+    transition: background .15s ease;
+    cursor: pointer;
+}
+.btn-formal-primary:hover { background: var(--accent-dark); color: #fff; }
+
+.btn-formal-secondary {
+    background: var(--surface);
+    color: var(--ink-700);
+    border: 1px solid var(--line);
+    border-radius: var(--radius) !important;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 10px 22px;
+    cursor: pointer;
+}
+.btn-formal-secondary:hover { background: var(--surface-soft); color: var(--ink-900); }
+
+.btn-formal-success {
+    background: var(--good);
+    color: #fff;
+    border: 1px solid var(--good);
+    border-radius: var(--radius) !important;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 10px 22px;
+    cursor: pointer;
+}
+.btn-formal-success:hover { background: #126b34; color: #fff; }
+
+.btn-support-float:hover {
+    transform: scale(1.1);
+    background-color: var(--accent) !important;
+}

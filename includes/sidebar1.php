@@ -254,19 +254,31 @@ if (!function_exists('sidebar_has_access')) {
                 <?php endif; ?>
 
                 <?php if ($is_admin || sidebar_has_access('receipts')): ?>
-                <li class="<?php echo ($module == 'receipts') ? 'active' : ''; ?>">
+                <li class="<?php echo ($module == 'receipts' && basename($_SERVER['PHP_SELF']) == 'create.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>receipts/create.php">
+                        <span class="icon-wrapper"><?php echo get_icon('receipts', 'sidebar-icon'); ?></span>
+                        سند القبض
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'receipts' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>receipts/index.php">
                         <span class="icon-wrapper"><?php echo get_icon('receipts', 'sidebar-icon'); ?></span>
-                        سندات المقبوضات (القبض)
+                        تقرير سندات المقبوضات
                     </a>
                 </li>
                 <?php endif; ?>
                 
                 <?php if ($is_admin || sidebar_has_access('expenses')): ?>
-                <li class="<?php echo ($module == 'expenses') ? 'active' : ''; ?>">
+                <li class="<?php echo ($module == 'expenses' && basename($_SERVER['PHP_SELF']) == 'create.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>expenses/create.php">
+                        <span class="icon-wrapper"><?php echo get_icon('expenses', 'sidebar-icon'); ?></span>
+                        سند الصرف
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'expenses' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>expenses/index.php">
                         <span class="icon-wrapper"><?php echo get_icon('expenses', 'sidebar-icon'); ?></span>
-                        سندات المدفوعات (الصرف)
+                        تقرير سندات المصروفات
                     </a>
                 </li>
                 <?php endif; ?>

@@ -402,6 +402,9 @@ class VoucherService
             // Link journal entry back to voucher
             $conn->query("UPDATE accounting_vouchers SET journal_entry_id=$entryId WHERE id=$voucherId");
 
+            // Keep supplier debt untouched for voucher-based payments/receipts.
+            // Debt movement is handled by purchase and settlement flows elsewhere.
+
             // Look up cash account name
             $cash_acc_name = '';
             $acc_res = $conn->query("SELECT name FROM accounting_accounts WHERE id = $cashAccId LIMIT 1");

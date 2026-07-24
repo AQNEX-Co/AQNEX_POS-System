@@ -82,8 +82,7 @@ $problem_description_value = '';
 
 // معالجة حفظ التذكرة
 if (isset($_POST['btn_save_ticket'])) {
-    $selected_customer_id = $_POST['customer_id'] ?? '';
-    $selected_technician_id = $_POST['technician_id'] ?? '';
+    $customer_name_input = trim($_POST['customer_name_input'] ?? '');
     $selected_issue_type = $_POST['issue_type'] ?? '';
     $custom_issue_type_value = $_POST['custom_issue_type'] ?? '';
     $device_name_value = trim($_POST['device_name'] ?? '');
@@ -92,7 +91,6 @@ if (isset($_POST['btn_save_ticket'])) {
     $estimated_cost_value = $_POST['estimated_cost'] ?? '0.00';
     $problem_description_value = trim($_POST['problem_description'] ?? '');
 
-    $customer_id = intval($selected_customer_id);
     $device_name = $conn->real_escape_string($device_name_value);
     $imei = $conn->real_escape_string($imei_value);
     $issue_type = $conn->real_escape_string(trim($selected_issue_type));
@@ -100,7 +98,21 @@ if (isset($_POST['btn_save_ticket'])) {
     $expected_delivery_date = !empty($expected_delivery_date_value) ? date('Y-m-d', strtotime($expected_delivery_date_value)) : null;
     $problem_description = $conn->real_escape_string($problem_description_value);
     $estimated_cost = doubleval($estimated_cost_value);
-    $technician_id = intval($selected_technician_id);
+
+    // البحث عن العميل
+    $customer_id = 0;
+    $customer_name_text = $customer_name_input;
+    if (!empty($customer_name_input)) {
+        $cn_esc = $conn->real_escape_string($customer_name_input);
+        $chk_c = $conn->query("SELECT cust_id FROM customers WHERE cust_name = '$cn_esc' AND d_s = 0 LIMIT 1");
+        if ($chk_c && $chk_c->num_rows > 0) {
+            $customer_id = intval($chk_c->fetch_assoc()['cust_id']);
+            $customer_name_text = null;
+        } else {
+            $customer_id = null; // اجعله NULL إذا لم يكن العميل مسجلا
+            $customer_name_text = $cn_esc;
+        }
+    }
 
     if ($issue_type === 'other') {
         if (!empty($custom_issue_type)) {
@@ -110,10 +122,8 @@ if (isset($_POST['btn_save_ticket'])) {
         }
     }
 
-    if ($customer_id <= 0) {
-        $error = 'العميل مطلوب.';
-    } elseif ($technician_id <= 0) {
-        $error = 'الفني المسؤول مطلوب.';
+    if (empty($customer_name_input)) {
+        $error = 'اسم العميل مطلوب.';
     } elseif (empty($device_name)) {
         $error = 'نوع الجهاز مطلوب.';
     } elseif (empty($issue_type)) {
@@ -140,12 +150,12 @@ if (isset($_POST['btn_save_ticket'])) {
 
         $stmt = $conn->prepare("
             INSERT INTO `repair_tickets` 
-            (`ticket_number`, `customer_id`, `device_name`, `device_type`, `device_brand`, `imei`, `issue_type`, `expected_delivery_date`, `problem_description`, `status`, `estimated_cost`, `technician_id`, `received_date`) 
-            VALUES (?, ?, ?, '', '', ?, ?, ?, ?, 'received', ?, ?, NOW())
+            (`ticket_number`, `customer_id`, `customer_name_text`, `device_name`, `device_type`, `device_brand`, `imei`, `issue_type`, `expected_delivery_date`, `problem_description`, `status`, `estimated_cost`, `technician_id`, `received_date`) 
+            VALUES (?, ?, ?, ?, '', '', ?, ?, ?, ?, 'received', ?, NULL, NOW())
         ");
         
         if ($stmt) {
-            $stmt->bind_param("sisssssdi", $ticket_number, $customer_id, $device_name, $imei, $issue_type, $expected_delivery_date, $problem_description, $estimated_cost, $technician_id);
+            $stmt->bind_param("sissssssd", $ticket_number, $customer_id, $customer_name_text, $device_name, $imei, $issue_type, $expected_delivery_date, $problem_description, $estimated_cost);
             if ($stmt->execute()) {
                 $new_id = $conn->insert_id;
                 echo "<script>window.location='view.php?id=$new_id';</script>";
@@ -190,6 +200,8 @@ if ($res_issue) {
 
 <title>فتح تذكرة صيانة جديدة - تكنولوجيا فون</title>
 
+<?php require_once($dir_prefix . 'includes/universal_toolbar.php'); ?>
+
 <div class="card-flat">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5><?php echo get_icon('briefcase', 'ml-2 text-primary'); ?> فتح تذكرة صيانة واستلام جهاز جديدة</h5>
@@ -203,37 +215,24 @@ if ($res_issue) {
             <div class="alert alert-danger rounded-0 mb-4"><?php echo htmlspecialchars($error); ?></div>
         <?php endif; ?>
 
-        <form method="POST">
+        <form method="POST" id="repair-form">
             <div class="row">
                 <!-- العميل والضمان -->
                 <div class="col-md-6 form-group mb-3">
                     <label class="font-weight-bold text-secondary">العميل *</label>
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span>اختر العميل صاحب الجهاز</span>
+                        <span>اختر العميل صاحب الجهاز أو اكتب اسمه مباشرة</span>
                         <a href="javascript:void(0)" class="small font-weight-bold text-primary text-decoration-none" data-toggle="modal" data-target="#quickAddCustomerModal">
                             <i class="fa fa-plus-circle ml-1"></i> عميل جديد
                         </a>
                     </div>
-                    <select name="customer_id" class="form-control rounded-0" required>
-                        <option value="">-- اختر العميل صاحب الجهاز --</option>
+                    <input type="text" name="customer_name_input" class="form-control rounded-0" list="customersList" placeholder="اكتب اسم العميل..." autocomplete="off" required>
+                    <datalist id="customersList">
                         <?php foreach($customers as $c): ?>
-                            <option value="<?php echo $c['cust_id']; ?>" <?php echo ($selected_customer_id == $c['cust_id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($c['cust_name']); ?></option>
+                            <option value="<?php echo htmlspecialchars($c['cust_name']); ?>"></option>
                         <?php endforeach; ?>
-                    </select>
-                    <small class="text-muted">يمكنك إضافة عميل جديد مباشرة من هنا دون مغادرة الشاشة.</small>
-                </div>
-
-                <!-- الفني المسؤول -->
-                <div class="col-md-6 form-group mb-3">
-                    <label class="font-weight-bold text-secondary">الفني المختص بفحص الجهاز *</label>
-                    <select name="technician_id" class="form-control rounded-0" required>
-                        <option value="">-- اختر الفني المسؤول --</option>
-                        <?php foreach($technicians as $t): ?>
-                            <option value="<?php echo $t['userid']; ?>" <?php echo ($selected_technician_id == $t['userid']) ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars(!empty($t['full_name']) ? $t['full_name'] : $t['username']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    </datalist>
+                    <small class="text-muted">يمكنك كتابة اسم العميل ليتم حفظه كنص، أو اختيار عميل مسجل.</small>
                 </div>
 
                 <!-- تفاصيل الجهاز -->
@@ -278,14 +277,8 @@ if ($res_issue) {
 
                 <div class="col-md-12 form-group mb-3">
                     <label class="font-weight-bold text-secondary">توصيف المشكلة والأعطال الظاهرة *</label>
-                    <textarea name="problem_description" class="form-control rounded-0" rows="4" placeholder="اكتب شكوى العميل بالتفصيل (مثال: الشاشة مكسورة، الجهاز لا يشحن، عطل في الكاميرا الخلفية...)" required><?php echo htmlspecialchars($problem_description_value); ?></textarea>
+                    <textarea name="problem_description" class="form-control rounded-0" rows="6" placeholder="اكتب شكوى العميل بالتفصيل (مثال: الشاشة مكسورة، الجهاز لا يشحن، عطل في الكاميرا الخلفية...)" style="font-size: 1.1rem;" required><?php echo htmlspecialchars($problem_description_value); ?></textarea>
                 </div>
-            </div>
-
-            <div class="text-left mt-4 border-top pt-3">
-                <button type="submit" name="btn_save_ticket" class="btn-flat btn-flat-success btn-lg px-5">
-                    <?php echo get_icon('check', 'ml-1'); ?> فتح التذكرة وطباعة إيصال الاستلام
-                </button>
             </div>
         </form>
     </div>

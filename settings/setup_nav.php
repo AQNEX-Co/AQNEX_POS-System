@@ -24,36 +24,31 @@ if (empty($support_token_nav)) {
 }
 ?>
 
-<!-- Shared Settings Navigation Tabs -->
+<!-- Shared Setup Navigation Tabs -->
 <ul class="nav nav-tabs nav-tabs-custom" id="settingsTabs" role="tablist">
     <li class="nav-item">
-        <a class="nav-link <?php echo ($active_tab === 'enterprise') ? 'active' : ''; ?>" href="index.php">
-            <i class="bi bi-building ml-1"></i> بيانات المؤسسة والتوطين
+        <a class="nav-link <?php echo ($active_tab === 'printers') ? 'active' : ''; ?>" href="printers.php">
+            <i class="bi bi-printer ml-1"></i> إعدادات الطباعة
         </a>
     </li>
     <li class="nav-item">
-        <a class="nav-link <?php echo ($active_tab === 'financial') ? 'active' : ''; ?>" href="financial.php">
-            <i class="bi bi-calendar-event ml-1"></i> النظام المالي والضرائب
+        <a class="nav-link <?php echo ($active_tab === 'locations') ? 'active' : ''; ?>" href="locations.php">
+            <i class="bi bi-geo-alt ml-1"></i> الفروع والمواقع
         </a>
     </li>
     <li class="nav-item">
-        <a class="nav-link <?php echo ($active_tab === 'currencies') ? 'active' : ''; ?>" href="currencies.php">
-            <i class="bi bi-currency-exchange ml-1"></i> تهيئة العملات
+        <a class="nav-link <?php echo ($active_tab === 'backup') ? 'active' : ''; ?>" href="backup.php">
+            <i class="bi bi-cloud-arrow-up ml-1"></i> النسخ الاحتياطي
         </a>
     </li>
     <li class="nav-item">
-        <a class="nav-link <?php echo ($active_tab === 'rules') ? 'active' : ''; ?>" href="rules.php">
-            <i class="bi bi-shield-lock ml-1"></i> سياسات العمل
+        <a class="nav-link <?php echo ($active_tab === 'license') ? 'active' : ''; ?>" href="license.php">
+            <i class="bi bi-key ml-1"></i> التفعيل والترخيص
         </a>
     </li>
     <li class="nav-item">
-        <a class="nav-link <?php echo ($active_tab === 'units') ? 'active' : ''; ?>" href="units.php">
-            <i class="bi bi-tags ml-1"></i> وحدات القياس
-        </a>
-    </li>
-    <li class="nav-item">
-        <a class="nav-link <?php echo ($active_tab === 'modules') ? 'active' : ''; ?>" href="modules.php">
-            <i class="bi bi-gear-wide-connected ml-1"></i> موديولات النظام
+        <a class="nav-link <?php echo ($active_tab === 'utilities') ? 'active' : ''; ?>" href="utilities.php">
+            <i class="bi bi-tools ml-1"></i> أدوات الصيانة
         </a>
     </li>
 </ul>

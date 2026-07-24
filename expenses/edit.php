@@ -3,14 +3,14 @@ $dir_prefix = '../';
 $module = 'expenses';
 require_once($dir_prefix . 'includes/header.php');
 
-check_permission(['admin']);
-if (!isset($_GET['sid']) || empty($_GET['sid'])) {
-    echo "<div class='alert alert-danger rounded-0'>خطأ: لم يتم تحديد بند المصروف لتعديله.</div>";
-    require_once($dir_prefix . 'includes/footer.php');
+$sid = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['sid']) ? intval($_GET['sid']) : 0);
+if ($sid > 0) {
+    header("Location: create.php?id=" . $sid);
+    exit;
+} else {
+    header("Location: create.php");
     exit;
 }
-
-$sid = intval($_GET['sid']);
 
 // جلب التفاصيل الحالية أولاً
 $sql_details = "SELECT * FROM treasury_expenses WHERE sid = $sid";

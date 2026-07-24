@@ -78,8 +78,8 @@ if (isset($_POST['btn_save_return'])) {
                 $qty = intval($qty_returns[$i]);
                 $unit_price = doubleval($unit_prices[$i]);
                 $buy_price = doubleval($buy_prices[$i]);
-                $unit_name = isset($unit_names[$i]) ? trim($unit_names[$i]) : 'الوحدة الأساسية';
-                if (empty($unit_name)) $unit_name = 'الوحدة الأساسية';
+                $unit_name = isset($unit_names[$i]) ? trim($unit_names[$i]) : 'حبة';
+                if (empty($unit_name)) $unit_name = 'حبة';
 
                 if ($qty <= 0) continue;
 
@@ -115,7 +115,7 @@ if (isset($_POST['btn_save_return'])) {
 
                 // تحديد عامل تحويل الوحدة
                 $conv_factor = 1.0;
-                if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية') {
+                if (!empty($unit_name) && $unit_name !== 'حبة') {
                     $unit_res = $conn->query("SELECT conversion_factor FROM product_units WHERE product_id = $product_id AND unit_name = '$unit_name_esc' LIMIT 1");
                     if ($unit_res && $unit_res->num_rows > 0) {
                         $conv_factor = doubleval($unit_res->fetch_assoc()['conversion_factor']);
@@ -319,27 +319,66 @@ $box_name = get_box_name($conn, $active_box_id);
 </style>
 
 <div class="page-inner">
-    <div class="page-title-bar mb-3 no-print">
-        <div>
-            <h5 class="page-title font-weight-bold mb-0">
-                <i class="fa fa-undo ml-2 text-primary"></i> فاتورة مردودات المبيعات
-            </h5>
-            <p class="text-muted small mb-0 mt-1">أدخل رقم فاتورة المبيعات أو اضغط F2 للبحث عنها، ثم حدد الكميات المرتجعة لحفظ المردود.</p>
-        </div>
-        <div>
-            <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none ml-2">
-                <i class="fa fa-list ml-1"></i> قائمة المبيعات
-            </a>
-            <a href="create.php" class="btn-flat btn-flat-primary btn-sm text-decoration-none">
-                <i class="fa fa-plus ml-1"></i> فاتورة مبيعات جديدة
-            </a>
-        </div>
+<!-- Onyx Pro System Window Header Bar -->
+<div class="aqnex-window-header no-print">
+    <div>
+        <i class="bi bi-arrow-return-left text-danger ml-1"></i>
+        <span>أنظمة العملاء - نظام إدارة المبيعات - فاتورة مردودات المبيعات</span>
     </div>
+    <div>
+        <span class="ml-3">المستخدم: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong></span>
+        <span>التاريخ: <strong><?php echo date('Y/m/d'); ?></strong></span>
+    </div>
+</div>
+
+<!-- Onyx Pro Action Toolbar -->
+<div class="aqnex-toolbar no-print">
+    <!-- ➕ جديد (F2) -->
+    <button type="button" class="tool-btn btn-new" title="فتح شاشة فاتورة مبيعات جديدة (F2)" onclick="window.location.href='create.php';">
+        <i class="bi bi-file-earmark-plus-fill"></i>
+    </button>
+
+    <!-- 💾 حفظ المرتجع (F4 / Ctrl+S) -->
+    <button type="submit" form="returnForm" name="btn_save_return" class="tool-btn btn-save btn-save-action" title="حفظ وتأكيد المرتجع (F4 / Ctrl+S)">
+        <i class="bi bi-floppy-fill"></i>
+    </button>
+
+    <!-- 🔍 بحث عن فاتورة -->
+    <button type="button" class="tool-btn btn-search" title="البحث عن رقم فاتورة مبيعات (F2)" onclick="document.getElementById('invoiceSearchInput').focus(); document.getElementById('invoiceSearchInput').select();">
+        <i class="bi bi-search"></i>
+    </button>
+
+    <!-- 🖨 طباعة -->
+    <button type="button" class="tool-btn btn-print" title="طباعة الفاتورة (F9)" onclick="window.print();">
+        <i class="bi bi-printer-fill"></i>
+    </button>
+
+    <div class="aqnex-toolbar-divider"></div>
+
+    <!-- ✖ إلغاء (Esc) -->
+    <a href="index.php" class="tool-btn btn-delete text-decoration-none" title="إلغاء والعودة (Esc)">
+        <i class="bi bi-x-circle-fill"></i>
+    </a>
+</div>
 
 <?php if (!empty($success)): ?>
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        if (typeof showSystemAlert === 'function') {
+            showSystemAlert("تمت العملية بنجاح", <?php echo json_encode($success); ?>, "success");
+        }
+    });
+    </script>
     <div class="alert alert-success rounded-0 mb-4 text-right no-print"><?php echo htmlspecialchars($success); ?></div>
 <?php endif; ?>
 <?php if (!empty($error)): ?>
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        if (typeof showSystemAlert === 'function') {
+            showSystemAlert("خطأ في العملية", <?php echo json_encode($error); ?>, "danger");
+        }
+    });
+    </script>
     <div class="alert alert-danger rounded-0 mb-4 text-right no-print"><?php echo htmlspecialchars($error); ?></div>
 <?php endif; ?>
 
@@ -635,9 +674,9 @@ function displayInvoiceData(data) {
                     <input type="hidden" name="product_names[]" value="${escHtml(item.name)}">
                     <input type="hidden" name="unit_prices[]" value="${item.unit_price}">
                     <input type="hidden" name="buy_prices[]" value="${item.buy_price}">
-                    <input type="hidden" name="unit_names[]" value="${escHtml(item.unit_name || 'الوحدة الأساسية')}">
+                    <input type="hidden" name="unit_names[]" value="${escHtml(item.unit_name || 'حبة')}">
                 </td>
-                <td class="text-center small">${escHtml(item.unit_name || 'الوحدة الأساسية')}</td>
+                <td class="text-center small">${escHtml(item.unit_name || 'حبة')}</td>
                 <td class="text-center">${item.quantity}</td>
                 <td class="text-center ${disabledClass}">${canReturn}</td>
                 <td class="text-center small">${formatNum(item.unit_price)} YER</td>
@@ -836,6 +875,32 @@ function selectModalInvoice(id) {
 
 document.getElementById('modalInvoiceSearchInput').addEventListener('input', function() {
     loadModalInvoices(this.value);
+});
+
+// اختصارات لوحة التحكم لوظائف المرتجعات (Shortcuts)
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'F2') {
+        e.preventDefault();
+        var searchInput = document.getElementById('invoiceSearchInput');
+        if (searchInput) {
+            searchInput.focus();
+            searchInput.select();
+        }
+    }
+    if (e.key === 'F4' || (e.ctrlKey && e.key.toLowerCase() === 's')) {
+        e.preventDefault();
+        var form = document.getElementById('returnForm');
+        if (form) {
+            if (form.checkValidity()) {
+                form.submit();
+            } else {
+                form.reportValidity();
+            }
+        }
+    }
+    if (e.key === 'Escape') {
+        window.location.href = 'index.php';
+    }
 });
 </script>
 

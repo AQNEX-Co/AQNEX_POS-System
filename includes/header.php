@@ -90,22 +90,15 @@ try {
 
 /* غلاف شاشة التحميل */
 #page-loader {
+    display: none !important;
     position: fixed;
     inset: 0;
     z-index: 99999;
     background: rgba(248, 250, 252, 0.97);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.25s ease, visibility 0.25s ease;
     pointer-events: none;
 }
 #page-loader.active {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: all;
+    display: none !important;
 }
 @media print { #page-loader { display: none !important; } }
 
@@ -366,49 +359,38 @@ try {
         <div id="content">
         <?php if ($current_page !== 'login.php' && $current_page !== 'forget.php'): ?>
         <!-- ===== الشريط العلوي الرئيسي (امتداد كامل فوق الصفحة) ===== -->
+        <!-- ===== الشريط العلوي الرئيسي (Onyx Pro Style) ===== -->
         <header class="main-topbar no-print">
 
             <!-- الجانب الأيمن: شعار المنشأة + اسمها -->
             <div class="topbar-brand">
                 <img src="<?php echo $logo_url; ?>" alt="logo" class="topbar-logo">
                 <div class="topbar-brand-text">
-                    <span class="topbar-brand-name"><?php echo !empty($global_settings['store_name']) ? htmlspecialchars($global_settings['store_name']) : 'AQNEX POS'; ?></span>
-                    <!-- <span class="topbar-brand-sub">نظام إدارة المبيعات والمحاسبة</span> -->
+                    <span class="topbar-brand-name"><?php echo !empty($global_settings['store_name']) ? htmlspecialchars($global_settings['store_name']) : 'AQNEX ERP'; ?></span>
                 </div>
-                
             </div>
-        <!-- اسم النظام وشعار الماركة -->
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-            <div style="width:28px;height:28px;background:linear-gradient(135deg,#1e293b,#334155);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                <i class="bi bi-grid-3x3-gap-fill" style="color:#fff;font-size:.75rem;"></i>
-            </div>
-            <div>
-                <div style="font-weight:800;font-size:.82rem;color:#fff;letter-spacing:.04em;line-height:1.1;">AQNEX ERP</div>
-            </div>
-        </div>
+
             <!-- الجانب الأوسط: التاريخ والوقت المباشر -->
             <div class="topbar-datetime">
-
                 <div class="topbar-date">
-                    <div class="topbar-time" id="live-clock">
-    <?php date_default_timezone_set("Asia/Aden"); echo date("h:i:s A"); ?>
-</div>
-<?php
+                    <i class="bi bi-clock-history" style="color: #0284c7; font-size: 13px;"></i>
+                    <span id="live-clock" style="font-weight: 700; color: #0f172a; font-family: monospace; font-size: 0.78rem;"><?php date_default_timezone_set("Asia/Aden"); echo date("h:i:s A"); ?></span>
+                    &nbsp;|&nbsp;
+                    <?php
                     $days_ar = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
-                    echo $days_ar[date('w')] . ' &nbsp;|&nbsp; ' . date('d / m / Y');
+                    echo $days_ar[date('w')] . ' &nbsp;' . date('d/m/Y');
                     ?>
-                    <i class="bi bi-calendar3"></i>
                 </div>
             </div>
 
-            <!-- الجانب الأوسط المساعد: مبدل الفروع والمستودعات -->
-            <div class="topbar-branch-selector no-print" style="display: flex; gap: 10px; align-items: center; margin-left: auto; margin-right: 20px;">
+            <!-- الجانب الأوسط المساعد: مبدل الفروع والمستودعات بشكل مدمج ورسمي -->
+            <div class="topbar-branch-selector no-print" style="display: flex; gap: 8px; align-items: center; margin-left: auto; margin-right: 15px;">
                 <!-- الفرع -->
-                <div style="display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 2px 8px; gap: 4px;">
-                    <i class="bi bi-building" style="color: #38bdf8; font-size: 13px;"></i>
-                    <select id="topbar-select-branch" style="background: transparent; color: #fff; border: none; font-size: 12px; font-weight: bold; outline: none; cursor: pointer; padding: 3px 6px;">
+                <div style="display: flex; align-items: center; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; padding: 2px 2px; gap: 4px;">
+                    <i class="bi bi-building" style="color: #0284c7; font-size: 10px;"></i>
+                    <select id="topbar-select-branch" style="background: transparent; color: #1e293b; border: none; font-size: 11px; font-weight: 700; outline: none; cursor: pointer; ">
                         <?php foreach ($h_branches as $branch): ?>
-                            <option value="<?php echo $branch['id']; ?>" <?php echo ($branch['id'] == $h_active_branch_id) ? 'selected' : ''; ?> style="background: #0f172a; color: #fff;">
+                            <option value="<?php echo $branch['id']; ?>" <?php echo ($branch['id'] == $h_active_branch_id) ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($branch['name']); ?>
                             </option>
                         <?php endforeach; ?>
@@ -416,11 +398,11 @@ try {
                 </div>
 
                 <!-- المستودع -->
-                <div style="display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 2px 8px; gap: 4px;">
-                    <i class="bi bi-box-seam" style="color: #fbbf24; font-size: 13px;"></i>
-                    <select id="topbar-select-warehouse" style="background: transparent; color: #fff; border: none; font-size: 12px; font-weight: bold; outline: none; cursor: pointer; padding: 3px 6px;">
+                <div style="display: flex; align-items: center; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; padding: 2px 2px; gap: 4px;">
+                    <i class="bi bi-box-seam" style="color: #d97706; font-size: 12px;"></i>
+                    <select id="topbar-select-warehouse" style="background: transparent; color: #1e293b; border: none; font-size: 11px; font-weight: 700; outline: none; cursor: pointer; padding: 1px 3px;">
                         <?php foreach ($h_warehouses as $wh): ?>
-                            <option value="<?php echo $wh['id']; ?>" <?php echo ($wh['id'] == $h_active_warehouse_id) ? 'selected' : ''; ?> style="background: #0f172a; color: #fff;">
+                            <option value="<?php echo $wh['id']; ?>" <?php echo ($wh['id'] == $h_active_warehouse_id) ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($wh['name']); ?>
                             </option>
                         <?php endforeach; ?>

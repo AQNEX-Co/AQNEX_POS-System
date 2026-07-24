@@ -5,8 +5,7 @@ require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'cashier']);
 if (!isset($_GET['id']) || empty($_GET['id'])) {
-    echo "<div class='alert alert-danger rounded-0'>خطأ: لم يتم تحديد العميل.</div>";
-    require_once($dir_prefix . 'includes/footer.php');
+    header("Location: " . $dir_prefix . "reports/account_statement.php?type=customer");
     exit;
 }
 

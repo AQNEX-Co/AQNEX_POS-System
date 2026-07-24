@@ -45,24 +45,54 @@ $sql_tickets = "
 $res_tickets = $conn->query($sql_tickets);
 ?>
 
-<title>إدارة الصيانة والأجهزة - تكنولوجيا فون</title>
-
-<div class="card-flat">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5><?php echo get_icon('briefcase', 'ml-2 text-primary'); ?> تذاكر صيانة الأجهزة والأعطال</h5>
-        <a href="create.php" class="btn-flat btn-flat-success btn-sm text-decoration-none">
-            <?php echo get_icon('plus', 'ml-1'); ?> فتح تذكرة صيانة جديدة
-        </a>
+<!-- ======================== Onyx Pro Header Bar (مطابق لشاشة المبيعات) ======================== -->
+<div class="aqnex-window-header no-print mb-2" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: #fff; padding: 10px 16px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #3b82f6;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-weight: 800; font-size: 1.15rem; color: #38bdf8; text-shadow: 0 1px 2px rgba(0,0,0,0.5);">
+            <i class="bi bi-tools ml-2"></i> مركز الصيانة وأجهزة العملاء
+        </span>
+        <span class="badge badge-primary px-2 py-1" style="font-size: 0.75rem; background:#2563eb;">إدارة الأجهزة والتذاكر</span>
     </div>
+    <div style="font-size: 0.85rem; color: #94a3b8;">
+        <i class="bi bi-pc-display ml-1"></i> تكنولوجيا فون — نظام إدارة الصيانة المتقدم
+    </div>
+</div>
 
-    <!-- فلترة وبحث -->
-    <div class="card-body bg-light border-bottom no-print">
-        <form method="GET" class="row">
-            <div class="col-md-4 mb-2">
-                <input type="text" name="search" class="form-control rounded-0" placeholder="ابحث برقم التذكرة، العميل، نوع الجهاز..." value="<?php echo htmlspecialchars($search_query); ?>">
+<!-- ======================== Onyx Pro Toolbar ======================== -->
+<div class="aqnex-toolbar no-print mb-3" style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 6px 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 6px;">
+        <!-- ➕ فتح تذكرة جديدة -->
+        <button type="button" class="tool-btn" title="فتح تذكرة صيانة جديدة" onclick="window.location.href='create.php';" style="color: #2563eb; border-color: #93c5fd;">
+            <i class="bi bi-plus-lg"></i> <span>تذكرة جديدة</span>
+        </button>
+
+        <div style="height: 20px; width: 1px; background: #cbd5e1; margin: 0 4px;"></div>
+
+        <!-- 🔄 تحديث -->
+        <button type="button" class="tool-btn" title="تحديث القائمة" onclick="window.location.reload();">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+
+        <!-- 🖨️ طباعة -->
+        <button type="button" class="tool-btn" title="طباعة السجل" onclick="window.print();">
+            <i class="bi bi-printer"></i>
+        </button>
+    </div>
+</div>
+
+<!-- بطاقة البحث والفلترة -->
+<div class="card p-3 mb-3 no-print" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;">
+    <form method="GET" class="row align-items-center">
+        <div class="col-md-5 mb-2">
+            <div class="aqnex-form-group">
+                <label class="aqnex-label font-weight-bold text-secondary">البحث السريع:</label>
+                <input type="text" name="search" class="aqnex-input" placeholder="ابحث برقم التذكرة، العميل، نوع الجهاز، أو IMEI..." value="<?php echo htmlspecialchars($search_query); ?>">
             </div>
-            <div class="col-md-3 mb-2">
-                <select name="status" class="form-control rounded-0">
+        </div>
+        <div class="col-md-4 mb-2">
+            <div class="aqnex-form-group">
+                <label class="aqnex-label font-weight-bold text-secondary">حالة التذكرة:</label>
+                <select name="status" class="aqnex-select">
                     <option value="">-- كل حالات التذاكر --</option>
                     <option value="received" <?php echo $status_filter === 'received' ? 'selected' : ''; ?>>تم الاستلام</option>
                     <option value="in_progress" <?php echo $status_filter === 'in_progress' ? 'selected' : ''; ?>>قيد الفحص والصيانة</option>
@@ -72,87 +102,86 @@ $res_tickets = $conn->query($sql_tickets);
                     <option value="cancelled" <?php echo $status_filter === 'cancelled' ? 'selected' : ''; ?>>ملغاة</option>
                 </select>
             </div>
-            <div class="col-md-2 mb-2">
-                <button type="submit" class="btn btn-primary btn-block rounded-0"><?php echo get_icon('search'); ?> تصفية</button>
-            </div>
-            <div class="col-md-2 mb-2">
-                <a href="index.php" class="btn btn-secondary btn-block rounded-0">إعادة تعيين</a>
-            </div>
-        </form>
-    </div>
-
-    <div class="card-body">
-        <div class="table-responsive">
-            <table class="table-flat border">
-                <thead>
-                    <tr>
-                        <th>رقم التذكرة</th>
-                        <th>العميل</th>
-                        <th>نوع الجهاز</th>
-                        <th>الرقم التسلسلي / IMEI</th>
-                        <th>الحالة</th>
-                        <th>التكلفة التقديرية</th>
-                        <th>التكلفة النهائية</th>
-                        <th>تاريخ الاستلام</th>
-                        <th class="no-print">إجراء</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (!$res_tickets || $res_tickets->num_rows == 0): ?>
-                        <tr>
-                            <td colspan="9" class="text-center text-muted py-4">لا توجد تذاكر صيانة مطابقة للخيارات المدخلة.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php while ($t = $res_tickets->fetch_assoc()): ?>
-                            <tr>
-                                <td class="font-weight-bold">
-                                    <a href="view.php?id=<?php echo $t['id']; ?>" class="text-decoration-none">
-                                        <?php echo htmlspecialchars($t['ticket_number']); ?>
-                                    </a>
-                                </td>
-                                <td><?php echo htmlspecialchars($t['cust_name'] ?: 'عميل نقدي'); ?></td>
-                                <td><?php echo htmlspecialchars($t['device_name'] ?: ($t['device_brand'] . ' - ' . $t['device_type'])); ?></td>
-                                <td class="dir-ltr text-right"><code><?php echo htmlspecialchars($t['imei'] ?: '-'); ?></code></td>
-                                <td>
-                                    <?php 
-                                    switch ($t['status']) {
-                                        case 'received': 
-                                            echo '<span class="badge badge-secondary px-2 py-1 rounded-0">تم الاستلام</span>'; 
-                                            break;
-                                        case 'in_progress': 
-                                            echo '<span class="badge badge-info px-2 py-1 rounded-0">قيد الصيانة</span>'; 
-                                            break;
-                                        case 'waiting_parts': 
-                                            echo '<span class="badge badge-warning px-2 py-1 rounded-0">بانتظار قطع</span>'; 
-                                            break;
-                                        case 'completed': 
-                                            echo '<span class="badge badge-success px-2 py-1 rounded-0">جاهز للتسليم</span>'; 
-                                            break;
-                                        case 'delivered': 
-                                            echo '<span class="badge badge-dark px-2 py-1 rounded-0">تم التسليم والتحصيل</span>'; 
-                                            break;
-                                        case 'cancelled': 
-                                            echo '<span class="badge badge-danger px-2 py-1 rounded-0">ملغاة</span>'; 
-                                            break;
-                                    }
-                                    ?>
-                                </td>
-                                <td class="text-primary font-weight-bold"><?php echo number_format($t['estimated_cost'], 2); ?> ر.ي</td>
-                                <td class="text-success font-weight-bold"><?php echo number_format($t['final_cost'], 2); ?> ر.ي</td>
-                                <td><?php echo date('Y-m-d H:i', strtotime($t['received_date'])); ?></td>
-                                <td class="no-print">
-                                    <a href="view.php?id=<?php echo $t['id']; ?>" class="btn btn-outline-primary btn-sm rounded-0">عرض وتفاصيل</a>
-                                    <?php if ($t['status'] !== 'delivered' && $t['status'] !== 'cancelled'): ?>
-                                        <a href="view.php?id=<?php echo $t['id']; ?>#settlement" class="btn btn-success btn-sm rounded-0">تسليم وتصفية</a>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                        <?php endwhile; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
         </div>
+        <div class="col-md-3 mb-2 d-flex gap-2" style="margin-top: 22px;">
+            <button type="submit" class="btn btn-primary font-weight-bold px-3 py-1" style="font-size:0.85rem;"><i class="bi bi-search ml-1"></i> تصفية</button>
+            <a href="index.php" class="btn btn-outline-secondary font-weight-bold px-3 py-1 mr-2" style="font-size:0.85rem;">إعادة تعيين</a>
+        </div>
+    </form>
+</div>
+
+<div class="card p-3" style="background:#fff; border:1px solid #e2e8f0; border-radius:4px;">
+    <div class="table-responsive">
+        <table class="table table-bordered table-hover text-center" style="font-size:0.87rem; vertical-align:middle;">
+            <thead style="background:#f1f5f9; color:#334155;">
+                <tr>
+                    <th>رقم التذكرة</th>
+                    <th>العميل</th>
+                    <th>نوع الجهاز</th>
+                    <th>الرقم التسلسلي / IMEI</th>
+                    <th>الحالة</th>
+                    <th>التكلفة التقديرية</th>
+                    <th>التكلفة النهائية</th>
+                    <th>تاريخ الاستلام</th>
+                    <th class="no-print">إجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (!$res_tickets || $res_tickets->num_rows == 0): ?>
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">لا توجد تذاكر صيانة مطابقة للخيارات المدخلة.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php while ($t = $res_tickets->fetch_assoc()): ?>
+                        <tr>
+                            <td class="font-weight-bold">
+                                <a href="view.php?id=<?php echo $t['id']; ?>" class="text-primary font-weight-bold">
+                                    <?php echo htmlspecialchars($t['ticket_number']); ?>
+                                </a>
+                            </td>
+                            <td class="font-weight-bold"><?php echo htmlspecialchars($t['cust_name'] ?: 'عميل نقدي'); ?></td>
+                            <td><?php echo htmlspecialchars($t['device_name'] ?: ($t['device_brand'] . ' - ' . $t['device_type'])); ?></td>
+                            <td class="dir-ltr text-center"><code><?php echo htmlspecialchars($t['imei'] ?: '-'); ?></code></td>
+                            <td>
+                                <?php 
+                                switch ($t['status']) {
+                                    case 'received': 
+                                        echo '<span class="badge badge-secondary px-2 py-1">تم الاستلام</span>'; 
+                                        break;
+                                    case 'in_progress': 
+                                        echo '<span class="badge badge-info px-2 py-1">قيد الصيانة</span>'; 
+                                        break;
+                                    case 'waiting_parts': 
+                                        echo '<span class="badge badge-warning px-2 py-1 text-dark">بانتظار قطع</span>'; 
+                                        break;
+                                    case 'completed': 
+                                        echo '<span class="badge badge-success px-2 py-1">جاهز للتسليم</span>'; 
+                                        break;
+                                    case 'delivered': 
+                                        echo '<span class="badge badge-dark px-2 py-1">تم التسليم والتحصيل</span>'; 
+                                        break;
+                                    case 'cancelled': 
+                                        echo '<span class="badge badge-danger px-2 py-1">ملغاة</span>'; 
+                                        break;
+                                }
+                                ?>
+                            </td>
+                            <td class="text-primary font-weight-bold"><?php echo number_format($t['estimated_cost'], 2); ?> ر.ي</td>
+                            <td class="text-success font-weight-bold"><?php echo number_format($t['final_cost'], 2); ?> ر.ي</td>
+                            <td><?php echo date('Y-m-d H:i', strtotime($t['received_date'])); ?></td>
+                            <td class="no-print">
+                                <a href="view.php?id=<?php echo $t['id']; ?>" class="btn btn-outline-primary btn-sm px-2 py-0" title="عرض وتفاصيل"><i class="bi bi-eye"></i> عرض</a>
+                                <?php if ($t['status'] !== 'delivered' && $t['status'] !== 'cancelled'): ?>
+                                    <a href="view.php?id=<?php echo $t['id']; ?>#settlement" class="btn btn-success btn-sm px-2 py-0 mr-1" title="تسليم وتصفية"><i class="bi bi-check-circle"></i> تسليم</a>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endwhile; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </div>
 </div>
 
 <?php require_once($dir_prefix . 'includes/footer.php'); ?>
+

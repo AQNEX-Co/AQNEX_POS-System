@@ -3,14 +3,14 @@ $dir_prefix = '../';
 $module = 'receipts';
 require_once($dir_prefix . 'includes/header.php');
 
-check_permission(['admin']);
-if (!isset($_GET['id']) || empty($_GET['id'])) {
-    echo "<div class='alert alert-danger rounded-0'>خطأ: لم يتم تحديد سند القبض.</div>";
-    require_once($dir_prefix . 'includes/footer.php');
+$qid = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['qid']) ? intval($_GET['qid']) : 0);
+if ($qid > 0) {
+    header("Location: create.php?id=" . $qid);
+    exit;
+} else {
+    header("Location: create.php");
     exit;
 }
-
-$qid = intval($_GET['id']);
 
 // جلب التفاصيل الحالية للسند
 $sql_details = "SELECT * FROM receipts WHERE qid = $qid";

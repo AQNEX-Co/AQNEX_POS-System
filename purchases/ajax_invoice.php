@@ -7,7 +7,6 @@ header('Content-Type: application/json; charset=utf-8');
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-// التحقق من الجلسة
 if (!isset($_SESSION['SESS_MEMBER_ID'])) {
     echo json_encode(['error' => 'غير مخول']);
     exit;
@@ -18,9 +17,10 @@ require_once(__DIR__ . '/../includes/connect.php');
 // جلب قائمة فواتير المشتريات للبحث (Lookup)
 if (isset($_GET['action']) && $_GET['action'] === 'list') {
     $search_term = $conn->real_escape_string($_GET['search'] ?? '');
-    $sql = "SELECT id, supp_name, total, date FROM purchases WHERE 1=1";
+    // تم التحديث لاستخدام جدول الماستر الجديد
+    $sql = "SELECT id, invoice_no, supp_name, total_amount, invoice_date FROM purchase_invoices_mst WHERE d_s = 0";
     if (!empty($search_term)) {
-        $sql .= " AND (id LIKE '%$search_term%' OR supp_name LIKE '%$search_term%')";
+        $sql .= " AND (id LIKE '%$search_term%' OR invoice_no LIKE '%$search_term%' OR supp_name LIKE '%$search_term%')";
     }
     $sql .= " ORDER BY id DESC LIMIT 50";
     $res = $conn->query($sql);
@@ -29,9 +29,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'list') {
         while ($row = $res->fetch_assoc()) {
             $list[] = [
                 'id' => intval($row['id']),
+                'invoice_no' => $row['invoice_no'],
                 'supp_name' => $row['supp_name'] ?: 'مورد عام',
-                'total' => doubleval($row['total']),
-                'date' => $row['date']
+                'total' => doubleval($row['total_amount']),
+                'date' => $row['invoice_date']
             ];
         }
     }
@@ -45,11 +46,11 @@ if ($invoice_id <= 0) {
     exit;
 }
 
-// جلب الفاتورة الرئيسية
- $res_inv = $conn->query("SELECT p.*, s.supp_daain, s.supp_id as supplier_id
-                          FROM purchases p
-                          LEFT JOIN suppliers s ON p.supp_name = s.supp_name AND s.d_s = 0
-                          WHERE p.id = $invoice_id
+// جلب الفاتورة الرئيسية من جدول الماستر الجديد
+$res_inv = $conn->query("SELECT p.*, s.supp_daain, s.supp_id as supplier_id
+                          FROM purchase_invoices_mst p
+                          LEFT JOIN suppliers s ON p.supp_id = s.supp_id AND s.d_s = 0
+                          WHERE p.id = $invoice_id AND p.d_s = 0
                           LIMIT 1");
 
 if (!$res_inv || $res_inv->num_rows === 0) {
@@ -58,67 +59,56 @@ if (!$res_inv || $res_inv->num_rows === 0) {
 }
 
 $invoice = $res_inv->fetch_assoc();
-$build_date = $invoice['date'];
+$build_date = $invoice['invoice_date'];
 $supplier_name = $invoice['supp_name'];
 $exchange_rate = doubleval($invoice['exchange_rate'] ?? 1.0);
 if ($exchange_rate <= 0) $exchange_rate = 1.0;
 
-// جلب بنود الفاتورة
-$res_items = $conn->query("SELECT * FROM purchase_items 
-                            WHERE buys_date = '" . $conn->real_escape_string($build_date) . "' 
-                            AND supp_name = '" . $conn->real_escape_string($supplier_name) . "'");
+// جلب بنود الفاتورة من جدول التفاصيل الجديد
+$res_items = $conn->query("SELECT * FROM purchase_invoices_dtl WHERE invoice_id = $invoice_id AND d_s = 0 ORDER BY id ASC");
 
 $items = [];
 if ($res_items) {
     while ($row = $res_items->fetch_assoc()) {
-        $p_name = $row['name'];
+        $p_name = $row['product_name'];
+        $product_id = intval($row['product_id']);
         
         // جلب تفاصيل المنتج من جدول المنتجات لمطابقة المعرف والكمية المتوفرة
-        $p_esc = $conn->real_escape_string($p_name);
-        $res_p = $conn->query("SELECT id, quantity, buy_price FROM products WHERE name = '$p_esc' LIMIT 1");
-        $product_id = 0;
         $current_stock = 0;
-        
-        if ($res_p && $res_p->num_rows > 0) {
-            $p_row = $res_p->fetch_assoc();
-            $product_id = intval($p_row['id']);
-            $current_stock = intval($p_row['quantity']);
+        if ($product_id > 0) {
+            $res_p = $conn->query("SELECT quantity FROM products WHERE id = $product_id LIMIT 1");
+            if ($res_p && $res_p->num_rows > 0) {
+                $current_stock = intval($res_p->fetch_assoc()['quantity']);
+            }
         }
         
-        // حساب إجمالي السطر وسعر الشراء الفردي في الفاتورة (بالعملة الأساسية YER)
-        $line_total_base = doubleval($row['buy_price']); // buy_price يحمل إجمالي السطر بالريال اليمني
-        $qty_purchased = intval($row['quantity']);
-        $unit_buy_price_base = $qty_purchased > 0 ? ($line_total_base / $qty_purchased) : 0;
+        $qty_purchased = doubleval($row['quantity']);
+        $unit_buy_price_base = doubleval($row['unit_cost']);
+        $line_total_base = doubleval($row['total_cost']);
         
         // حساب الكمية الممكن إرجاعها (الكمية المشتراة - الكميات المرجعة سابقاً)
         $already_returned = 0;
         if ($product_id > 0) {
+            // ملاحظة: يُفضل تحديث جدول purchase_returns ليستخدم invoice_id بدلاً من purchase_id مستقبلاً
             $ret_res = $conn->query("SELECT COALESCE(SUM(quantity),0) AS returned FROM purchase_returns 
                                       WHERE purchase_id = $invoice_id AND product_id = $product_id AND status = 'active'");
-            $already_returned = $ret_res ? intval($ret_res->fetch_assoc()['returned']) : 0;
+            $already_returned = $ret_res ? doubleval($ret_res->fetch_assoc()['returned']) : 0;
         }
         
         $can_return = $qty_purchased - $already_returned;
-        
-        // لا يمكن إرجاع كمية أكبر من المتوفر حالياً في المخزن
         $can_return = min($can_return, $current_stock);
 
-        $unit_name = 'الوحدة الأساسية';
-        if (!empty($row['unit_name'])) {
-            $unit_name = $row['unit_name'];
-        } elseif (preg_match('/\(([^)]+)\)/', $p_name, $matches)) {
-            $unit_name = trim($matches[1]);
-        }
+        $unit_name = !empty($row['unit_name']) ? $row['unit_name'] : 'حبة';
         
         $items[] = [
-            'item_id'          => intval($row['buyid']),
+            'item_id'          => intval($row['id']), // معرف البند في جدول التفاصيل
             'product_id'       => $product_id,
             'name'             => $p_name,
             'quantity'         => $qty_purchased,
             'can_return'       => max(0, $can_return),
             'already_returned' => $already_returned,
-            'unit_price'       => $unit_buy_price_base, // بالعملة الأساسية YER
-            'line_total'       => $line_total_base,
+            'unit_price'       => $unit_buy_price_base, // سعر الوحدة
+            'line_total'       => $line_total_base,     // إجمالي البند
             'current_stock'    => $current_stock,
             'unit_name'        => $unit_name
         ];
@@ -144,12 +134,13 @@ if ($res_ret) {
 echo json_encode([
     'invoice' => [
         'id'            => intval($invoice['id']),
+        'invoice_no'    => $invoice['invoice_no'],
         'supp_name'     => $invoice['supp_name'],
-        'total'         => doubleval($invoice['total']), // بالعملة الأساسية YER
-        'date'          => $invoice['date'],
+        'total'         => doubleval($invoice['total_amount']),
+        'date'          => $invoice['invoice_date'],
         'currency_code' => $invoice['currency_code'] ?? 'YER',
         'exchange_rate' => $exchange_rate,
-        'invoice_type'  => $invoice['invoice_type'] ?? (doubleval($invoice['remaining_total']) > 0 ? 'credit' : 'cash'),
+        'invoice_type'  => $invoice['invoice_type'] ?? (doubleval($invoice['remaining_amount']) > 0 ? 'credit' : 'cash'),
     ],
     'items'   => $items,
     'returns_history' => $ret_history,

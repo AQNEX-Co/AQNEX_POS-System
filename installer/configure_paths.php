@@ -13,9 +13,8 @@ if (empty($installPath)) {
     die("خطأ: يرجى تمرير مسار التثبيت كمعامل.");
 }
 
-// توحيد المسارات بالشرطة المائلة للأمام متوافقة مع Apache/PHP/MariaDB
-$installPath = str_replace('\\', '/', $installPath);
-$installPath = rtrim($installPath, '/');
+// توح$dbType = isset($argv[2]) ? trim($argv[2]) : 'local';
+echo "نوع قاعدة البيانات المختار: $dbType\n";
 
 $apacheConfPath = $installPath . '/runtime/apache/conf/httpd.conf';
 $phpIniPath     = $installPath . '/runtime/php/php.ini';
@@ -137,7 +136,7 @@ if (!file_exists($phpIniPath)) {
 if (file_exists($phpIniPath)) {
     $iniContent = file_get_contents($phpIniPath);
     
-    // تعديل مسار الإضافات extension_dir وإزالة الفاصلة المنقوطة إن وجدت (باستخدام [ \t]* لتفادي دمج الأسطر)
+    // تعديل مسار الإضافات extension_dir وإزالة الفاصلة المنقوطة إن وجدت
     $iniContent = preg_replace(
         '/;?[ \t]*extension_dir[ \t]*=[ \t]*".*"/', 
         'extension_dir = "' . $installPath . '/runtime/php/ext"', 
@@ -164,58 +163,80 @@ if (file_exists($phpIniPath)) {
     echo "⚠ ملف إعدادات PHP غير موجود على المسار: $phpIniPath\n";
 }
 
-// 3. تهيئة مجلد بيانات MariaDB (في حال عدم وجوده)
-$mariaDbDataDir = $installPath . '/runtime/mariadb/data';
-if (!file_exists($mariaDbDataDir)) {
-    echo "جاري تهيئة قاعدة بيانات MariaDB لأول مرة...\n";
-    $installDbCmd = '"' . $installPath . '/runtime/mariadb/bin/mariadb-install-db.exe" --datadir="' . $mariaDbDataDir . '"';
-    $output = shell_exec($installDbCmd);
-    echo $output;
-    echo "✓ تم تهيئة قاعدة بيانات MariaDB بنجاح.\n";
-}
-
-// 4. تحديث إعدادات MariaDB
-$mariadbCnfPath1 = $installPath . '/runtime/mariadb/my.ini';
-$mariadbCnfPath2 = $installPath . '/runtime/mariadb/data/my.ini';
-
-// إذا كان الملف موجودًا في مجلد data فقط، نقوم بنسخه للمجلد الرئيسي ليسهل إدارته وقراءته بواسطة الخدمة
-if (!file_exists($mariadbCnfPath1) && file_exists($mariadbCnfPath2)) {
-    copy($mariadbCnfPath2, $mariadbCnfPath1);
-}
-
-$mariadbCnfPath = file_exists($mariadbCnfPath1) ? $mariadbCnfPath1 : $mariadbCnfPath2;
-
-if (file_exists($mariadbCnfPath)) {
-    $cnfContent = file_get_contents($mariadbCnfPath);
+// تنظيف أو تهيئة إعدادات MariaDB حسب الخيار
+if ($dbType === 'external') {
+    echo "جاري إزالة خادم قاعدة البيانات المحلي (MariaDB) لتوفير المساحة...\n";
+    $mariaDir = $installPath . '/runtime/mariadb';
     
-    // تعديل مسار الخادم الرئيسي ومسار مجلد البيانات data
-    $cnfContent = preg_replace(
-        '/basedir\s*=\s*".*"/', 
-        'basedir = "' . $installPath . '/runtime/mariadb"', 
-        $cnfContent
-    );
-    
-    $cnfContent = preg_replace(
-        '/datadir\s*=\s*".*"/', 
-        'datadir = "' . $installPath . '/runtime/mariadb/data"', 
-        $cnfContent
-    );
-
-    // تعديل منفذ الاستماع لقاعدة البيانات لمنع التعارض مع منفذ MySQL الافتراضي
-    if (strpos($cnfContent, 'port') === false) {
-        $cnfContent = str_replace('[mysqld]', "[mysqld]\nport = 3307", $cnfContent);
-    } else {
-        $cnfContent = preg_replace(
-            '/port\s*=\s*\d+/', 
-            'port = 3307', 
-            $cnfContent
-        );
+    // دالة حذف المجلد تكرارياً
+    function deleteDirectory($dir) {
+        if (!file_exists($dir)) return true;
+        if (!is_dir($dir)) return unlink($dir);
+        foreach (scandir($dir) as $item) {
+            if ($item == '.' || $item == '..') continue;
+            if (!deleteDirectory($dir . DIRECTORY_SEPARATOR . $item)) return false;
+        }
+        return rmdir($dir);
     }
     
-    file_put_contents($mariadbCnfPath, $cnfContent);
-    echo "✓ تم تحديث ملف إعدادات MariaDB (my.ini) بنجاح.\n";
+    if (deleteDirectory($mariaDir)) {
+        echo "✓ تم حذف مجلد خادم قاعدة البيانات المحلي بنجاح.\n";
+    } else {
+        echo "⚠ حدث خطأ أثناء محاولة إزالة ملفات خادم قاعدة البيانات المحلي.\n";
+    }
+
+    $dbPort = 3306;
 } else {
-    echo "⚠ ملف إعدادات MariaDB غير موجود على المسار: $mariadbCnfPath\n";
+    // 3. تهيئة مجلد بيانات MariaDB (في حال عدم وجوده)
+    $mariaDbDataDir = $installPath . '/runtime/mariadb/data';
+    if (!file_exists($mariaDbDataDir)) {
+        echo "جاري تهيئة قاعدة بيانات MariaDB لأول مرة...\n";
+        $installDbCmd = '"' . $installPath . '/runtime/mariadb/bin/mariadb-install-db.exe" --datadir="' . $mariaDbDataDir . '"';
+        $output = shell_exec($installDbCmd);
+        echo $output;
+        echo "✓ تم تهيئة قاعدة بيانات MariaDB بنجاح.\n";
+    }
+
+    // 4. تحديث إعدادات MariaDB
+    $mariadbCnfPath1 = $installPath . '/runtime/mariadb/my.ini';
+    $mariadbCnfPath2 = $installPath . '/runtime/mariadb/data/my.ini';
+
+    if (!file_exists($mariadbCnfPath1) && file_exists($mariadbCnfPath2)) {
+        copy($mariadbCnfPath2, $mariadbCnfPath1);
+    }
+
+    $mariadbCnfPath = file_exists($mariadbCnfPath1) ? $mariadbCnfPath1 : $mariadbCnfPath2;
+
+    if (file_exists($mariadbCnfPath)) {
+        $cnfContent = file_get_contents($mariadbCnfPath);
+        
+        $cnfContent = preg_replace(
+            '/basedir\s*=\s*".*"/', 
+            'basedir = "' . $installPath . '/runtime/mariadb"', 
+            $cnfContent
+        );
+        
+        $cnfContent = preg_replace(
+            '/datadir\s*=\s*".*"/', 
+            'datadir = "' . $installPath . '/runtime/mariadb/data"', 
+            $cnfContent
+        );
+
+        if (strpos($cnfContent, 'port') === false) {
+            $cnfContent = str_replace('[mysqld]', "[mysqld]\nport = 3307", $cnfContent);
+        } else {
+            $cnfContent = preg_replace(
+                '/port\s*=\s*\d+/', 
+                'port = 3307', 
+                $cnfContent
+            );
+        }
+        
+        file_put_contents($mariadbCnfPath, $cnfContent);
+        echo "✓ تم تحديث ملف إعدادات MariaDB (my.ini) بنجاح.\n";
+    }
+    
+    $dbPort = 3307;
 }
 
 // 5. تحديث منفذ الاتصال في تطبيق الويب (connect.php و config.php)
@@ -223,25 +244,30 @@ $connectPhpPath = $installPath . '/app/includes/connect.php';
 if (file_exists($connectPhpPath)) {
     $connContent = file_get_contents($connectPhpPath);
     $connContent = preg_replace(
+        '/new mysqli\(\$servername,\s*\$username,\s*\$password,\s*\$dbname,\s*\d+\)/',
+        "new mysqli(\$servername, \$username, \$password, \$dbname, $dbPort)",
+        $connContent
+    );
+    // دعم الحالة الافتراضية بدون تحديد المنفذ في الاستدعاء القديم
+    $connContent = preg_replace(
         '/new mysqli\(\$servername,\s*\$username,\s*\$password,\s*\$dbname\)/',
-        'new mysqli($servername, $username, $password, $dbname, 3307)',
+        "new mysqli(\$servername, \$username, \$password, \$dbname, $dbPort)",
         $connContent
     );
     file_put_contents($connectPhpPath, $connContent);
-    echo "✓ تم تحديث منفذ قاعدة البيانات في ملف الاتصال (connect.php) إلى 3307 بنجاح.\n";
+    echo "✓ تم تحديث منفذ قاعدة البيانات في ملف الاتصال (connect.php) إلى $dbPort بنجاح.\n";
 }
 
 $configPhpPath = $installPath . '/app/app/Config/config.php';
 if (file_exists($configPhpPath)) {
     $configContent = file_get_contents($configPhpPath);
-    // تحديث المنفذ من 3306 إلى 3307
     $configContent = preg_replace(
         '/\'port\'\s*=>\s*\d+,/',
-        "'port' => 3307,",
+        "'port' => $dbPort,",
         $configContent
     );
     file_put_contents($configPhpPath, $configContent);
-    echo "✓ تم تحديث منفذ قاعدة البيانات في ملف الإعدادات الموحد (config.php) إلى 3307 بنجاح.\n";
+    echo "✓ تم تحديث منفذ قاعدة البيانات في ملف الإعدادات الموحد (config.php) إلى $dbPort بنجاح.\n";
 } else {
     echo "⚠ ملف الإعدادات config.php غير موجود على المسار: $configPhpPath\n";
 }

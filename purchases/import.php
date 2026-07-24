@@ -130,7 +130,7 @@ if (isset($_POST['btn_import']) && isset($_FILES['import_file']) && $_FILES['imp
                         if ($chk && $chk->num_rows > 0) {
                             $p_id = intval($chk->fetch_assoc()['id']);
                             // تحديث المنتج الحالي
-                            $conn->query("UPDATE `products` SET `quantity` = `quantity` + $qty, `buy_price` = $ub, `total` = `quantity` * `buy_price` WHERE `id` = $p_id");
+                            $conn->query("UPDATE `products` SET `quantity` = `quantity` + $qty, `buy_price` = $ub, `total` = (`quantity` + $qty) * $ub WHERE `id` = $p_id");
                         } else {
                             // إنشاء منتج جديد
                             $res_cat = $conn->query("SELECT catid FROM categories WHERE d_s = 0 LIMIT 1");

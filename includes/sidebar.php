@@ -82,7 +82,7 @@ $is_settings_active = ($module == 'settings');
         <li class="<?php echo ($module == 'dashboard') ? 'active' : ''; ?>">
             <a href="<?php echo $prefix; ?>home.php">
                 <span class="icon-wrapper"><i class="bi bi-house-door"></i></span>
-                <span class="menu-text">لوحة التحكم</span>
+                <span class="menu-text">الرئيسية</span>
             </a>
         </li>
 
@@ -144,19 +144,45 @@ $is_settings_active = ($module == 'settings');
                         قيود اليومية
                     </a>
                 </li>
-
-                <li class="<?php echo ($module == 'receipt_voucher') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>accounting/receipt_voucher.php">
+                <?php if ($is_admin || sidebar_has_access('box')): ?>
+                <li class="<?php echo ($module == 'box') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>box/index.php">
+                        <span class="icon-wrapper"><i class="bi bi-wallet2"></i></span>
+                        الصناديق المالية
+                    </a>
+                </li>
+                <?php endif; ?>
+                <li>
+                    <a href="<?php echo $prefix; ?>#">
+                        <span class="icon-wrapper"><i class="bi bi-credit-card"></i></span>
+                        الحسابات البنكية
+                    </a>
+                </li>
+                <li>
+                    <a href="<?php echo $prefix; ?>#">
+                        <span class="icon-wrapper"><i class="bi bi-arrow-left-right"></i></span>
+                        تحويل مالي
+                    </a>
+                </li>
+                <li>
+                    <a href="<?php echo $prefix; ?>#">
+                        <span class="icon-wrapper"><i class="bi bi-lock"></i></span>
+                        إغلاق اليومية
+                    </a>
+                </li>
+<!-- 
+                <li class="<?php echo ($module == 'receipts' && basename($_SERVER['PHP_SELF']) == 'create.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>receipts/create.php">
                         <span class="icon-wrapper" style="color:#10b981;"><i class="bi bi-arrow-down-circle-fill"></i></span>
                         سند القبض
                     </a>
                 </li>
-                <li class="<?php echo ($module == 'payment_voucher') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>accounting/payment_voucher.php">
+                <li class="<?php echo ($module == 'expenses' && basename($_SERVER['PHP_SELF']) == 'create.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>expenses/create.php">
                         <span class="icon-wrapper" style="color:#ef4444;"><i class="bi bi-arrow-up-circle-fill"></i></span>
                         سند الصرف
                     </a>
-                </li>
+                </li> -->
                 <li class="<?php echo ($module == 'ledger') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>accounting/ledger.php">
                         <span class="icon-wrapper"><i class="bi bi-folder2-open"></i></span>
@@ -195,24 +221,32 @@ $is_settings_active = ($module == 'settings');
                         فاتورة مبيعات
                     </a>
                 </li>
-                <li class="<?php echo ($module == 'sales' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
+                <!-- <li class="<?php echo ($module == 'sales' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>sales/index.php">
                         <span class="icon-wrapper"><i class="bi bi-file-earmark-plus"></i></span>
                         سجل المبيعات
                     </a>
-                </li>
+                </li> -->
                 <li class="<?php echo ($module == 'sales' && basename($_SERVER['PHP_SELF']) == 'returns.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>sales/returns.php">
                         <span class="icon-wrapper"><i class="bi bi-arrow-counterclockwise"></i></span>
-                        مرتجع مبيعات
+                        فاتورة مردود مبيعات
                     </a>
                 </li>
-                <li>
+                                <?php if ($is_admin || sidebar_has_access('customers')): ?>
+                <li class="<?php echo ($module == 'customers') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>customers/index.php">
+                        <span class="icon-wrapper"><i class="bi bi-person-badge"></i></span>
+                        ادارة العملاء
+                    </a>
+                </li>
+                <?php endif; ?>
+                <!-- <li>
                     <a href="<?php echo $prefix; ?>#">
                         <span class="icon-wrapper"><i class="bi bi-file-earmark-text"></i></span>
                         عروض الأسعار
                     </a>
-                </li>
+                </li> -->
             </ul>
         </li>
         <?php endif; ?>
@@ -235,16 +269,16 @@ $is_settings_active = ($module == 'settings');
                         فاتورة مشتريات
                     </a>
                 </li>
-                <li class="<?php echo ($module == 'purchases' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
+                <!-- <li class="<?php echo ($module == 'purchases' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>purchases/index.php">
                         <span class="icon-wrapper"><i class="bi bi-file-earmark-plus"></i></span>
                         سجل المشتريات
                     </a>
-                </li>
+                </li> -->
                 <li class="<?php echo ($module == 'purchases' && basename($_SERVER['PHP_SELF']) == 'returns.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>purchases/returns.php">
-                        <span class="icon-wrapper"><i class="bi bi-arrow-left-right"></i></span>
-                        مرتجع مشتريات
+                        <span class="icon-wrapper"><i class="bi bi-arrow-counterclockwise"></i></span>
+                        فاتورة مردود مشتريات
                     </a>
                 </li>
                 <?php endif; ?>
@@ -257,12 +291,12 @@ $is_settings_active = ($module == 'settings');
                     </a>
                 </li>
                 <?php endif; ?>
-                <li>
+                <!-- <li>
                     <a href="<?php echo $prefix; ?>#">
                         <span class="icon-wrapper"><i class="bi bi-journal-check"></i></span>
                         طلبات الشراء
                     </a>
-                </li>
+                </li> -->
             </ul>
         </li>
         <?php endif; ?>
@@ -289,8 +323,7 @@ $is_settings_active = ($module == 'settings');
                 <li class="<?php echo ($module == 'products' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>products/index.php">
                         <span class="icon-wrapper"><i class="bi bi-tags"></i></span>
-                     الاصناف والمنتجات
-                    </a>
+ادارة الاصناف                    </a>
                 </li>
                 <?php endif; ?>
                 
@@ -396,7 +429,7 @@ $is_settings_active = ($module == 'settings');
         </li>
         <?php endif; ?>
         <!-- 6. الخزينة والبنوك (Finance & Treasury) -->
-        <?php if ($is_admin || sidebar_has_access('box') || sidebar_has_access('receipts') || sidebar_has_access('expenses')): ?>
+        <!-- <?php if ($is_admin || sidebar_has_access('box') || sidebar_has_access('receipts') || sidebar_has_access('expenses')): ?>
         <li class="<?php echo $is_finance_active ? 'active' : ''; ?>">
             <a href="#financeSubmenu" data-toggle="collapse" aria-expanded="<?php echo $is_finance_active ? 'true' : 'false'; ?>" class="dropdown-toggle">
                 <span class="icon-wrapper"><i class="bi bi-bank"></i></span>
@@ -420,22 +453,6 @@ $is_settings_active = ($module == 'settings');
                         الحسابات البنكية
                     </a>
                 </li>
-                <?php if ($is_admin || sidebar_has_access('receipts')): ?>
-                <li class="<?php echo ($module == 'receipts') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>receipts/index.php">
-                        <span class="icon-wrapper"><i class="bi bi-journal-plus"></i></span>
-                        سندات القبض (مبيعات)
-                    </a>
-                </li>
-                <?php endif; ?>
-                <?php if ($is_admin || sidebar_has_access('expenses')): ?>
-                <li class="<?php echo ($module == 'expenses') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>expenses/index.php">
-                        <span class="icon-wrapper"><i class="bi bi-journal-minus"></i></span>
-                        سندات الصرف (مصاريف)
-                    </a>
-                </li>
-                <?php endif; ?>
                 <li>
                     <a href="<?php echo $prefix; ?>#">
                         <span class="icon-wrapper"><i class="bi bi-arrow-left-right"></i></span>
@@ -450,9 +467,9 @@ $is_settings_active = ($module == 'settings');
                 </li>
             </ul>
         </li>
-        <?php endif; ?>
+        <?php endif; ?> -->
         <!-- 8. العملاء والائتمان (CRM & Credit) -->
-        <?php if ($is_admin || sidebar_has_access('customers') || sidebar_has_access('sales')): ?>
+        <!-- <?php if ($is_admin || sidebar_has_access('customers') || sidebar_has_access('sales')): ?>
         <li class="<?php echo $is_crm_active ? 'active' : ''; ?>">
             <a href="#crmSubmenu" data-toggle="collapse" aria-expanded="<?php echo $is_crm_active ? 'true' : 'false'; ?>" class="dropdown-toggle">
                 <span class="icon-wrapper"><i class="bi bi-people"></i></span>
@@ -462,14 +479,7 @@ $is_settings_active = ($module == 'settings');
                 </span>
             </a>
             <ul class="collapse list-unstyled <?php echo $is_crm_active ? 'show' : ''; ?>" id="crmSubmenu">
-                <?php if ($is_admin || sidebar_has_access('customers')): ?>
-                <li class="<?php echo ($module == 'customers') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>customers/index.php">
-                        <span class="icon-wrapper"><i class="bi bi-person-badge"></i></span>
-                        سجل العملاء
-                    </a>
-                </li>
-                <?php endif; ?>
+
                 
                 <?php if (function_exists('is_module_enabled') && is_module_enabled('installments') && ($is_admin || sidebar_has_access('sales'))): ?>
                 <li class="<?php echo ($module == 'installments') ? 'active' : ''; ?>">
@@ -479,7 +489,7 @@ $is_settings_active = ($module == 'settings');
                     </a>
                 </li>
                 <?php endif; ?>
-                <li>
+                 <li>
                     <a href="<?php echo $prefix; ?>#">
                         <span class="icon-wrapper"><i class="bi bi-award"></i></span>
                         نظام الولاء
@@ -487,7 +497,7 @@ $is_settings_active = ($module == 'settings');
                 </li>
             </ul>
         </li>
-        <?php endif; ?>
+        <?php endif; ?> -->
 
         <!-- 9. الموارد البشرية (Human Resources) -->
         <?php if ($is_admin || sidebar_has_access('users')): ?>
@@ -516,105 +526,113 @@ $is_settings_active = ($module == 'settings');
         </li>
         <?php endif; ?>
 
-        <!-- 10. التقارير (Reports) -->
+        <!-- 10. التقارير والتحليلات (Reports & Analytics) -->
         <?php if ($is_admin || sidebar_has_access('reports')): ?>
         <li class="<?php echo $is_reports_active ? 'active' : ''; ?>">
             <a href="#reportsSubmenu" data-toggle="collapse" aria-expanded="<?php echo $is_reports_active ? 'true' : 'false'; ?>" class="dropdown-toggle">
-                <span class="icon-wrapper"><i class="bi bi-bar-chart-line"></i></span>
-                <span class="menu-text">التقارير</span>
+                <span class="icon-wrapper"><i class="bi bi-bar-chart-line-fill text-info"></i></span>
+                <span class="menu-text">التقارير والتحليلات</span>
                 <span class="arrow-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </span>
             </a>
             <ul class="collapse list-unstyled <?php echo $is_reports_active ? 'show' : ''; ?>" id="reportsSubmenu">
+                <li class="<?php echo ($module == 'reports' && basename($_SERVER['PHP_SELF']) == 'inventory_report.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>reports/inventory_report.php">
+                        <span class="icon-wrapper"><i class="bi bi-box-seam text-primary"></i></span>
+                        تقرير الجرد والمخزون
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'reports' && basename($_SERVER['PHP_SELF']) == 'suppliers_report.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>reports/suppliers_report.php">
+                        <span class="icon-wrapper"><i class="bi bi-person-lines-fill text-info"></i></span>
+                        تقرير حسابات الموردين
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'reports' && basename($_SERVER['PHP_SELF']) == 'customers_report.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>reports/customers_report.php">
+                        <span class="icon-wrapper"><i class="bi bi-people-fill text-success"></i></span>
+                        تقرير حسابات العملاء
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'sales' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>sales/index.php">
+                        <span class="icon-wrapper"><i class="bi bi-cart-check text-primary"></i></span>
+                        تقرير المبيعات 
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'purchases' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>purchases/index.php">
+                        <span class="icon-wrapper"><i class="bi bi-bag-check text-info"></i></span>
+                        تقرير المشتريات
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'receipts' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>receipts/index.php">
+                        <span class="icon-wrapper"><i class="bi bi-journal-plus text-success"></i></span>
+                        تقرير سندات القبض
+                    </a>
+                </li>
+                <li class="<?php echo ($module == 'expenses' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>expenses/index.php">
+                        <span class="icon-wrapper"><i class="bi bi-journal-minus text-danger"></i></span>
+                        تقرير سندات الصرف
+                    </a>
+                </li>
                 <li class="<?php echo ($module == 'reports' && basename($_SERVER['PHP_SELF']) == 'daily.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>reports/daily.php">
-                        <span class="icon-wrapper"><i class="bi bi-graph-up"></i></span>
-                        تقارير مالية
+                        <span class="icon-wrapper"><i class="bi bi-graph-up text-warning"></i></span>
+                        تقرير ملخص الحركة اليومية
                     </a>
                 </li>
-                <li class="<?php echo ($module == 'reports' && basename($_SERVER['PHP_SELF']) == 'sales_reports.php') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>reports/sales_reports.php">
-                        <span class="icon-wrapper"><i class="bi bi-receipt"></i></span>
-                        تقارير مبيعات وأرباح
+                <li class="<?php echo ($module == 'reports' && basename($_SERVER['PHP_SELF']) == 'account_statement.php') ? 'active' : ''; ?>">
+                    <a href="<?php echo $prefix; ?>reports/account_statement.php">
+                        <span class="icon-wrapper"><i class="bi bi-journal-text text-secondary"></i></span>
+                        تقارير كشف الحساب
                     </a>
                 </li>
-                <li>
-                    <a href="<?php echo $prefix; ?>#">
-                        <span class="icon-wrapper"><i class="bi bi-box"></i></span>
-                        تقارير مخزون
+
+                <!-- <li>
+                    <a href="<?php echo $prefix; ?>reports/periodic.php">
+                        <span class="icon-wrapper"><i class="bi bi-calendar-range"></i></span>
+                        تقارير كشوفات حساسة ودورية
                     </a>
-                </li>
+                </li> -->
             </ul>
         </li>
         <?php endif; ?>
 
         <!-- 11. الإعدادات والتهيئة (Setup & Settings) -->
         <?php if ($is_admin || sidebar_has_access('settings') || sidebar_has_access('users')): ?>
-        <li class="<?php echo $is_settings_active ? 'active' : ''; ?>">
-            <a href="#settingsSubmenu" data-toggle="collapse" aria-expanded="<?php echo $is_settings_active ? 'true' : 'false'; ?>" class="dropdown-toggle">
+        <li class="<?php echo ($module == 'settings' && in_array(basename($_SERVER['PHP_SELF']), ['index.php', 'financial.php', 'currencies.php', 'rules.php', 'units.php', 'modules.php'])) ? 'active' : ''; ?>">
+            <a href="<?php echo $prefix; ?>settings/index.php">
                 <span class="icon-wrapper"><i class="bi bi-gear-wide-connected"></i></span>
-                <span class="menu-text">الإعدادات والتهيئة</span>
-                <span class="arrow-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </span>
+                <span class="menu-text">الإعدادات العامة</span>
             </a>
-            <ul class="collapse list-unstyled <?php echo $is_settings_active ? 'show' : ''; ?>" id="settingsSubmenu">
-                <?php if ($is_admin || sidebar_has_access('settings')): ?>
-                <li class="<?php echo ($module == 'settings' && basename($_SERVER['PHP_SELF']) == 'index.php') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>settings/index.php">
-                        <span class="icon-wrapper"><i class="bi bi-info-circle"></i></span>
-                        إعدادات النظام
-                    </a>
-                </li>
-                <?php endif; ?>
-                <li>
-                    <a href="<?php echo $prefix; ?>#">
-                        <span class="icon-wrapper"><i class="bi bi-geo-alt"></i></span>
-                        إدارة الفروع والمخازن
-                    </a>
-                </li>
-                <?php if ($is_admin || sidebar_has_access('users')): ?>
-                <li class="<?php echo ($module == 'users') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>users/index.php">
-                        <span class="icon-wrapper"><i class="bi bi-shield-lock"></i></span>
-                        المستخدمين والصلاحيات
-                    </a>
-                </li>
-                <?php endif; ?>
-                <?php if ($is_admin): ?>
-                <li class="<?php echo ($module == 'settings' && basename($_SERVER['PHP_SELF']) == 'printers.php') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>settings/printers.php">
-                        <span class="icon-wrapper"><i class="bi bi-printer"></i></span>
-                        إعدادات الطباعة
-                    </a>
-                </li>
-                <li class="<?php echo ($module == 'settings' && basename($_SERVER['PHP_SELF']) == 'backup.php') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>settings/backup.php">
-                        <span class="icon-wrapper"><i class="bi bi-cloud-arrow-up"></i></span>
-                        النسخ الاحتياطي
-                    </a>
-                </li>
-                <li class="<?php echo ($module == 'settings' && basename($_SERVER['PHP_SELF']) == 'license.php') ? 'active' : ''; ?>">
-                    <a href="<?php echo $prefix; ?>settings/license.php">
-                        <span class="icon-wrapper"><i class="bi bi-key"></i></span>
-                        التفعيل والترخيص
-                    </a>
-                </li>
-                <?php endif; ?>
-                        <!-- تغيير كلمة المرور للمستخدم -->
+        </li>
+        <li class="<?php echo ($module == 'settings' && in_array(basename($_SERVER['PHP_SELF']), ['printers.php', 'backup.php', 'license.php', 'utilities.php', 'locations.php'])) ? 'active' : ''; ?>">
+            <a href="<?php echo $prefix; ?>settings/printers.php">
+                <span class="icon-wrapper"><i class="bi bi-sliders"></i></span>
+                <span class="menu-text">تهيئة النظام</span>
+            </a>
+        </li>
+        <?php if ($is_admin || sidebar_has_access('users')): ?>
+        <li class="<?php echo ($module == 'users') ? 'active' : ''; ?>">
+            <a href="<?php echo $prefix; ?>users/index.php">
+                <span class="icon-wrapper"><i class="bi bi-shield-lock"></i></span>
+                <span class="menu-text">المستخدمين والصلاحيات</span>
+            </a>
+        </li>
+        <?php endif; ?>
+        <!-- تغيير كلمة المرور للمستخدم -->
         <?php if ($user_id > 0): ?>
         <li class="<?php echo ($module == 'changeuser') ? 'active' : ''; ?>">
             <a href="<?php echo $prefix; ?>auth/changeuser.php">
                 <span class="icon-wrapper"><i class="bi bi-key-fill"></i></span>
-                تغيير كلمة مرور المستخدم
+                <span class="menu-text">تغيير كلمة المرور</span>
             </a>
         </li>
         <?php endif; ?>
-            </ul>
-            
-        </li>
-        
         <?php endif; ?>
     </ul>
 </nav>

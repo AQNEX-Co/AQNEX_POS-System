@@ -81,7 +81,7 @@ if ($res_items) {
         $already_returned = $ret_res ? intval($ret_res->fetch_assoc()['returned']) : 0;
         $can_return = intval($row['quantity']) - $already_returned;
 
-        $unit_name = 'الوحدة الأساسية';
+        $unit_name = 'حبة';
         if (!empty($row['unit_name'])) {
             $unit_name = $row['unit_name'];
         } elseif (preg_match('/\(([^)]+)\)/', $name_field, $matches)) {

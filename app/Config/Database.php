@@ -64,6 +64,41 @@ class Database
                     $tmpConn->query("SET FOREIGN_KEY_CHECKS = 1");
                 }
             }
+
+            // تشغيل الهجرات الإضافية تلقائياً
+            $migrationsDir = defined('APP_ROOT') ? APP_ROOT . '/DB/migrations' : dirname(__DIR__, 3) . '/DB/migrations';
+            if (is_dir($migrationsDir)) {
+                $files = scandir($migrationsDir);
+                $sqlFiles = [];
+                foreach ($files as $file) {
+                    if (pathinfo($file, PATHINFO_EXTENSION) === 'sql') {
+                        $sqlFiles[] = $file;
+                    }
+                }
+                sort($sqlFiles);
+
+                $tmpConn->select_db($name);
+                foreach ($sqlFiles as $sqlFile) {
+                    $fullPath = $migrationsDir . '/' . $sqlFile;
+                    $migrationContent = @file_get_contents($fullPath);
+                    if ($migrationContent !== false) {
+                        $tmpConn->query("SET FOREIGN_KEY_CHECKS = 0");
+                        $currentQuery = '';
+                        foreach (explode("\n", $migrationContent) as $line) {
+                            $trimmed = trim($line);
+                            if (empty($trimmed) || strpos($trimmed, '--') === 0 || strpos($trimmed, '/*') === 0 || strpos($trimmed, '#') === 0) {
+                                continue;
+                            }
+                            $currentQuery .= $line . "\n";
+                            if (substr($trimmed, -1) === ';') {
+                                @$tmpConn->query(trim($currentQuery));
+                                $currentQuery = '';
+                            }
+                        }
+                        $tmpConn->query("SET FOREIGN_KEY_CHECKS = 1");
+                    }
+                }
+            }
         }
 
         $tmpConn->close();

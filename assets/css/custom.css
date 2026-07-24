@@ -85,15 +85,15 @@ a {
     top: 0;
     right: 0;
     left: 0;
-    height: 42px;
+    height: 38px;
     z-index: 1100;
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0f2744 100%);
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%) !important;
+    border-bottom: 1px solid #cbd5e1 !important;
     display: flex;
-    align-items: stretch;
+    align-items: center;
     justify-content: space-between;
-    padding: 0;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.35) !important;
+    padding: 0 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
 }
 .ledger-header-top {
     display: flex;
@@ -183,18 +183,17 @@ a {
 .topbar-brand {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 0 20px 0 0;
-    border-left: 1px solid rgba(255,255,255,0.08);
-    min-width: 260px;
-    background: rgba(0,0,0,0.15);
+    gap: 10px;
+    padding: 0 10px;
+    border-left: 1px solid #cbd5e1;
+    background: transparent;
 }
 
 .topbar-logo {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     object-fit: cover;
-    border: 2px solid rgba(255,255,255,0.15);
+    border: 1px solid #cbd5e1;
     background: #fff;
     flex-shrink: 0;
 }
@@ -206,15 +205,15 @@ a {
 }
 
 .topbar-brand-name {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 800;
-    color: #f1f5f9;
+    color: #0f172a;
     letter-spacing: 0.3px;
 }
 
 .topbar-brand-sub {
     font-size: 0.65rem;
-    color: #94a3b8;
+    color: #64748b;
     font-weight: 400;
 }
 
@@ -226,74 +225,72 @@ a {
     justify-content: center;
     gap: 1px;
     flex: 1;
-    padding: 0 20px;
-    border-right: 1px solid rgba(255,255,255,0.06);
-    border-left: 1px solid rgba(255,255,255,0.06);
+    padding: 0 15px;
 }
 
 .topbar-time {
-    font-size: 0.68rem;
-    color: #94a3b8;
-    font-weight: 500;
+    font-size: 0.72rem;
+    color: #1e293b;
+    font-weight: 700;
     display: flex;
     align-items: center;
     gap: 5px;
 }
 
 .topbar-date {
-    font-size: 0.68rem;
-    color: #94a3b8;
-    font-weight: 500;
+    font-size: 0.72rem;
+    color: #334155;
+    font-weight: 700;
     display: flex;
     align-items: center;
     gap: 5px;
 }
 
 .topbar-date i {
-    color: #64748b;
+    color: #0284c7;
 }
 
 /* --- القسم الأيسر: المستخدم والخروج --- */
 .topbar-user-area {
     display: flex;
     align-items: center;
-    gap: 0;
-    padding: 0 16px 0 0;
+    gap: 10px;
+    padding: 0 10px;
 }
 
 .topbar-user-card {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 16px;
-    border-right: 1px solid rgba(255,255,255,0.08);
+    gap: 6px;
+    padding: 4px 10px;
+    border-right: 1px solid #cbd5e1;
     cursor: default;
 }
 
 .topbar-user-avatar {
-    width: 34px;
-    height: 34px;
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.12);
+    width: 26px;
+    height: 26px;
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1rem;
-    color: #94a3b8;
+    font-size: 0.9rem;
+    color: #0284c7;
     flex-shrink: 0;
 }
 
 .topbar-user-info {
     display: flex;
     flex-direction: column;
-    line-height: 1.3;
+    line-height: 1.2;
     text-align: right;
 }
 
 .topbar-user-name {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     font-weight: 700;
-    color: #f1f5f9;
+    color: #0f172a;
 }
 
 .topbar-user-role {
@@ -304,30 +301,31 @@ a {
 
 .topbar-divider {
     width: 1px;
-    height: 30px;
-    background: rgba(255,255,255,0.1);
-    margin: 0 8px;
+    height: 24px;
+    background: #cbd5e1;
+    margin: 0 6px;
 }
 
 .topbar-logout-btn {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 7px 14px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: #94a3b8 !important;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #be123c !important;
     text-decoration: none !important;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid #fecdd3;
+    border-radius: 3px !important;
     transition: all 0.2s ease;
     cursor: pointer;
-    background: transparent;
+    background: #fff1f2;
 }
 
 .topbar-logout-btn:hover {
-    background: rgba(190,18,60,0.15) !important;
-    color: #fca5a5 !important;
-    border-color: rgba(190,18,60,0.3) !important;
+    background: #be123c !important;
+    color: #ffffff !important;
+    border-color: #be123c !important;
 }
 
 .topbar-logout-btn i {
@@ -338,10 +336,11 @@ a {
    شريط التنقل الجانبي
    ======================================== */
 #sidebar {
-    min-width: 260px;
-    max-width: 260px;
-    background: var(--primary-bg);
-    color: #fff;
+    min-width: 250px;
+    max-width: 250px;
+    background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%) !important;
+    color: #1e293b !important;
+    border-left: 1px solid #cbd5e1 !important;
     transition: min-width 0.3s ease;
     z-index: 999;
     position: fixed;
@@ -350,17 +349,19 @@ a {
     height: calc(100vh - 42px);
     overflow-y: auto;
     overflow-x: hidden;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.04) !important;
 }
 
 #sidebar + #content {
-    margin-right: 260px;
-    width: calc(100% - 260px);
+    margin-right: 250px;
+    width: calc(100% - 250px);
 }
 
 #sidebar .sidebar-header {
-    padding: 10px 16px;
-    background: rgba(0,0,0,0.2);
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding: 10px 14px;
+    border-bottom: 1px solid #cbd5e1 !important;
+    background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%) !important;
+
 }
 
 .sidebar-nav-label {
@@ -373,9 +374,8 @@ a {
 .sidebar-nav-title {
     font-size: 0.65rem;
     font-weight: 700;
-    color: #64748b;
-        text-align: center;
-
+    color: #475569;
+    text-align: center;
     letter-spacing: 1.2px;
     text-transform: uppercase;
 }
@@ -384,56 +384,134 @@ a {
     font-size: 0.58rem;
     font-weight: 700;
     color: #0369a1;
-    background: rgba(3,105,161,0.12);
+    background: rgba(3,105,161,0.1);
     border: 1px solid rgba(3,105,161,0.2);
     padding: 1px 7px;
     letter-spacing: 0.5px;
 }
 
-
-
 #sidebar ul.components {
-    padding: 15px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 10px 0;
+    border-bottom: 1px solid #e2e8f0;
     margin: 0;
     list-style: none;
 }
 
 #sidebar ul p {
-    color: #fff;
+    color: #1e293b;
     padding: 10px;
 }
 
-/* توحيد تنسيق الروابط */
+/* توحيد تنسيق الروابط باللون الفاتح المرتب */
 #sidebar ul li a {
-    padding: 8px 12px;
+    padding: 8px 14px;
     font-size: 0.82rem;
+    font-weight: 600;
     display: flex;
     align-items: center;
-    color: #94a3b8;
-    text-decoration: none;
-    transition: color 0.2s ease, background 0.2s ease, border-right-color 0.2s ease;
+    color: #334155 !important;
+    text-decoration: none !important;
+    transition: all 0.18s ease;
     border-right: 4px solid transparent;
     position: relative;
+    background: transparent !important;
 }
 
 #sidebar ul li a i {
     margin-left: 10px;
     width: 20px;
     text-align: center;
+    color: #64748b;
+    
+    
 }
 
 #sidebar ul li a:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.05);
-    border-right-color: var(--accent-info);
+    color: #0f172a !important;
+    background: #ffffff !important;
+    border-right-color: #94a3b8;
+}
+
+#sidebar ul li a:hover i {
+    color: #2563eb !important;
 }
 
 #sidebar ul li.active > a {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
-    border-right-color: var(--accent-info);
-    font-weight: bold;
+    color: #1d4ed8 !important;
+    background: #ffffff !important;
+    border-right-color: #1d4ed8 !important;
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(255, 255, 255, 0.05);
+}
+
+#sidebar ul li.active > a i {
+    color: #1d4ed8 !important;
+}
+
+#sidebar ul ul li a {
+    padding-right: 32px;
+    font-size: 0.79rem;
+    background: #ffffff !important;
+
+}
+
+#sidebar ul ul li a:hover {
+    color: #1d4ed8 !important;
+    background: #f1f5f9 !important;
+}
+
+#sidebar ul ul li.active a {
+    color: #1d4ed8 !important;
+    background: #ffffff !important;
+    font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════
+   شريط الأزرار والتصرفات في رأس الصفحة (Top Action Bar & Shortcuts)
+   ═══════════════════════════════════════════ */
+.top-action-bar {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px !important;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
+}
+
+.top-action-bar .page-title-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.top-action-bar .page-title-area h2 {
+    font-size: 1.15rem !important;
+    font-weight: 800;
+    color: #0f172a;
+    margin: 0;
+}
+
+.top-action-bar .action-buttons-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.kbd-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 0.70rem;
+    font-weight: 700;
+    color: #ffffff;
+    background: rgba(255,255,255,0.25);
+    border-radius: 3px !important;
+    margin-right: 6px;
+    font-family: monospace;
 }
 
 /* ========================================
@@ -1336,4 +1414,511 @@ select:focus {
     .text-primary { color: #0d6efd !important; }
     .text-warning { color: #d39e00 !important; }
     .text-secondary { color: #6c757d !important; }
+}
+
+/* ============================================================
+   Onyx Pro ERP Metallic Interface & Compact Form Grid Engine
+   ============================================================ */
+
+/* 1. Window System Header (شريط النافذة العلوي) */
+.aqnex-window-header {
+    background: linear-gradient(180deg, #f0f4f8 0%, #dbe3eb 100%);
+    border: 1px solid #b0c0d0;
+    border-radius: 2px !important;
+    padding: 6px 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+/* 2. Onyx Action Toolbar (شريط الأيقونات الأفقية الكبيرة مع التلميحات) */
+.aqnex-toolbar {
+    background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+    border: 1px solid #cbd5e1;
+    border-radius: 2px !important;
+    padding: 5px 10px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.tool-btn {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+    border: 1px solid #cbd5e1;
+    border-radius: 50% !important; /* أزرار دائرية حديثة بالكامل */
+    color: #334155;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    padding: 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.tool-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.14) !important;
+}
+
+.tool-btn.btn-save { color: #16a34a; border-color: #bbf7d0; background: #f0fdf4; }
+.tool-btn.btn-save:hover { background: #16a34a !important; color: #ffffff !important; border-color: #16a34a !important; }
+
+.tool-btn.btn-new { color: #0284c7; border-color: #bae6fd; background: #f0f9ff; }
+.tool-btn.btn-new:hover { background: #0284c7 !important; color: #ffffff !important; border-color: #0284c7 !important; }
+
+.tool-btn.btn-delete { color: #dc2626; border-color: #fecdd3; background: #fff1f2; }
+.tool-btn.btn-delete:hover { background: #dc2626 !important; color: #ffffff !important; border-color: #dc2626 !important; }
+
+.tool-btn.btn-search { color: #d97706; border-color: #fef08a; background: #fffbeb; }
+.tool-btn.btn-search:hover { background: #d97706 !important; color: #ffffff !important; border-color: #d97706 !important; }
+
+.tool-btn.btn-print { color: #475569; border-color: #e2e8f0; background: #f8fafc; }
+.tool-btn.btn-print:hover { background: #334155 !important; color: #ffffff !important; border-color: #334155 !important; }
+
+.aqnex-toolbar-divider {
+    width: 1px;
+    height: 24px;
+    background: #cbd5e1;
+    margin: 0 3px;
+}
+/* ==========================================================================
+   GLOBAL ERP COMPACT COMPONENTS DESIGN SYSTEM (توحيد الشاشات والمكونات بالكامل)
+   تطبيق الحجم المدمج للصناديق والقوائم المنسدلة والحقول في كافة أجزاء النظام
+   ========================================================================== */
+
+/* 1. النماذج والحقول الأساسية (Native HTML Form Controls & Custom Input/Select) */
+select,
+input[type="text"],
+input[type="number"],
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="search"],
+input[type="password"],
+input[type="email"],
+input[type="tel"],
+.form-control,
+.form-select,
+.aqnex-input,
+.onyx-input,
+.aqnex-select,
+.onyx-select {
+    height: 28px !important;
+    min-height: 28px !important;
+    max-height: 28px !important;
+    font-size: 12px !important;
+    line-height: 26px !important;
+    padding: 1px 6px !important;
+    color: #0f172a !important;
+    background-color: #ffffff !important;
+    border: 1px solid #94a3b8 !important;
+    border-radius: 3px !important;
+    box-shadow: none !important;
+    vertical-align: middle !important;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
+}
+
+/* التركيز والتعطيل على الحقول */
+select:focus,
+input:focus,
+.form-control:focus,
+.form-select:focus,
+.aqnex-input:focus,
+.aqnex-select:focus,
+.onyx-input:focus,
+.onyx-select:focus {
+    border-color: #2563eb !important;
+    background-color: #f8fafc !important;
+    outline: none !important;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) !important;
+}
+
+select:disabled,
+input:disabled,
+select[readonly],
+input[readonly],
+.form-control:disabled,
+.form-control[readonly],
+.aqnex-input[readonly],
+.aqnex-input:disabled {
+    background-color: #f1f5f9 !important;
+    color: #64748b !important;
+    border-color: #cbd5e1 !important;
+}
+
+/* 2. Select2 الكامل والمستهدف لجميع القوائم المنسدلة (System-Wide Select2 Overhaul) */
+.select2-container {
+    font-size: 12px !important;
+    direction: rtl !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+}
+
+.select2-container .select2-selection--single,
+.select2-container--default .select2-selection--single,
+.select2-container--bootstrap .select2-selection--single,
+.select2-container--bootstrap4 .select2-selection--single {
+    height: 28px !important;
+    min-height: 28px !important;
+    max-height: 28px !important;
+    border: 1px solid #94a3b8 !important;
+    border-radius: 3px !important;
+    background-color: #ffffff !important;
+    display: flex !important;
+    align-items: center !important;
+    padding: 0 4px !important;
+    outline: none !important;
+}
+
+.select2-container .select2-selection--single .select2-selection__rendered,
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: 26px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #0f172a !important;
+    padding-right: 4px !important;
+    padding-left: 20px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+    display: block !important;
+}
+
+.select2-container .select2-selection--single .select2-selection__arrow,
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 26px !important;
+    width: 20px !important;
+    top: 1px !important;
+    left: 2px !important;
+    right: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* حالة فتح القائمة المنسدلة والتركيز */
+.select2-container--open .select2-selection--single,
+.select2-container--default.select2-container--open .select2-selection--single,
+.select2-container--default.select2-container--focus .select2-selection--single {
+    border-color: #2563eb !important;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) !important;
+}
+
+/* حاوية القائمة المنسدلة النتائج (Select2 Dropdown Container) */
+.select2-dropdown {
+    font-size: 12px !important;
+    border: 1px solid #94a3b8 !important;
+    border-radius: 3px !important;
+    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.15) !important;
+    background-color: #ffffff !important;
+    z-index: 99999 !important;
+}
+
+.select2-results > .select2-results__options {
+    max-height: 180px !important;
+    overflow-y: auto !important;
+    padding: 2px 0 !important;
+}
+
+/* خيارات النتائج المنسدلة */
+.select2-results__option {
+    padding: 3px 8px !important;
+    font-size: 12px !important;
+    line-height: 20px !important;
+    font-weight: 500 !important;
+    color: #1e293b !important;
+    cursor: pointer !important;
+}
+
+.select2-container--default .select2-results__option--highlighted[aria-selected],
+.select2-container--default .select2-results__option--highlighted {
+    background-color: #2563eb !important;
+    color: #ffffff !important;
+    font-size: 12px !important;
+}
+
+.select2-container--default .select2-results__option[aria-selected="true"] {
+    background-color: #eff6ff !important;
+    color: #1d4ed8 !important;
+    font-weight: 700 !important;
+}
+
+/* مربع البحث داخل القائمة المنسدلة لـ Select2 */
+.select2-search--dropdown {
+    padding: 4px !important;
+    background-color: #f8fafc !important;
+}
+
+.select2-search--dropdown .select2-search__field {
+    height: 26px !important;
+    min-height: 26px !important;
+    font-size: 12px !important;
+    line-height: 24px !important;
+    padding: 2px 6px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 2px !important;
+    direction: rtl !important;
+    outline: none !important;
+}
+
+/* 3. الإكمال التلقائي الذكي والقوائم المنسدلة المخصصة (Custom Autocomplete Dropdowns) */
+.autocomplete-dropdown,
+.dropdown-menu.show,
+.typeahead-dropdown {
+    font-size: 12px !important;
+    max-height: 200px !important;
+    overflow-y: auto !important;
+    border: 1px solid #94a3b8 !important;
+    border-radius: 3px !important;
+    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.15) !important;
+    background-color: #ffffff !important;
+    padding: 2px 0 !important;
+}
+
+.autocomplete-item,
+.dropdown-item {
+    padding: 3px 8px !important;
+    font-size: 12px !important;
+    line-height: 18px !important;
+    color: #1e293b !important;
+    cursor: pointer !important;
+}
+
+.autocomplete-item:hover,
+.dropdown-item:hover,
+.autocomplete-item.active {
+    background-color: #eff6ff !important;
+    color: #1d4ed8 !important;
+}
+
+/* 4. تسميات الحقول وتجميعات النماذج (Labels & Form Groups) */
+label,
+.form-group label,
+.aqnex-label,
+.onyx-label {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    color: #475569 !important;
+    margin-bottom: 2px !important;
+    display: inline-block !important;
+}
+
+.form-group,
+.aqnex-form-group,
+.onyx-form-group {
+    margin-bottom: 6px !important;
+}
+
+/* 5. High-Density Onyx Items Grid Table (جدول الأصناف المتطور) */
+.aqnex-grid-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #94a3b8;
+    font-size: 0.73rem;
+    background: #ffffff;
+}
+
+.aqnex-grid-table thead th {
+    background: linear-gradient(180deg, #f1f5f9 0%, #cbd5e1 100%);
+    color: #0f172a;
+    font-weight: 800;
+    text-align: center;
+    padding: 4px 3px;
+    border: 1px solid #94a3b8;
+    white-space: nowrap;
+    font-size: 0.73rem;
+}
+
+.aqnex-grid-table tbody td {
+    padding: 2px 3px;
+    border: 1px solid #cbd5e1;
+    vertical-align: middle;
+    font-size: 0.73rem;
+}
+
+.aqnex-grid-table tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+.aqnex-grid-table tbody tr:hover {
+    background-color: #eff6ff;
+}
+
+.aqnex-grid-table input, .aqnex-grid-table select {
+    height: 23px;
+    padding: 1px 3px;
+    font-size: 0.73rem;
+    font-weight: 600;
+    border: 1px solid #cbd5e1;
+    border-radius: 1px !important;
+    width: 100%;
+    text-align: center;
+}
+
+.aqnex-grid-table input:focus, .aqnex-grid-table select:focus {
+    border-color: #2563eb;
+    background: #ffffff;
+    outline: none;
+}
+
+/* Autocomplete Clear Button */
+.product-search-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.btn-clear-autocomplete {
+    position: absolute;
+    left: 4px;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0 4px;
+    display: none;
+    z-index: 5;
+}
+.btn-clear-autocomplete:hover {
+    color: #ef4444;
+}
+
+/* 6. Onyx Footer Summary Bar (شريط الإجماليات وأثر المستخدم) */
+.aqnex-summary-box {
+    background: #f8fafc;
+    border: 1px solid #94a3b8;
+    padding: 8px;
+    margin-top: 6px;
+}
+
+.aqnex-summary-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    padding: 3px 6px;
+    margin-bottom: 3px;
+}
+
+.aqnex-summary-item .label {
+    font-size: 0.73rem;
+    font-weight: 700;
+    color: #475569;
+}
+
+.aqnex-summary-item .value {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: #0f172a;
+    font-family: monospace;
+}
+
+.aqnex-audit-bar {
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    padding: 3px 8px;
+    font-size: 0.70rem;
+    color: #475569;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+}
+
+/* ============================================================
+   تنسيق طباعة فاتورة المبيعات الرسمية (@media print)
+   ============================================================ */
+@media print {
+    body {
+        background: #ffffff !important;
+        color: #000000 !important;
+        font-family: Arial, sans-serif !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    
+    /* إخفاء كافة عناصر الواجهة وأجهزة التصفح */
+    #sidebar,
+    .main-topbar,
+    .aqnex-window-header,
+    .aqnex-toolbar,
+    .aqnex-audit-bar,
+    .no-print,
+    .modal,
+    .modal-backdrop,
+    .btn,
+    .remove-item-btn,
+    #addItemBtn,
+    .autocomplete-dropdown {
+        display: none !important;
+    }
+
+    #content {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    .aqnex-form-grid {
+        border: 1px solid #000 !important;
+        padding: 6px !important;
+        margin-bottom: 8px !important;
+    }
+
+    .aqnex-input, .aqnex-select {
+        border: none !important;
+        background: transparent !important;
+        font-weight: bold !important;
+        padding: 0 !important;
+        height: auto !important;
+        color: #000 !important;
+    }
+
+    .aqnex-grid-table {
+        border: 1px solid #000 !important;
+        width: 100% !important;
+    }
+
+    .aqnex-grid-table th {
+        background: #e2e8f0 !important;
+        color: #000 !important;
+        border: 1px solid #000 !important;
+        font-size: 0.72rem !important;
+        padding: 3px !important;
+    }
+
+    .aqnex-grid-table td {
+        border: 1px solid #000 !important;
+        font-size: 0.72rem !important;
+        padding: 3px !important;
+    }
+
+    .aqnex-grid-table input {
+        border: none !important;
+        background: transparent !important;
+        font-weight: bold !important;
+    }
+
+    .aqnex-summary-box {
+        border: 1px solid #000 !important;
+        background: #fff !important;
+    }
+
+    .aqnex-summary-item {
+        border-bottom: 1px solid #ccc !important;
+    }
 }

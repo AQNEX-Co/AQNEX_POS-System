@@ -219,7 +219,7 @@ document.addEventListener("DOMContentLoaded", function() {
         // جلب وحدات هذا المنتج إن وجدت
         const units = productUnitsMap[product.id] || [];
         
-        let unitOptions = `<option value="">الوحدة الأساسية (${product.barcode || '-'})</option>`;
+        let unitOptions = `<option value="">حبة (${product.barcode || '-'})</option>`;
         units.forEach(u => {
             unitOptions += `<option value="${u.id}">${u.unit_name} (${u.sale_price} ر.ي)</option>`;
         });

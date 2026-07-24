@@ -60,20 +60,17 @@ $settings = $global_settings;
 $save_error = '';
 
 // ==========================================
-// جلب رقم الفاتورة المراد تعديلها
+// جلب رقم الفاتورة المراد تعديلها والتوجيه لشاشة الإنشاء والتعديل الموحدة
 // ==========================================
 $invoice_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
-if ($invoice_id <= 0) {
-    echo "<script>alert('رقم الفاتورة غير صحيح.'); window.location='index.php';</script>";
+if ($invoice_id > 0) {
+    header("Location: create.php?id=" . $invoice_id);
+    exit;
+} else {
+    header("Location: create.php");
     exit;
 }
 
-// جلب بيانات الفاتورة الرئيسية
-$res_inv = $conn->query("SELECT * FROM sales WHERE id = $invoice_id AND delete_status = 0 LIMIT 1");
-if (!$res_inv || $res_inv->num_rows === 0) {
-    echo "<script>alert('الفاتورة غير موجودة أو تم حذفها.'); window.location='index.php';</script>";
-    exit;
-}
 $invoice = $res_inv->fetch_assoc();
 
 // جلب بنود الفاتورة
@@ -296,11 +293,11 @@ if (isset($_POST['btn_update'])) {
                     if ($conv_factor <= 0) $conv_factor = 1.0;
                     $unit_name = isset($_POST['unit_name'][$i]) ? trim($_POST['unit_name'][$i]) : '';
                     if (empty($unit_name)) {
-                        $unit_name = 'الوحدة الأساسية';
+                        $unit_name = 'حبة';
                     }
 
                     $product_field_val = "$p_id $product_name_db";
-                    if (!empty($unit_name) && $unit_name !== 'الوحدة الأساسية') {
+                    if (!empty($unit_name) && $unit_name !== 'حبة') {
                         $product_field_val .= " ($unit_name)";
                     }
 
@@ -614,29 +611,53 @@ $products_json = '[]';
     <div class="loading-text">جاري التحميل...</div>
 </div>
 
-<!-- شريط التعديل -->
-<div class="edit-banner no-print">
-    <i class="bi bi-pencil-square"></i>
+<!-- Onyx Pro System Window Header Bar -->
+<div class="aqnex-window-header no-print">
     <div>
-        <div>تعديل فاتورة مبيعات رقم #<?php echo $invoice_id; ?></div>
-        <small style="opacity: 0.9;">تاريخ الفاتورة الأصلي: <?php echo $invoice['build_date']; ?> | العميل: <?php echo htmlspecialchars($invoice['cust_name']); ?></small>
+        <i class="bi bi-pencil-square text-warning ml-1"></i>
+        <span>أنظمة العملاء - نظام إدارة المبيعات - تعديل فاتورة مبيعات #<?php echo $invoice_id; ?></span>
+    </div>
+    <div>
+        <span class="ml-3">المستخدم: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong></span>
+        <span>التاريخ: <strong><?php echo date('Y/m/d'); ?></strong></span>
     </div>
 </div>
 
+<!-- Onyx Pro Action Toolbar -->
+<div class="aqnex-toolbar no-print">
+    <!-- ➕ جديد (F2) -->
+    <button type="button" class="tool-btn btn-new" title="جديد (F2)" onclick="window.open('create.php', '_blank');">
+        <i class="bi bi-file-earmark-plus-fill"></i>
+    </button>
+
+    <!-- 💾 حفظ التعديلات (F4 / Ctrl+S) -->
+    <button type="submit" form="salesForm" name="btn_save" class="tool-btn btn-save btn-save-action" title="حفظ التعديلات وترحيلها (F4 / Ctrl+S)">
+        <i class="bi bi-floppy-fill"></i>
+    </button>
+
+    <!-- 👁 عرض الفاتورة (F9) -->
+    <button type="button" class="tool-btn btn-print" title="عرض وطباعة الفاتورة (F9)" onclick="window.location.href='view.php?id=<?php echo $invoice_id; ?>';">
+        <i class="bi bi-printer-fill"></i>
+    </button>
+
+    <div class="aqnex-toolbar-divider"></div>
+
+    <!-- ✖ إلغاء والعودة (Esc) -->
+    <a href="index.php" class="tool-btn btn-delete text-decoration-none" title="إلغاء والعودة (Esc)">
+        <i class="bi bi-x-circle-fill"></i>
+    </a>
+</div>
+
 <div class="card-flat">
-    <div class="card-header">
-        <h5><?php echo get_icon('edit', 'ml-2 text-warning'); ?> تعديل فاتورة المبيعات #<?php echo $invoice_id; ?></h5>
-        <div>
-            <a href="view.php?id=<?php echo $invoice_id; ?>" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-                <?php echo get_icon('eye', 'ml-1'); ?> عرض الفاتورة
-            </a>
-            <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-                <?php echo get_icon('logout', 'ml-1'); ?> عودة
-            </a>
-        </div>
-    </div>
     <div class="card-body">
         <?php if (!empty($save_error)): ?>
+            <script>
+            document.addEventListener("DOMContentLoaded", function() {
+                if (typeof showSystemAlert === 'function') {
+                    showSystemAlert("خطأ في حفظ التعديلات", <?php echo json_encode($save_error); ?>, "danger");
+                }
+            });
+            </script>
             <div class="alert alert-danger rounded-0 mb-4">
                 <strong>خطأ في حفظ التعديلات:</strong> <?php echo htmlspecialchars($save_error); ?>
             </div>
@@ -816,7 +837,7 @@ $products_json = '[]';
                                 $buy_price_orig = doubleval($p_data['buy_price']) / $rate;
                                 
                                 // استخراج الوحدة
-                                $unit_name = 'الوحدة الأساسية';
+                                $unit_name = 'حبة';
                                 $conv_factor = 1.0;
                                 $unit_id = '';
                                 if (preg_match('/\(([^)]+)\)/', $item_name_full, $matches)) {
@@ -897,7 +918,7 @@ $products_json = '[]';
                                     </div>
                                     <input type="hidden" name="buy_price[]" class="buy-price" value="0">
                                     <input type="hidden" name="conversion_factor[]" class="conversion-factor" value="1.0000">
-                                    <input type="hidden" name="unit_name[]" class="unit-name" value="الوحدة الأساسية">
+                                    <input type="hidden" name="unit_name[]" class="unit-name" value="حبة">
                                     <input type="hidden" name="unit_id[]" class="unit-id" value="">
                                     <input type="hidden" name="serial_ids[]" class="row-serial-ids" value="">
                                     <input type="hidden" name="batch_id[]" class="row-batch-id" value="">
@@ -1306,8 +1327,8 @@ document.addEventListener("DOMContentLoaded", function() {
         newRow.querySelector(".profit-input").value = "0";
 
         newRow.querySelector(".conversion-factor").value = "1.0000";
-        newRow.querySelector(".unit-name").value = "الوحدة الأساسية";
-        newRow.querySelector(".unit-display-input").value = "الوحدة الأساسية";
+        newRow.querySelector(".unit-name").value = "حبة";
+        newRow.querySelector(".unit-display-input").value = "حبة";
         newRow.querySelector(".unit-id").value = "";
         newRow.querySelector(".row-serial-ids").value = "";
         newRow.querySelector(".row-batch-id").value = "";
@@ -1449,8 +1470,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
         const conversionFactor = parseFloat(product.conversion_factor) || 1.0;
         row.querySelector(".conversion-factor").value = conversionFactor;
-        row.querySelector(".unit-name").value = product.unit_name || "الوحدة الأساسية";
-        row.querySelector(".unit-display-input").value = product.unit_name || "الوحدة الأساسية";
+        row.querySelector(".unit-name").value = product.unit_name || "حبة";
+        row.querySelector(".unit-display-input").value = product.unit_name || "حبة";
         row.querySelector(".unit-id").value = product.unit_id || "";
 
         const rate = parseFloat(exchangeRateInput.value) || 1.0;
@@ -1981,11 +2002,11 @@ document.addEventListener("DOMContentLoaded", function() {
 <!-- اختصارات F-Keys -->
 <script>
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'F2') {
+    if (e.key === 'F2' || e.key === 'F3') {
         e.preventDefault();
         if (typeof openQuickProductModal === 'function') openQuickProductModal();
     }
-    if (e.key === 'F10') {
+    if (e.key === 'F4' || e.key === 'F10' || (e.ctrlKey && e.key.toLowerCase() === 's')) {
         e.preventDefault();
         const form = document.getElementById('salesForm');
         if (form && form.checkValidity()) {
@@ -1993,6 +2014,13 @@ document.addEventListener('keydown', function(e) {
         } else if (form) {
             form.reportValidity();
         }
+    }
+    if (e.key === 'F9') {
+        e.preventDefault();
+        window.location.href = 'view.php?id=<?php echo $invoice_id; ?>';
+    }
+    if (e.key === 'Escape') {
+        window.location.href = 'index.php';
     }
 });
 </script>

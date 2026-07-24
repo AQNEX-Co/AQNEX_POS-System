@@ -24,6 +24,25 @@ if (isset($_POST['btn_save_modules'])) {
     $success = 'تم حفظ حالة الموديولات وتحديث النظام بنجاح.';
 }
 
+// تطبيق قوالب التخصيص السريع للنشاط التجاري
+if (isset($_POST['btn_apply_preset'])) {
+    $preset = $_POST['preset'] ?? '';
+    
+    if ($preset === 'grocery') {
+        $conn->query("UPDATE `system_modules` SET `is_enabled` = 1 WHERE `module_key` IN ('barcode_units', 'expiry_tracking', 'thermal_printing', 'label_printing')");
+        $conn->query("UPDATE `system_modules` SET `is_enabled` = 0 WHERE `module_key` IN ('serial_imei_tracking', 'repair_service', 'installments')");
+        $success = 'تم تطبيق قالب (بقالة وسوبرماركت) وتحديث الموديولات بنجاح.';
+    } elseif ($preset === 'electronics') {
+        $conn->query("UPDATE `system_modules` SET `is_enabled` = 1 WHERE `module_key` IN ('barcode_units', 'serial_imei_tracking', 'repair_service', 'installments', 'thermal_printing', 'label_printing')");
+        $conn->query("UPDATE `system_modules` SET `is_enabled` = 0 WHERE `module_key` IN ('expiry_tracking')");
+        $success = 'تم تطبيق قالب (جوالات ومتجر إلكترونيات) وتحديث الموديولات بنجاح.';
+    } elseif ($preset === 'general') {
+        $conn->query("UPDATE `system_modules` SET `is_enabled` = 1 WHERE `module_key` IN ('barcode_units', 'thermal_printing')");
+        $conn->query("UPDATE `system_modules` SET `is_enabled` = 0 WHERE `module_key` IN ('expiry_tracking', 'serial_imei_tracking', 'repair_service', 'installments', 'label_printing')");
+        $success = 'تم تطبيق القالب العام بنجاح وتعطيل الميزات المتخصصة.';
+    }
+}
+
 // التأكد من وجود جدول الموديولات وإنشاءه أو تهيئته إذا كان مفقوداً
 $checkModules = $conn->query("SHOW TABLES LIKE 'system_modules'");
 if (!$checkModules || $checkModules->num_rows == 0) {
@@ -81,6 +100,26 @@ require_once 'settings_nav.php';
         <?php if (!empty($success)): ?>
             <div class="alert alert-success rounded-0 mb-4"><?php echo htmlspecialchars($success); ?></div>
         <?php endif; ?>
+
+        <!-- قسم التخصيص السريع حسب نوع النشاط التجاري -->
+        <div class="card bg-light border rounded-0 p-4 mb-4">
+            <h6 class="font-weight-bold mb-3 text-primary"><i class="fa fa-magic ml-2"></i>معالج التخصيص السريع (قوالب الأنشطة التجارية)</h6>
+            <p class="text-muted small">اختر نوع النشاط التجاري للعميل لتفعيل الميزات المتطابقة وتعطيل الميزات غير الضرورية بضغطة واحدة:</p>
+            
+            <form method="POST" class="form-inline mt-3">
+                <div class="form-group mb-2">
+                    <select name="preset" class="form-control rounded-0 font-weight-bold" style="min-width: 250px;" required>
+                        <option value="">-- اختر قالب النشاط --</option>
+                        <option value="grocery">بقالة وسوبرماركت / مواد غذائية</option>
+                        <option value="electronics">معرض جوالات وإلكترونيات وصيانة</option>
+                        <option value="general">نشاط تجاري عام / تجارة عامة / خدمات</option>
+                    </select>
+                </div>
+                <button type="submit" name="btn_apply_preset" class="btn btn-primary rounded-0 mb-2 mr-3 font-weight-bold px-4" onclick="return confirm('هل أنت متأكد من تطبيق القالب؟ سيؤدي ذلك إلى تعديل ميزات الموديولات الحالية لتناسب النشاط المختار.')">
+                    <i class="fa fa-flash ml-1"></i> تطبيق القالب المختار
+                </button>
+            </form>
+        </div>
 
         <form method="POST">
             <div class="alert alert-info rounded-0 mb-4">

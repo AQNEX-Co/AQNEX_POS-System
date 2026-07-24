@@ -11,23 +11,23 @@ $sql_cat = "SELECT name FROM categories WHERE catid = $cat_id";
 $res_cat = $conn->query($sql_cat);
 $cat_name = ($res_cat && $row = $res_cat->fetch_assoc()) ? $row['name'] : 'غير معروف';
 
-// جلب المنتجات التابعة للتصنيف
+// جلب الاصناف التابعة للتصنيف
 $sql_products = "SELECT * FROM products WHERE catid = $cat_id AND delete_status = 0 ORDER BY id DESC";
 $result = $conn->query($sql_products);
 ?>
-<title>منتجات صنف: <?php echo htmlspecialchars($cat_name); ?> - تكنولوجيا فون</title>
+<title>اصناف مجموعة الاصناف: <?php echo htmlspecialchars($cat_name); ?> - تكنولوجيا فون</title>
 
 
 
 <div class="row no-print mb-4">
     <div class="col-md-6">
         <h3 class="text-secondary font-weight-bold">
-            <i class="fa fa-cubes ml-2"></i>منتجات صنف: <?php echo htmlspecialchars($cat_name); ?>
+            <i class="fa fa-cubes ml-2"></i>اصناف مجموعة الاصناف: <?php echo htmlspecialchars($cat_name); ?>
         </h3>
     </div>
     <div class="col-md-6 text-left">
         <a href="create.php" class="btn-flat btn-flat-primary btn-sm ml-2 text-decoration-none">
-            <i class="fa fa-plus ml-1"></i>إضافة منتج جديد
+            <i class="fa fa-plus ml-1"></i>إضافة صنف جديد
         </a>
         <button onclick="window.print()" class="btn-flat btn-flat-success btn-sm ml-2">
             <i class="bi bi-printer ml-1"></i>طباعة القائمة
@@ -40,15 +40,15 @@ $result = $conn->query($sql_products);
 
 <div class="card-flat">
     <div class="card-header no-print">
-        <h5>قائمة المنتجات التابعة لصنف: <?php echo htmlspecialchars($cat_name); ?></h5>
+        <h5>قائمة الاصناف التابعة لمجموعة الاصناف: <?php echo htmlspecialchars($cat_name); ?></h5>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table-flat">
                 <thead>
                     <tr>
-                        <th style="width: 10%;">رقم المنتج</th>
-                        <th>اسم المنتج</th>
+                        <th style="width: 10%;">رقم الصنف</th>
+                        <th>اسم الصنف</th>
                         <th style="width: 12%;">الكمية المتوفرة</th>
                         <th>سعر الشراء</th>
                         <th>سعر البيع</th>
@@ -77,7 +77,7 @@ $result = $conn->query($sql_products);
                                     <a href="movement.php?id=<?php echo urlencode($row['name']); ?>" class="btn-flat btn-flat-success btn-sm py-1 px-2 ml-1 text-decoration-none">
                                         <i class="bi bi-arrow-left-right"></i> الحركة
                                     </a>
-                                    <a href="delete.php?id=<?php echo $row['id']; ?>" onclick="return confirm('هل أنت متأكد من حذف هذا المنتج؟')" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none">
+                                    <a href="delete.php?id=<?php echo $row['id']; ?>" onclick="return confirm('هل أنت متأكد من حذف هذا الصنف؟')" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none">
                                         <i class="fa fa-trash"></i> حذف
                                     </a>
                                 </td>
@@ -85,7 +85,7 @@ $result = $conn->query($sql_products);
                             <?php
                         }
                     } else {
-                        echo '<tr><td colspan="8" class="text-center text-muted p-4">لا توجد منتجات مسجلة في هذا الصنف</td></tr>';
+                        echo '<tr><td colspan="8" class="text-center text-muted p-4">لا توجد اصناف مسجلة في هذا المجموعة </td></tr>';
                     }
                     ?>
                 </tbody>
@@ -94,12 +94,12 @@ $result = $conn->query($sql_products);
 
         <hr class="my-4 no-print">
 
-        <!-- إجمالي مبالغ البضائع في هذا الصنف -->
+        <!-- إجمالي مبالغ البضائع في هذا المجموعة  -->
         <div class="row justify-content-end p-3">
             <div class="col-md-5">
                 <table class="table-flat bg-light">
                     <tr>
-                        <th class="text-right py-2 pr-3">إجمالي قيمة بضائع هذا الصنف:</th>
+                        <th class="text-right py-2 pr-3">إجمالي قيمة بضائع هذا المجموعة :</th>
                         <?php
                         $sql_sum = "SELECT SUM(total) as cat_total FROM products WHERE catid = $cat_id AND delete_status = 0";
                         $res_sum = $conn->query($sql_sum);

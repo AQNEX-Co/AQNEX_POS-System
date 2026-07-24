@@ -70,7 +70,7 @@ foreach ($matched_rows as $row) {
         'requires_serial' => intval($row['requires_serial']),
         'is_unit' => 0,
         'unit_id' => null,
-        'unit_name' => 'الوحدة الأساسية',
+        'unit_name' => 'حبة',
         'conversion_factor' => 1.0000
     ];
     

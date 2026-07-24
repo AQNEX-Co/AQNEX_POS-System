@@ -46,6 +46,7 @@ Name: "arabic"; MessagesFile: "compiler:Languages\Arabic.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "install_db"; Description: "تثبيت خادم قاعدة بيانات MariaDB محلي مستقل (المنفذ 3307)"; GroupDescription: "خيارات قاعدة البيانات"; Flags: checkedonce
 
 [Files]
 ; 1. All files and folders from your 'tech' folder (The source project)
@@ -63,7 +64,6 @@ Source: "run_init_db.php"; DestDir: "{app}\installer"; Flags: ignoreversion
 ; 3. Visual C++ Redistributable
 Source: "redist\VC_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
-; 4. Runtime package (Apache, PHP, MariaDB) - use local runtime.zip if bundled
 ; 4. Runtime package (Apache, PHP, MariaDB) - BUNDLED LOCALLY, no internet needed
 Source: "runtime\runtime.zip"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
@@ -83,19 +83,24 @@ Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 ; 2. Extract the Runtime Package (Apache, PHP, MariaDB)
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Expand-Archive -Path '{tmp}\runtime.zip' -DestinationPath '{app}' -Force"""; StatusMsg: "Configuring server environment..."; Flags: runhidden
 
-; 3. Run Path Configuration Script (Updates httpd.conf, php.ini, and my.ini)
-Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"""; StatusMsg: "Applying local path configurations..."; Flags: runhidden
+; 3. Run Path Configuration Script (Updates httpd.conf, php.ini, and my.ini based on database type selection)
+Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"" ""local"""; StatusMsg: "Applying local path configurations..."; Flags: runhidden; Tasks: install_db
+Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"" ""external"""; StatusMsg: "Applying local path configurations..."; Flags: runhidden; Tasks: not install_db
 
 ; 4. Register Apache and MariaDB as Windows Services
 Filename: "{app}\runtime\apache\bin\httpd.exe"; Parameters: "-k install -n ""AQNEX_Apache"""; StatusMsg: "Registering Web Server Service..."; Flags: runhidden
-Filename: "{app}\runtime\mariadb\bin\mariadbd.exe"; Parameters: "--install ""AQNEX_MariaDB"""; StatusMsg: "Registering Database Service..."; Flags: runhidden
+Filename: "{app}\runtime\mariadb\bin\mariadbd.exe"; Parameters: "--install ""AQNEX_MariaDB"""; StatusMsg: "Registering Database Service..."; Flags: runhidden; Tasks: install_db
 
 ; 5. Start Services
-Filename: "sc.exe"; Parameters: "start AQNEX_MariaDB"; Flags: runhidden
+Filename: "sc.exe"; Parameters: "start AQNEX_MariaDB"; Flags: runhidden; Tasks: install_db
 Filename: "sc.exe"; Parameters: "start AQNEX_Apache"; Flags: runhidden
 
+; 5.5. انتظر 10 ثواني حتى تنتهي MariaDB من التهيئة قبل محاولة الاتصال
+Filename: "powershell.exe"; Parameters: "-Command ""Start-Sleep -Seconds 10"""; StatusMsg: "Waiting for database service to start..."; Flags: runhidden; Tasks: install_db
+
 ; 6. Initialize Database and Import Schema (Crucial for offline DB setup)
-Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\run_init_db.php"" ""{app}"""; StatusMsg: "Initializing database and schemas..."; Flags: runhidden
+; تشغيل سكربت التهيئة وحفظ المخرجات في ملف لوج للمساعدة في التشخيص
+Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\run_init_db.php"" ""{app}"""; StatusMsg: "Initializing database and schemas..."; Flags: runhidden; Tasks: install_db
 
 ; 7. Launch the App after Installation
 Filename: "{#MyAppExeName}"; Parameters: "--app=http://localhost:8181/index.php"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: postinstall nowait shellexec
@@ -106,6 +111,7 @@ Filename: "sc.exe"; Parameters: "stop AQNEX_Apache"; Flags: runhidden; RunOnceId
 Filename: "sc.exe"; Parameters: "stop AQNEX_MariaDB"; Flags: runhidden; RunOnceId: "StopMariaDB"
 Filename: "{app}\runtime\apache\bin\httpd.exe"; Parameters: "-k uninstall -n ""AQNEX_Apache"""; Flags: runhidden; RunOnceId: "UninstallApache"
 Filename: "{app}\runtime\mariadb\bin\mariadbd.exe"; Parameters: "--remove ""AQNEX_MariaDB"""; Flags: runhidden; RunOnceId: "UninstallMariaDB"
+
 
 [Code]
 // 1. Check for VC++ Redistributable (x64)

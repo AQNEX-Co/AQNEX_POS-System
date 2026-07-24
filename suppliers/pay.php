@@ -19,10 +19,17 @@ if (isset($_POST['btn'])) {
     $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
     $box_name = get_box_name($conn, $selected_box_id);
     
+    // التحقق من رصيد الصندوق قبل البدء
+    $box_balance = get_box_balance($conn, $selected_box_id);
+    if ($box_balance < $amount) {
+        echo "<script>alert('خطأ: رصيد الصندوق المحدد (" . number_format($box_balance, 2) . " ر.ي) غير كافٍ لتسديد هذا المبلغ (" . number_format($amount, 2) . " ر.ي).'); window.history.back();</script>";
+        exit;
+    }
+
     $conn->begin_transaction();
     try {
         // 1. تحديث حساب المورد (خصم المبلغ المدفوع من دائنية المورد)
-        $sql_update = "UPDATE Suppliers SET supp_daain = supp_daain - $amount WHERE supp_name = '$supplier_name'";
+        $sql_update = "UPDATE suppliers SET supp_daain = supp_daain - $amount WHERE supp_name = '$supplier_name'";
         if (!$conn->query($sql_update)) {
             throw new Exception("فشل تحديث رصيد المورد");
         }
@@ -40,8 +47,10 @@ if (isset($_POST['btn'])) {
         }
         $sid = $conn->insert_id;
         
-        // 4. خصم المبلغ من الصندوق وتسجيل العملية
-        update_box_balance($conn, $selected_box_id, $amount, 'discount', "تسديد مورد: $supplier_name - بيان: $remark", $date);
+        // 4. خصم المبلغ من الصندوق وتسجيل العملية (مع التحقق من نجاح العملية)
+        if (!update_box_balance($conn, $selected_box_id, $amount, 'discount', "تسديد مورد: $supplier_name - بيان: $remark", $date)) {
+            throw new Exception("فشل تحديث رصيد الخزينة أو عدم كفاية الرصيد");
+        }
         
         // 5. قيد يومية محاسبي مزدوج
         if (!post_journal_entry($conn, 'expense', $sid, 'الذمم الدائنة - ' . $supplier_name, 'الصندوق - ' . $box_name, $amount, "تسديد حساب مورد: $supplier_name - $remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id)) {
@@ -115,7 +124,7 @@ if (isset($_POST['btn'])) {
                                 <select name="select" class="form-control rounded-0" required>
                                     <option value="">-- اختر مورد --</option>
                                     <?php
-                                    $sql_supp = "SELECT supp_name FROM Suppliers WHERE d_s='0' ORDER BY supp_id DESC";
+                                    $sql_supp = "SELECT supp_name FROM suppliers WHERE d_s='0' ORDER BY supp_id DESC";
                                     $res_supp = $conn->query($sql_supp);
                                     if ($res_supp) {
                                         while ($r_service = $res_supp->fetch_assoc()) {

@@ -1,8 +1,12 @@
 <?php
-$dir_prefix = '../';
-$module = 'receipt_voucher';
-require_once($dir_prefix . 'includes/header.php');
-check_permission(['admin']);
+$id_param = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['qid']) ? intval($_GET['qid']) : 0);
+if ($id_param > 0) {
+    header("Location: ../receipts/create.php?id=" . $id_param);
+    exit;
+} else {
+    header("Location: ../receipts/create.php");
+    exit;
+}
 
 use AQNEX\Services\Accounting\AccountTreeService;
 use AQNEX\Services\Accounting\VoucherService;
@@ -249,27 +253,6 @@ $totalPostedAmt = 0; $totalVoidedAmt = 0;
 
 <div class="page-inner">
 
-    <!-- HEADER -->
-    <div class="page-title-bar">
-        <div class="ptb-left">
-            <div class="icon-wrap"><i class="bi bi-arrow-down-circle-fill"></i></div>
-            <div>
-                <h4>سند القبض (Receipt Voucher)</h4>
-                <small>تسجيل المبالغ الواردة مع الترحيل المحاسبي التلقائي</small>
-            </div>
-        </div>
-        <div class="ptb-stats">
-            <div class="stat-box">
-                <div class="sv"><?= count($recentVouchers) ?></div>
-                <div class="sl">إجمالي السندات</div>
-            </div>
-            <div class="stat-box">
-                <div class="sv"><?= number_format($totalAmount, 2) ?></div>
-                <div class="sl">إجمالي المقبوض</div>
-            </div>
-        </div>
-    </div>
-
     <!-- ALERT -->
     <div id="sys-alert" style="display:none;"></div>
 
@@ -279,6 +262,55 @@ $totalPostedAmt = 0; $totalVoidedAmt = 0;
             <i class="bi bi-plus-circle"></i> إنشاء سند قبض جديد
             <span style="margin-right:auto;font-size:.68rem;color:#94a3b8;font-weight:400;">يُرحَّل تلقائياً في الحسابات</span>
         </div>
+
+        <!-- Onyx Pro Action Toolbar (Large Icon Buttons with Hover Tooltips) -->
+        <div class="aqnex-toolbar no-print p-2 bg-light border-bottom">
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <!-- ➕ جديد (F2) -->
+                <button type="button" class="tool-btn btn-new" title="جديد (F2) - فتح سند قبض جديد" onclick="window.location.reload();">
+                    <i class="bi bi-file-earmark-plus-fill"></i>
+                </button>
+
+                <!-- 💾 حفظ السند (F10) -->
+                <button type="submit" form="rv-form" class="tool-btn btn-save btn-save-action" title="حفظ وإثبات القبض (F10)">
+                    <i class="bi bi-floppy-fill"></i>
+                </button>
+
+                <!-- ✏️ تعديل السند -->
+                <button type="button" class="tool-btn" title="تعديل سند قبض محاسبي" onclick="document.querySelector('.records-panel')?.scrollIntoView({behavior:'smooth'});">
+                    <i class="bi bi-pencil-square" style="color: #d97706;"></i>
+                </button>
+
+                <!-- 🔍 البحث في سجل السندات (F3) -->
+                <button type="button" class="tool-btn btn-search" title="البحث في سجل السندات (F3)" onclick="document.querySelector('#flt-q')?.focus();">
+                    <i class="bi bi-search"></i>
+                </button>
+
+                <!-- 🗑 حذف / تصفية السند -->
+                <button type="button" class="tool-btn btn-delete" title="تصفية بيانات السند الحالي" onclick="if(confirm('هل أنت متأكد من رغبتك في تصفية بيانات السند؟')) window.location.reload();">
+                    <i class="bi bi-trash-fill"></i>
+                </button>
+
+                <!-- 📖 القيود المحاسبية للسند (F8) -->
+                <button type="button" class="tool-btn" title="عرض معاينة القيد المحاسبي الآلي (F8)" onclick="document.getElementById('entry-preview').style.display='block';" style="color: #7c3aed; border-color: #ddd6fe;">
+                    <i class="bi bi-journal-bookmark-fill"></i>
+                </button>
+
+                <!-- 🔄 تراجع وتصفية السند -->
+                <button type="button" class="tool-btn" title="تراجع وتصفية البيانات" onclick="window.location.reload();">
+                    <i class="bi bi-arrow-counterclockwise" style="color: #0284c7;"></i>
+                </button>
+            </div>
+
+            <!-- أزرار الجانب الأيسر -->
+            <div style="margin-right: auto; display: flex; align-items: center; gap: 5px;">
+                <!-- 🖨 طباعة (F9) -->
+                <button type="button" class="tool-btn btn-print" title="طباعة السند (F9)" onclick="window.print();">
+                    <i class="bi bi-printer-fill"></i>
+                </button>
+            </div>
+        </div>
+
         <div class="form-panel-body">
             <form id="rv-form" autocomplete="off">
                 <!-- Row 1 -->
@@ -571,7 +603,28 @@ function searchParty(q) {
         document.getElementById('party_search').value = item.name;
         document.getElementById('party_id').value     = item.id;
         document.getElementById('party_name').value   = item.name;
+
+        // مزامنة تلقائية للجهة مع الحساب المقابل بالسطر الأول
+        autoSyncAccountingRowParty(item.name);
     });
+}
+
+function autoSyncAccountingRowParty(partyName) {
+    if (!partyName) return;
+    const firstRow = document.querySelector('#voucher-items-tbody tr');
+    if (!firstRow) return;
+
+    const ql = partyName.trim().toLowerCase();
+    const matchedAccount = ALL_ACCOUNTS.find(a => a.name.toLowerCase().includes(ql) || ql.includes(a.name.toLowerCase()));
+
+    if (matchedAccount) {
+        firstRow.querySelector('.row-account-id').value = matchedAccount.id;
+        firstRow.querySelector('.row-account-search').value = `[${matchedAccount.code}] ${matchedAccount.name}`;
+        firstRow.querySelector('.row-account-name').textContent = matchedAccount.name;
+    } else {
+        firstRow.querySelector('.row-account-search').value = partyName;
+        firstRow.querySelector('.row-account-name').textContent = partyName;
+    }
 }
 
 // Dynamic row addition & deletion functions

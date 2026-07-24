@@ -40,7 +40,7 @@ $stat_count     = (int)$stats['count'];
 
 $currency = $global_settings['currency'] ?? 'ر.ي';
 ?>
-<title>إدارة المبيعات - <?php echo htmlspecialchars($global_settings['store_name'] ?? 'AQNEX'); ?></title>
+<title>تقرير سجل المبيعات والتحليلات - <?php echo htmlspecialchars($global_settings['store_name'] ?? 'AQNEX'); ?></title>
 
 <!-- Loading Overlay -->
 <div class="loading-overlay" id="loadingOverlay">
@@ -52,7 +52,7 @@ $currency = $global_settings['currency'] ?? 'ر.ي';
 <div class="card-flat">
     <!-- ═══ رأس الصفحة ═══ -->
     <div class="card-header no-print d-flex flex-wrap gap-2 align-items-center justify-content-between">
-        <h5 class="mb-0"><?php echo get_icon('sales', 'ml-2 text-primary'); ?> إدارة فواتير المبيعات</h5>
+        <h5 class="mb-0"><i class="bi bi-file-earmark-bar-graph-fill ml-2 text-primary"></i> تقرير سجل المبيعات والتحليلات</h5>
         <div class="d-flex flex-wrap gap-2">
             <a href="create.php" class="btn-flat btn-flat-primary btn-sm text-decoration-none">
                 <?php echo get_icon('plus', 'ml-1'); ?> فاتورة جديدة
@@ -64,7 +64,7 @@ $currency = $global_settings['currency'] ?? 'ر.ي';
                 <i class="bi bi-file-earmark-excel ml-1"></i> تصدير إكسل
             </a>
             <button onclick="window.print()" class="btn-flat btn-flat-secondary btn-sm no-print">
-                <?php echo get_icon('print', 'ml-1'); ?> طباعة
+                <?php echo get_icon('print', 'ml-1'); ?> طباعة التقرير
             </button>
             <a href="../home.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none no-print">
                 <?php echo get_icon('logout', 'ml-1'); ?> رئيسية
@@ -73,6 +73,13 @@ $currency = $global_settings['currency'] ?? 'ر.ي';
     </div>
 
     <div class="card-body">
+        <!-- ترويسة التقرير المطبوع -->
+        <div class="d-none d-print-block text-center mb-4">
+            <h2><?php echo !empty($global_settings['store_name']) ? htmlspecialchars($global_settings['store_name']) : 'تكنولوجيا فون'; ?></h2>
+            <h4>تقرير سجل المبيعات والتحليلات المالية</h4>
+            <p>تاريخ التقرير: <?php echo date('Y/m/d'); ?> &bull; إجمالي الفواتير: <?php echo $stat_count; ?> &bull; قيمة المبيعات: <?php echo number_format($stat_sales, 2) . ' ' . $currency; ?></p>
+            <hr>
+        </div>
         <!-- ═══ بطاقات الإحصائيات ═══ -->
         <div class="row g-3 mb-4 no-print">
             <div class="col-md-3 col-6">
