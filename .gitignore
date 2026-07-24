@@ -1,5 +1,34 @@
+# ===================================================
+#  AQNEX POS System - .gitignore
+# ===================================================
+
+# ---- Installer Output ----
 installer/Output/
 installer/runtime/
+
+# ---- Compiled / Binary Files ----
 *.exe
 *.zip
+
+# ---- Editor & IDE ----
 .continue/
+.vscode/settings.json
+
+# ---- Uploaded User Files (not tracked in git) ----
+uploads/*
+!uploads/.gitkeep
+
+# ---- Personal / Local Backups (not to be committed) ----
+backups/*
+!backups/.gitkeep
+
+# ---- Local environment config override ----
+# If you want to override config, create app/Config/config.local.php (not tracked)
+app/Config/config.local.php
+
+# ---- Log Files ----
+*.log
+
+# ---- OS Files ----
+.DS_Store
+Thumbs.db

@@ -1,50 +1,112 @@
-# AQNEX_POS System 🚀
-**نظام إدارة المتاجر الصغيرة والمتوسطة**
+# AQNEX POS System 🚀
+**نظام إدارة نقاط البيع للمتاجر الصغيرة والمتوسطة**
 
-نظام POS متكامل مبني بتقنيات الويب ليعمل كمنصة إدارية محلية (Desktop Environment). يهدف النظام إلى تسهيل عمليات البيع، إدارة المخزون، وإصدار التقارير المالية بشكل سريع وآمن.
+نظام POS متكامل مبني بتقنيات الويب (PHP + MySQL) ليعمل كمنصة إدارية محلية. يهدف النظام إلى تسهيل عمليات البيع، إدارة المخزون، وإصدار التقارير المالية بشكل سريع وآمن.
 
-### المميزات الرئيسية:
-- إدارة المنتجات والمخزون (Inventory Management).
-- نظام نقطة بيع سريع (Quick Checkout).
-- طباعة الفواتير وإدارة المبيعات.
-- تقارير إحصائية دورية.
-- واجهة مستخدم متجاوبة تعتمد على Bootstrap.
-### المتطلبات التشغيلية (Prerequisites):
-- **Server:** XAMPP / Laragon / WAMP (يفضل إصدار PHP 8.0 أو أعلى).
-- **Database:** MySQL.
-- **Git:** للتحكم في النسخ.
+---
 
-### خطوات التشغيل للفريق (Installation):
-1. **تحميل المشروع:**
-   `git clone https://github.com/YourUsername/AQNEX_POS.git`
+## المميزات الرئيسية
 
-2. **إعداد قاعدة البيانات:**
-   - قم بإنشاء قاعدة بيانات جديدة باسم `aqnex_pos`.
-   - استورد ملف الـ SQL الموجود في مجلد `/database/db_schema.sql`.
+- 🛍️ إدارة المنتجات والمخزون (Inventory Management)
+- 💰 نظام نقطة بيع سريع (Quick Checkout)
+- 🧾 طباعة الفواتير وإدارة المبيعات والمشتريات
+- 📊 تقارير إحصائية دورية ومالية
+- 🔧 إدارة المصروفات والسندات والخزينة
+- 👥 نظام أدوار وصلاحيات للمستخدمين
+- 🌐 واجهة مستخدم متجاوبة بـ Bootstrap
 
-3. **إعداد ملف الاتصال:**
-   - اذهب إلى ملف `config/database.php` (أو الملف المسؤول عن الاتصال).
-   - قم بتعديل بيانات المستخدم وكلمة المرور لتناسب إعداداتك المحلية.
+---
 
-4. **التشغيل:**
-   - انقل المجلد إلى `htdocs` أو `www`.
-   - افتح المتصفح على الرابط: `http://localhost/AQNEX_POS`.
+## المتطلبات التشغيلية (Prerequisites)
 
+| المتطلب | الإصدار المطلوب |
+|--------|----------------|
+| PHP    | 8.0 أو أعلى   |
+| MySQL / MariaDB | 10.4 أو أعلى |
+| XAMPP / Laragon / WAMP | أي إصدار حديث |
 
-   لتصدير قاعدة البيانات:
-   Microsoft Windows [Version 10.0.26200.8737]
-(c) Microsoft Corporation. All rights reserved.
+---
 
-C:\Windows\System32>cd C:\AQNEX_POS\runtime\mariadb\bin
+## خطوات التثبيت والتشغيل ⚡
 
-C:\AQNEX_POS\runtime\mariadb\bin>mysqldump.exe -u root -p aqnex_pos > C:\backup_aqnex.sql
-Enter password:
+### 1️⃣ تحميل المشروع
 
-C:\AQNEX_POS\runtime\mariadb\bin>mysqldump.exe -u root -p --routines --triggers --adds-drop-table aqnex_pos > C:\backup_aqnex_full.sql
-mysqldump.exe: unknown option '--adds-drop-table'
+```bash
+git clone https://github.com/AQNEX-Co/AQNEX_POS-System.git
+```
 
-C:\AQNEX_POS\runtime\mariadb\bin>mysqldump.exe -u root -p --routines --triggers --add-drop-table aqnex_pos > C:\backup_aqnex_full.sql
-Enter password:
+انقل المجلد إلى `htdocs` (XAMPP) أو `www` (WAMP):
 
-C:\AQNEX_POS\runtime\mariadb\bin>
+```
+C:\xampp\htdocs\tech\
+```
 
+### 2️⃣ إعداد قاعدة البيانات (تلقائي)
+
+> **✅ لا حاجة لأي إعداد يدوي!**
+> 
+> النظام يُنشئ قاعدة البيانات ويستورد الهيكل **تلقائياً** عند أول تشغيل.
+>
+> الإعدادات الافتراضية تعمل مع **XAMPP** بدون تعديل:
+> - **Host:** `127.0.0.1`
+> - **Database:** `aqnex_pos`
+> - **User:** `root`
+> - **Password:** _(فارغة)_
+
+### 3️⃣ تعديل الإعدادات (إن احتجت)
+
+إذا كانت إعدادات قاعدة بياناتك مختلفة، عدّل الملف:
+
+```
+app/Config/config.php
+```
+
+```php
+'db' => [
+    'host'    => '127.0.0.1',
+    'port'    => 3306,
+    'name'    => 'aqnex_pos',
+    'user'    => 'root',
+    'pass'    => '',       // ← ضع كلمة المرور هنا إن وجدت
+    'charset' => 'utf8mb4',
+],
+```
+
+### 4️⃣ التشغيل
+
+افتح المتصفح على الرابط:
+
+```
+http://localhost/tech
+```
+
+---
+
+## بنية المشروع
+
+```
+tech/
+├── app/
+│   ├── Config/          # إعدادات الاتصال بقاعدة البيانات
+│   └── Core/            # Bootstrap والنواة الأساسية
+├── DB/
+│   ├── backup/          # ملف SQL لهيكل قاعدة البيانات (يُستورد تلقائياً)
+│   └── migrations/      # ملفات الترقية (SQL)
+├── includes/            # ملفات PHP المشتركة
+├── sales/               # وحدة المبيعات
+├── purchases/           # وحدة المشتريات
+├── products/            # وحدة المنتجات
+├── customers/           # وحدة العملاء
+├── reports/             # التقارير المالية
+└── ...
+```
+
+---
+
+## الدعم الفني
+
+في حال فشل الاتصال بقاعدة البيانات، اضغط **F2** في صفحة الخطأ للدخول إلى وضع مهندس الدعم.
+
+---
+
+**AQNEX Co. © 2026** — جميع الحقوق محفوظة
