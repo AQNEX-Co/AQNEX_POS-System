@@ -1101,19 +1101,23 @@ document.addEventListener('DOMContentLoaded', function() {
         link.addEventListener('click', function(e) {
             if (salesFormDirty && !salesFormSubmitting) {
                 e.preventDefault();
-                pendingLeaveUrl = link.href;
-                $('#leavePageModal').modal('show');
+                const pendingUrl = link.href;
+                if (typeof AqnexConfirm !== 'undefined') {
+                    AqnexConfirm.show('تحذير: بيانات غير محفوظة! أنت على وشك مغادرة صفحة تعديل الفاتورة. جميع البيانات المدخلة ستضيع ولن يتم حفظها. هل تريد المتابعة أم تأكيد الخروج؟', function(confirmed) {
+                        if (confirmed) {
+                            salesFormDirty = false;
+                            window.location.href = pendingUrl;
+                        }
+                    });
+                } else {
+                    if (confirm('تحذير: بيانات غير محفوظة! هل تريد المتابعة أم تأكيد الخروج؟')) {
+                        salesFormDirty = false;
+                        window.location.href = pendingUrl;
+                    }
+                }
             }
         });
     });
-
-    const confirmLeaveBtn = document.getElementById('confirmLeaveBtn');
-    if (confirmLeaveBtn) {
-        confirmLeaveBtn.addEventListener('click', function() {
-            salesFormDirty = false;
-            if (pendingLeaveUrl) window.location.href = pendingLeaveUrl;
-        });
-    }
     
     // تحديث الحسابات عند تحميل الصفحة
     if (typeof updateGrandTotals === 'function') updateGrandTotals();
@@ -1352,7 +1356,11 @@ document.addEventListener("DOMContentLoaded", function() {
                 updateGrandTotals();
                 updateAccountingGuide();
             } else {
-                alert("يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+                if (typeof AqnexAlert !== 'undefined') {
+                    AqnexAlert.show(102, AQNEX_MESSAGES[102] || "يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+                } else {
+                    alert("يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+                }
             }
         }
     });
@@ -1370,7 +1378,14 @@ document.addEventListener("DOMContentLoaded", function() {
                 const stockVal = parseFloat(row.querySelector(".stock-qty").value) || 0;
 
                 if (qty > stockVal) {
-                    alert("تنبيه: الكمية المدخلة أكبر من المتوفر في المخزن!");
+                    e.target.value = stockVal;
+                    if (typeof AqnexAlert !== 'undefined') {
+                        AqnexAlert.show(105, `تنبيه: الكمية المدخلة (${qty}) تتجاوز المتوفر في المخزن (${stockVal})!`, e.target);
+                    } else {
+                        alert("تنبيه: الكمية المدخلة أكبر من المتوفر في المخزن!");
+                        e.target.focus();
+                        e.target.select();
+                    }
                 }
             }
 
@@ -1539,7 +1554,11 @@ document.addEventListener("DOMContentLoaded", function() {
         updateRowCalculations(row);
 
         if (stockQty <= 0) {
-            alert("تنبيه: هذا المنتج غير متوفر في المخزن حالياً!");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(105, "تنبيه: هذا المنتج غير متوفر في المخزن حالياً!");
+            } else {
+                alert("تنبيه: هذا المنتج غير متوفر في المخزن حالياً!");
+            }
         }
 
         setTimeout(() => {
@@ -1814,7 +1833,11 @@ document.addEventListener("DOMContentLoaded", function() {
         }, 0);
 
         if (totalPaid > boxBalance) {
-            alert("رصيد الصندوق المحدد غير كافٍ!");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(220, "رصيد الصندوق المحدد غير كافٍ!");
+            } else {
+                alert("رصيد الصندوق المحدد غير كافٍ!");
+            }
             e.preventDefault();
             return false;
         }
@@ -1825,7 +1848,11 @@ document.addEventListener("DOMContentLoaded", function() {
             if (productId && productId !== "-1") hasProducts = true;
         });
         if (!hasProducts) {
-            alert("يجب إضافة صنف واحد على الأقل!");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(102, AQNEX_MESSAGES[102]);
+            } else {
+                alert("يجب إضافة صنف واحد على الأقل!");
+            }
             e.preventDefault();
             return false;
         }
@@ -1839,7 +1866,12 @@ document.addEventListener("DOMContentLoaded", function() {
             const stock = parseInt(row.querySelector(".stock-qty").value) || 0;
 
             if (qty > stock) {
-                alert(`تحذير في "${name}": الكمية (${qty}) أكبر من المخزن (${stock})!`);
+                if (typeof AqnexAlert !== 'undefined') {
+                    AqnexAlert.show(105, `تحذير في الصنف "${name}": الكمية المطلوبة (${qty}) تتجاوز المتوفر في المخزن (${stock})!`, row.querySelector(".quantity-input"));
+                } else {
+                    alert(`تحذير في "${name}": الكمية (${qty}) أكبر من المخزن (${stock})!`);
+                }
+                row.querySelector(".quantity-input").value = stock;
                 isValid = false;
             }
         });
@@ -1859,7 +1891,11 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         
         if (hasWarnings) {
-            alert("يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(104, "يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            } else {
+                alert("يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            }
             isValid = false;
         }
 

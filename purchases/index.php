@@ -211,7 +211,7 @@ $msg = $_GET['msg'] ?? '';
                                         <?php echo get_icon('eye', 'ml-1'); ?> عرض
                                     </a>
                                     <?php if ($is_admin): ?>
-                                    <a href="edit.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-secondary btn-sm py-1 px-2 text-decoration-none" title="تعديل">
+                                    <a href="create.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-secondary btn-sm py-1 px-2 text-decoration-none" title="تعديل">
                                         <?php echo get_icon('edit', 'ml-1'); ?> تعديل
                                     </a>
                                     <a href="delete.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-danger btn-sm py-1 px-2 text-decoration-none" title="حذف"

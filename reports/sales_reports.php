@@ -207,7 +207,7 @@ if ($res_users) {
     </div>
 
     <!-- كروت الأداء المالي (KPI Summary) -->
-    <div class="row text-right mb-4" dir="rtl">
+    <div class="row text-right mb-4 no-print" dir="rtl">
         <!-- إجمالي المبيعات -->
         <div class="col-md-3 mb-3">
             <div class="card-flat p-3 d-flex align-items-center justify-content-between" style="border-right: 4px solid #1e3a8a;">
@@ -286,12 +286,13 @@ if ($res_users) {
 
     <!-- جدول تفصيلي بفواتير المبيعات المدرجة -->
     <div class="card-flat ret-card text-right mb-4">
-        <div class="card-header bg-light">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
             <h6 class="mb-0 text-dark font-weight-bold"><i class="fa fa-list ml-2 text-primary"></i> فواتير المبيعات المشمولة في التقرير</h6>
+            <span class="badge badge-light border px-2 py-1">عدد الفواتير: <?php echo ($res_invoices ? $res_invoices->num_rows : 0); ?></span>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table-flat mb-0">
+                <table class="table-flat sap-grid-table mb-0">
                     <thead>
                         <tr>
                             <th style="width: 8%;">رقم الفاتورة</th>
@@ -302,7 +303,7 @@ if ($res_users) {
                             <th style="width: 15%;">الفرع</th>
                             <th style="width: 15%;">إجمالي الفاتورة (ر.ي)</th>
                             <th style="width: 12%;">الربح المحقق (ر.ي)</th>
-                            <th style="width: 8%;" class="no-print text-center">عرض</th>
+                            <th style="width: 8%;" class="no-print text-center">إجراءات</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -326,9 +327,9 @@ if ($res_users) {
                                 <td class="font-weight-bold"><?php echo number_format($row['total'], 2); ?></td>
                                 <td class="font-weight-bold text-success"><?php echo number_format($row['prifet'], 2); ?></td>
                                 <td class="no-print text-center">
-                                    <a href="../sales/view.php?id=<?php echo $row['id']; ?>" target="_blank" class="btn btn-sm btn-flat btn-flat-primary py-1 px-2 text-decoration-none">
-                                        <i class="bi bi-eye"></i>
-                                    </a>
+                                    <button type="button" class="btn btn-xs btn-primary font-weight-bold" title="عرض وطباعة هذه الفاتورة بصفحة منفصلة" onclick="openDocumentViewerModal('فاتورة مبيعات', '<?php echo $row['id']; ?>', 'فاتورة مبيعات');">
+                                        <i class="bi bi-eye-fill"></i>
+                                    </button>
                                 </td>
                             </tr>
                             <?php endwhile; ?>
@@ -336,6 +337,22 @@ if ($res_users) {
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <!-- تذييل الاعتماد والتوقيع المحاسبي الرسمي للطباعة -->
+    <div class="sap-signature-block">
+        <div>
+            <div>إعداد محاسب المبيعات</div>
+            <div style="margin-top: 30px;">التوقيع: ..................</div>
+        </div>
+        <div>
+            <div>مراجعة وتدقيق الحسابات</div>
+            <div style="margin-top: 30px;">التوقيع: ..................</div>
+        </div>
+        <div>
+            <div>اعتماد المدير المالي / العام</div>
+            <div style="margin-top: 30px;">التوقيع: ..................</div>
         </div>
     </div>
 </div>

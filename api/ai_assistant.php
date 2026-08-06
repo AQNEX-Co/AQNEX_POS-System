@@ -489,8 +489,9 @@ $system_instruction = "أنت مساعد ذكي ونظام خبير متكامل
 // =====================================================================
 // قراءة مدخلات المستخدم
 // =====================================================================
-$inputData = json_decode(file_get_contents('php://input'), true);
-$user_message = trim($inputData['message'] ?? '');
+$rawInput = file_get_contents('php://input');
+$inputData = !empty($rawInput) ? json_decode($rawInput, true) : null;
+$user_message = trim($inputData['message'] ?? $_POST['message'] ?? $_REQUEST['message'] ?? '');
 
 if (empty($user_message)) {
     echo json_encode(["status" => "error", "message" => "رسالة فارغة."], JSON_UNESCAPED_UNICODE);
@@ -565,8 +566,12 @@ function call_gemini($api_key, $prompt, $system_instruction, $chat_history = [])
     $response = curl_exec($curl);
     $err = curl_error($curl);
     curl_close($curl);
-    if ($err) return null;
-    return json_decode($response, true);
+    if ($err || !$response) return null;
+    $decoded = json_decode($response, true);
+    if (!$decoded || isset($decoded['error']) || empty($decoded['candidates'])) {
+        return null;
+    }
+    return $decoded;
 }
 
 $gemini_res = null;

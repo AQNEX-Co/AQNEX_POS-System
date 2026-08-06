@@ -388,7 +388,7 @@ if (isset($_POST['btn']) && !empty($_POST['start_date'])) {
     </div>
 
     <!-- ملخص الصندوق والربح للحركة المبحوثة -->
-    <div class="row mb-4 mt-4">
+    <div class="row mb-4 mt-4 no-print">
         <div class="col-md-6">
             <div class="stat-card mb-3">
                 <div class="stat-info">

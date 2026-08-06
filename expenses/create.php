@@ -20,86 +20,165 @@ if (isset($_GET['ai_prefill'])) {
 
 $editing_id = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['sid']) ? intval($_GET['sid']) : 0);
 $editing_expense = null;
+$actual_entries = [];
 
 if ($editing_id > 0) {
     $res_edit = $conn->query("SELECT * FROM treasury_expenses WHERE sid = $editing_id LIMIT 1");
     if ($res_edit && $res_edit->num_rows > 0) {
         $editing_expense = $res_edit->fetch_assoc();
+        // جلب القيود الفعلية
+        $res_j = $conn->query("SELECT * FROM journal_entries WHERE ref_id = $editing_id AND ref_type = 'expense' ORDER BY id ASC");
+        if ($res_j) {
+            while ($j_row = $res_j->fetch_assoc()) {
+                $amt = doubleval($j_row['amount']);
+                $actual_entries[] = ['account_name' => $j_row['account_debit'], 'debit' => $amt, 'credit' => 0, 'narration' => $j_row['description'] ?? ''];
+                $actual_entries[] = ['account_name' => $j_row['account_credit'], 'debit' => 0, 'credit' => $amt, 'narration' => $j_row['description'] ?? ''];
+            }
+        }
     } else {
         $editing_id = 0;
     }
 }
 
+// تأكد من وجود الاتصال بقاعدة البيانات $conn وبدء الجلسة session_start()
+
 $active_user_id = intval($_SESSION['SESS_MEMBER_ID']);
 $active_user_role = trim($_SESSION['SESS_LAST_NAME']);
 $is_admin = ($active_user_role === 'admin' || empty($active_user_role));
 
-if (isset($_POST['btn_save'])) {
-    $editing_id = isset($_POST['editing_id']) ? intval($_POST['editing_id']) : 0;
-    $build_date = date('Y-m-d', strtotime($_POST['build_date']));
-    $services = $_POST['select_services'];
-    $prices = $_POST['unit_price'];
-    $remarks = $_POST['t'];
-    $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
-    $box_name = get_box_name($conn, $selected_box_id);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['btn_save']))) {
+    
+    // 1. بدء الترانزكشن لضمان سلامة البيانات (كل شيء أو لا شيء)
+    $conn->begin_transaction(); 
 
-    if ($editing_id > 0) {
-        $old_res = $conn->query("SELECT * FROM treasury_expenses WHERE sid = $editing_id LIMIT 1");
-        if ($old_res && $old_row = $old_res->fetch_assoc()) {
-            $old_price = doubleval($old_row['sprice']);
-            $old_box_id = intval($old_row['box_id']);
+    try {
+        $editing_id = isset($_POST['editing_id']) ? intval($_POST['editing_id']) : 0;
+        $build_date = !empty($_POST['build_date']) ? date('Y-m-d', strtotime($_POST['build_date'])) : date('Y-m-d');
+        $party_type = $conn->real_escape_string($_POST['party_type'] ?? 'other'); 
+        
+        $services = $_POST['select_services'] ?? []; // الأطراف/البنود
+        $prices   = $_POST['unit_price'] ?? [];      // المبالغ
+        $remarks  = $_POST['t'] ?? [];               // الملاحظات
+        
+        $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
+        $box_name        = get_box_name($conn, $selected_box_id);
 
-            if ($old_price > 0 && $old_box_id > 0) {
+        // --- حل مشكلة TypeError: تحويل القيمة لـ null برمجية وليس نصية ---
+        $sector_id_val   = (isset($_POST['sector_id']) && $_POST['sector_id'] !== '') ? intval($_POST['sector_id']) : null;
+        $sql_sector      = is_null($sector_id_val) ? "NULL" : $sector_id_val;
+
+        // --- أولاً: معالجة حالة التعديل (إلغاء الأثر المالي القديم) ---
+        if ($editing_id > 0) {
+            $old_res = $conn->query("SELECT * FROM treasury_expenses WHERE sid = $editing_id LIMIT 1");
+            if ($old_res && $old_row = $old_res->fetch_assoc()) {
+                $old_price = doubleval($old_row['sprice']);
+                $old_box_id = intval($old_row['box_id']);
+                $old_party_name = $conn->real_escape_string($old_row['st']);
+
+                // 1. عكس حركة الصندوق (إعادة المبلغ)
                 update_box_balance($conn, $old_box_id, $old_price, 'addition', "إلغاء خصم سند صرف رقم #$editing_id للتعديل", date('Y-m-d'));
+
+                // 2. عكس حركة المورد أو العميل (إعادة الدين)
+                $check_mst = $conn->query("SELECT party_type FROM payment_vouchers_mst WHERE id = $editing_id");
+                $old_type = ($check_mst && $r = $check_mst->fetch_assoc()) ? $r['party_type'] : 'other';
+                
+                if ($old_type === 'supplier') {
+                    $conn->query("UPDATE `suppliers` SET `supp_daain` = `supp_daain` + $old_price WHERE `supp_name` = '$old_party_name'");
+                } elseif ($old_type === 'customer') {
+                    $conn->query("UPDATE `customers` SET `cust_madeen` = `cust_madeen` + $old_price WHERE `cust_name` = '$old_party_name'");
+                }
+
+                // 3. تنظيف البيانات القديمة قبل إعادة كتابتها
+                $conn->query("DELETE FROM journal_entries WHERE ref_type = 'expense' AND ref_id = $editing_id");
+                $conn->query("DELETE FROM payment_vouchers_dtl WHERE voucher_id = $editing_id");
+                $conn->query("DELETE FROM expenses WHERE m_date='{$old_row['sdate']}' AND sname='{$old_row['st']}' AND m_price='{$old_price}' LIMIT 1");
             }
-            $conn->query("DELETE FROM journal_entries WHERE ref_type = 'expense' AND ref_id = $editing_id");
-            $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'expense' AND ref_id = $editing_id");
-            $conn->query("DELETE FROM expenses WHERE m_date='{$old_row['sdate']}' AND sname='{$old_row['st']}' AND m_price='{$old_price}' LIMIT 1");
         }
 
-        $expense_type = $conn->real_escape_string($services[0]);
-        $price = doubleval($prices[0]);
-        $row_remark = $conn->real_escape_string($remarks[0]);
-
-        if (!empty($expense_type) && $price > 0) {
-            $sql_update = "UPDATE `treasury_expenses` SET `sdate` = '$build_date', `st` = '$expense_type', `sprice` = '$price', `sremark` = '$row_remark', `tot` = '$price', `box_id` = $selected_box_id WHERE `sid` = $editing_id";
-            if (!$conn->query($sql_update)) {
-                throw new Exception("فشل تحديث سند الصرف رقم #" . $editing_id);
-            }
-
-            $sqls = "INSERT INTO `expenses`(`m_date`, `sname`, `m_price`, `remark`, `s`) VALUES ('$build_date', '$expense_type', '$price', '$row_remark', 0)";
-            $conn->query($sqls);
-
-            update_box_balance($conn, $selected_box_id, $price, 'discount', "سند صرف رقم #$editing_id (معدل) - بند: $expense_type ($row_remark)", $build_date);
-            post_journal_entry($conn, 'expense', $editing_id, 'مصروفات - ' . $expense_type, 'الصندوق - ' . $box_name, $price, "تعديل صرف مبلغ بسند صرف رقم #$editing_id - $row_remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id);
-        }
-    } else {
+        // --- ثانياً: حفظ البيانات الجديدة بنظام Master-Detail ---
         $count = count($services);
+        $total_voucher_amount = 0;
+        foreach($prices as $p) $total_voucher_amount += doubleval($p);
+
+        if ($total_voucher_amount <= 0) throw new Exception("يرجى إدخال مبلغ صحيح.");
+
+        // التحقق من رصيد الصندوق مسبقاً قبل التعديل/الإضافة
+        $box_balance = get_box_balance($conn, $selected_box_id);
+        if ($box_balance < $total_voucher_amount) {
+            throw new Exception("لا يمكن إتمام العملية لأن رصيد الصندوق المحدد (" . number_format($box_balance, 2) . " ر.ي) غير كافٍ لتغطية إجمالي مبلغ سند الصرف (" . number_format($total_voucher_amount, 2) . " ر.ي).");
+        }
+
+        // أ. حفظ الماستر (Payment Voucher Master)
+        $master_party_name = $conn->real_escape_string($services[0] ?? '');
+        $master_remark     = $conn->real_escape_string($remarks[0] ?? '');
+        
+        if ($editing_id > 0) {
+            $sid = $editing_id;
+            $conn->query("UPDATE payment_vouchers_mst SET voucher_date='$build_date', party_type='$party_type', party_name='$master_party_name', total_amount=$total_voucher_amount, box_id=$selected_box_id, sector_id=$sql_sector, remark='$master_remark' WHERE id=$sid");
+        } else {
+            $conn->query("INSERT INTO payment_vouchers_mst (voucher_date, party_type, party_name, total_amount, box_id, sector_id, remark, d_s)
+                          VALUES ('$build_date', '$party_type', '$master_party_name', $total_voucher_amount, $selected_box_id, $sql_sector, '$master_remark', 0)");
+            $sid = $conn->insert_id;
+        }
+
+        $v_no = 'PAY-' . str_pad($sid, 6, '0', STR_PAD_LEFT);
+        $conn->query("UPDATE payment_vouchers_mst SET voucher_no = '$v_no' WHERE id = $sid");
+
+        // ب. حفظ التفاصيل وتحديث الأرصدة (Detail Loop)
         for ($i = 0; $i < $count; $i++) {
-            $expense_type = $conn->real_escape_string($services[$i]);
-            $price = doubleval($prices[$i]);
-            $row_remark = $conn->real_escape_string($remarks[$i]);
+            $party_name = $conn->real_escape_string(trim($services[$i]));
+            $price      = doubleval($prices[$i]);
+            $row_remark = $conn->real_escape_string(trim($remarks[$i]));
             
-            if (!empty($expense_type) && $price > 0) {
-                $sql_service = "INSERT INTO `treasury_expenses`(`sdate`, `st`, `sprice`, `sremark`, `tot`, `s`, `box_id`) 
-                                VALUES ('$build_date', '$expense_type', '$price', '$row_remark', '$price', 0, $selected_box_id)";
-                if ($conn->query($sql_service)) {
-                    $sid = $conn->insert_id;
-                    
-                    $sqls = "INSERT INTO `expenses`(`m_date`, `sname`, `m_price`, `remark`, `s`) 
-                             VALUES ('$build_date', '$expense_type', '$price', '$row_remark', 0)";
-                    $conn->query($sqls);
-                    
-                    update_box_balance($conn, $selected_box_id, $price, 'discount', "سند صرف رقم #$sid - بند: $expense_type ($row_remark)", $build_date);
-                    
-                    post_journal_entry($conn, 'expense', $sid, 'مصروفات - ' . $expense_type, 'الصندوق - ' . $box_name, $price, "صرف مبلغ بسند صرف رقم #$sid - $row_remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id);
+            if (!empty($party_name) && $price > 0) {
+                // 1. الإدراج في جدول التفاصيل الجديد
+                $conn->query("INSERT INTO payment_vouchers_dtl (voucher_id, amount, remark, d_s) VALUES ($sid, $price, '$row_remark', 0)");
+
+                // 2. تحديث جدول treasury_expenses (للتوافق مع النظام القديم)
+                if ($i === 0) {
+                    $conn->query("UPDATE `treasury_expenses` SET `st`='$party_name', `sname`='$party_name', `sdate`='$build_date', `sprice`=$price, `sremark`='$row_remark', `box_id`=$selected_box_id WHERE `sid`=$sid");
+                    // في حال لم يكن السجل موجوداً (مثلاً إضافة سند جديد):
+                    if ($conn->affected_rows == 0) {
+                        $conn->query("INSERT INTO `treasury_expenses` (sid, st, sname, sdate, sprice, sremark, box_id) VALUES ($sid, '$party_name', '$party_name', '$build_date', $price, '$row_remark', $selected_box_id)");
+                    }
+                }
+
+                // 3. تحديث رصيد الصندوق (خصم المبلغ) مع التحقق الفعلي من النجاح
+                if (!update_box_balance($conn, $selected_box_id, $price, 'discount', "سند صرف رقم #$v_no للطرف: $party_name", $build_date)) {
+                    throw new Exception("فشل خصم المبلغ من الصندوق. رصيد الصندوق غير كافٍ لتسديد السند.");
+                }
+
+                // 4. تحديث مديونية المورد أو العميل
+                if ($party_type === 'supplier') {
+                    $conn->query("UPDATE `suppliers` SET `supp_daain` = `supp_daain` - $price WHERE `supp_name` = '$party_name'");
+                } elseif ($party_type === 'customer') {
+                    $conn->query("UPDATE `customers` SET `cust_madeen` = `cust_madeen` - $price WHERE `cust_name` = '$party_name'");
+                }
+
+                // 5. تسجيل القيد المحاسبي المزدوج
+                $credit_acc_name = "الصندوق - $box_name";
+                if ($party_type === 'supplier') {
+                    $debit_acc_name = "الذمم الدائنة - $party_name";
+                } elseif ($party_type === 'customer') {
+                    $debit_acc_name = "الذمم المدينة - $party_name";
+                } else {
+                    $debit_acc_name = "مصروفات - $party_name";
+                }
+                $journal_descr = "صرف مبلغ بسند #$v_no - $row_remark";
+                if (!post_journal_entry($conn, 'expense', $sid, $debit_acc_name, $credit_acc_name, $price, $journal_descr, $_SESSION['SESS_FIRST_NAME'], $selected_box_id, 'YER', 1, $sector_id_val)) {
+                    throw new Exception("فشل تسجيل القيد المحاسبي لسند الصرف رقم #$v_no");
                 }
             }
         }
-    }
 
-    echo "<script>window.location='index.php';</script>";
-    exit;
+        $conn->commit(); // حفظ كل العمليات بأمان
+        echo "<script>window.location='create.php?sid=$sid&saved=1';</script>";
+        exit;
+
+    } catch (Exception $e) {
+        $conn->rollback(); // التراجع عن كل شيء في حال حدوث خطأ
+        $error = "فشل حفظ السند: " . $e->getMessage();
+    }
 }
 
 // جلب قوائم العملاء والموردين
@@ -118,7 +197,7 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
     <div class="aqnex-window-header no-print">
         <div>
             <i class="bi bi-journal-minus text-danger ml-1"></i>
-            <span>أنظمة الحسابات - المقبوضات والمدفوعات - سند صرف جديد</span>
+            <span>أنظمة الحسابات -  سند صرف</span>
         </div>
         <div>
             <span class="ml-3">المستخدم: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong></span>
@@ -151,12 +230,12 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
             </button>
 
             <!-- 🗑 حذف / تصفية السند -->
-            <button type="button" class="tool-btn btn-delete" title="حذف وتصفية السند الحالي" onclick="if(confirm('هل أنت متأكد من رغبتك في تصفية السند؟')) window.location.href='create.php';">
+            <button type="button" class="tool-btn btn-delete" title="حذف وتصفية السند الحالي" onclick="confirmDeleteExpense();">
                 <i class="bi bi-trash-fill"></i>
             </button>
 
             <!-- 📖 القيود المحاسبية للسند (F8) -->
-            <button type="button" class="tool-btn" title="عرض القيود المحاسبية الآلية للسند (F8)" onclick="alert('تتم إضافة القيود المحاسبية المزدوجة تلقائياً في الدفتر فور حفظ السند.');" style="color: #7c3aed; border-color: #ddd6fe;">
+            <button type="button" class="tool-btn btn-journal" title="عرض القيود المحاسبية للسند (F8)" onclick="openExpenseJournalModal();" style="color: #7c3aed; border-color: #ddd6fe;">
                 <i class="bi bi-journal-bookmark-fill"></i>
             </button>
 
@@ -176,6 +255,11 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
     </div>
 
     <div class="card-body p-2">
+        <?php if (!empty($error)): ?>
+            <div class="alert alert-danger rounded-0 mb-3 text-right no-print font-weight-bold p-3">
+                <i class="bi bi-exclamation-triangle-fill ml-1"></i> <?php echo htmlspecialchars($error); ?>
+            </div>
+        <?php endif; ?>
         <?php if ($editing_id > 0): ?>
             <div class="alert alert-warning rounded-0 mb-3 text-right no-print" style="border: 1px solid #fbbf24; border-right: 4px solid #d97706 !important; background-color: #fffbeb; color: #92400e; padding: 10px 14px;">
                 <i class="bi bi-pencil-square ml-1 font-weight-bold"></i>
@@ -201,7 +285,7 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
                     <div class="col-md-2">
                         <div class="aqnex-form-group">
                             <label class="aqnex-label">نوع الطرف:</label>
-                            <select id="mainPartyType" class="aqnex-select" onchange="onExpensePartyTypeChange(this.value)">
+<select id="mainPartyType" name="party_type" class="aqnex-select" onchange="onExpensePartyTypeChange(this.value)">
                                 <option value="other" selected>مصروفات عامة / أخرى</option>
                                 <option value="supplier">مورد (سداد مستحقات)</option>
                                 <option value="customer">عميل (إرجاع مالي)</option>
@@ -209,13 +293,14 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
                         </div>
                     </div>
 
-                    <!-- اختيار الجهة / الحساب -->
-                    <div class="col-md-4">
-                        <div class="aqnex-form-group">
-                            <label class="aqnex-label">اختيار الجهة / الحساب:</label>
+ <!-- اختيار الجهة / الحساب -->
+<div class="col-md-4">
+    <div class="aqnex-form-group">
+        <label class="aqnex-label">اختيار الجهة / الحساب:</label>
 
-                            <!-- مصروفات عامة (افتراضي) -->
-                            <select id="mainPartySelect_other" class="aqnex-select" onchange="syncExpensePartyToRows(this.value)">
+        <!-- حاوية مصروفات عامة -->
+        <div id="div_other">
+            <select id="mainPartySelect_other" class="aqnex-select" onchange="syncExpensePartyToRows(this.value)">
                                 <option value="">-- اختر بند الصرف --</option>
                                 <option value="وجبات غذائية">وجبات غذائية</option>
                                 <option value="مصروفات يومية">مصروفات يومية</option>
@@ -224,33 +309,60 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
                                 <option value="كهرباء">كهرباء</option>
                                 <option value="ماء">ماء</option>
                                 <option value="خاصة">خاصة</option>
-                                <option value="اخرى">اخرى</option>
-                            </select>
+                                <option value="اخرى">اخرى (أدخل يدوياً)</option>
+            </select>
+        </div>
 
-                            <!-- قائمة الموردين (مخفية) -->
-                            <select id="mainPartySelect_supplier" class="aqnex-select d-none" onchange="syncExpensePartyToRows(this.value)">
-                                <option value="">-- اختر مورد --</option>
-                                <?php foreach ($suppliers_list as $s): ?>
-                                    <option value="<?php echo htmlspecialchars($s['supp_name']); ?>">
-                                        <?php echo htmlspecialchars($s['supp_name']); ?> (الذمة: <?php echo number_format(floatval($s['supp_daain']), 2); ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+        <!-- حاوية الموردين -->
+        <div id="div_supplier" class="d-none">
+            <select id="mainPartySelect_supplier" class="aqnex-select" onchange="syncExpensePartyToRows(this.value)">
+                <option value="">-- اختر مورد --</option>
+                <?php foreach ($suppliers_list as $s): ?>
+                    <option value="<?php echo htmlspecialchars($s['supp_name']); ?>">
+                        <?php echo htmlspecialchars($s['supp_name']); ?> (الذمة: <?php echo number_format(floatval($s['supp_daain']), 2); ?>)
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
 
-                            <!-- قائمة العملاء (مخفية) -->
-                            <select id="mainPartySelect_customer" class="aqnex-select d-none" onchange="syncExpensePartyToRows(this.value)">
-                                <option value="">-- اختر عميل --</option>
-                                <?php foreach ($customers_list as $c): ?>
-                                    <option value="<?php echo htmlspecialchars($c['cust_name']); ?>">
-                                        <?php echo htmlspecialchars($c['cust_name']); ?> (المديونية: <?php echo number_format(floatval($c['cust_madeen']), 2); ?>)
-                                    </option>
-                                <?php endforeach; ?>
+        <!-- حاوية العملاء -->
+        <div id="div_customer" class="d-none">
+            <select id="mainPartySelect_customer" class="aqnex-select" onchange="syncExpensePartyToRows(this.value)">
+                <option value="">-- اختر عميل --</option>
+                <?php foreach ($customers_list as $c): ?>
+                    <option value="<?php echo htmlspecialchars($c['cust_name']); ?>">
+                        <?php echo htmlspecialchars($c['cust_name']); ?> (المديونية: <?php echo number_format(floatval($c['cust_madeen']), 2); ?>)
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <!-- حقل نص "اخرى" المخصص -->
+        <input type="text" id="customAccountInput" class="aqnex-input d-none mt-1"
+               placeholder="اكتب اسم الحساب أو البند المخصص..."
+               oninput="syncExpensePartyToRows(this.value)">
+    </div>
+</div>
+
+                    <!-- الصندوق المستهدف -->
+                    <div class="col-md-2">
+                        <div class="aqnex-form-group">
+                            <label class="aqnex-label">القطاع / المركز:</label>
+                            <select name="sector_id" class="aqnex-select">
+                                <option value="">عام</option>
+                                <?php
+                                $res_sec = $conn->query("SELECT id, name FROM sectors ORDER BY name ASC");
+                                if ($res_sec) {
+                                    while($sec = $res_sec->fetch_assoc()) {
+                                        echo "<option value='{$sec['id']}'>" . htmlspecialchars($sec['name']) . "</option>";
+                                    }
+                                }
+                                ?>
                             </select>
                         </div>
                     </div>
 
-                    <!-- الصندوق المستهدف -->
-                    <div class="col-md-4">
+                    <div class="col-md-2">
                         <div class="aqnex-form-group">
                             <label class="aqnex-label">الصندوق المستهدف:</label>
                             <?php if ($is_admin): ?>
@@ -272,6 +384,7 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
                             <?php endif; ?>
                         </div>
                     </div>
+
                 </div>
             </div>
 
@@ -293,7 +406,7 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
                                 <input type="text" name="select_services[]" class="aqnex-input row-service-input" placeholder="-- اختر بند الصرف --" value="<?php echo $editing_expense ? htmlspecialchars($editing_expense['st']) : ''; ?>" required>
                             </td>
                             <td>
-                                <input type="number" step="any" name="unit_price[]" class="aqnex-input price-input text-center" value="<?php echo $editing_expense ? floatval($editing_expense['sprice']) : '0'; ?>" min="1" required>
+                                <input type="number" step="any" name="unit_price[]" class="aqnex-input price-input text-center" value="<?php echo $editing_expense ? floatval($editing_expense['sprice']) : '0'; ?>" min="0.01" required>
                             </td>
                             <td>
                                 <input type="text" name="t[]" class="aqnex-input" placeholder="اكتب ملاحظة للبيان..." value="<?php echo $editing_expense ? htmlspecialchars($editing_expense['sremark']) : ''; ?>" required>
@@ -340,24 +453,68 @@ if ($res_s) while ($r = $res_s->fetch_assoc()) $suppliers_list[] = $r;
 
 <script type="text/javascript">
 function onExpensePartyTypeChange(type) {
-    document.getElementById('mainPartySelect_other').classList.add('d-none');
-    document.getElementById('mainPartySelect_supplier').classList.add('d-none');
-    document.getElementById('mainPartySelect_customer').classList.add('d-none');
+    // 1. إخفاء كافة الحاويات أولاً
+    document.getElementById('div_other').classList.add('d-none');
+    document.getElementById('div_supplier').classList.add('d-none');
+    document.getElementById('div_customer').classList.add('d-none');
+    document.getElementById('customAccountInput').classList.add('d-none');
 
-    if (type === 'supplier') {
-        document.getElementById('mainPartySelect_supplier').classList.remove('d-none');
-    } else if (type === 'customer') {
-        document.getElementById('mainPartySelect_customer').classList.remove('d-none');
-    } else {
-        document.getElementById('mainPartySelect_other').classList.remove('d-none');
+    // 2. إظهار الحاوية المطلوبة بناءً على الاختيار
+    const targetDiv = document.getElementById('div_' + type);
+    if (targetDiv) {
+        targetDiv.classList.remove('d-none');
+        
+        // إعادة التركيز (Focus) على حقل الإدخال الذكي الجديد داخل الحاوية
+        setTimeout(() => {
+            const smartInput = targetDiv.querySelector('.header-autocomplete-input');
+            if (smartInput) smartInput.focus();
+        }, 100);
     }
+
+    // 3. مسح بيانات الصفوف عند تغيير النوع لضمان الدقة
     document.querySelectorAll('.row-service-input').forEach(inp => { inp.value = ''; });
 }
 
 function syncExpensePartyToRows(value) {
-    if (!value) return;
+    // إذا اختار "اخرى" من القائمة العامة - أظهر حقل نص مخصص
+    if (value === 'اخرى') {
+        const customInput = document.getElementById('customAccountInput');
+        customInput.classList.remove('d-none');
+        customInput.value = '';
+        setTimeout(() => customInput.focus(), 50);
+        // مسح حقل الخدمة في الصف
+        document.querySelectorAll('.row-service-input').forEach(inp => { inp.value = ''; });
+        return;
+    }
+
+    if (!value || value.trim() === '') return;
+
+    // إذا لم يكن "اخرى"، أخفِ حقل النص المخصص
+    const customInput = document.getElementById('customAccountInput');
+    if (customInput && !customInput.classList.contains('d-none')) {
+        // لا نخفيه إذا كان هو المصدر (يعني المستخدم يكتب فيه)
+    }
+
+    // عبّئ أول صف بالقيمة المختارة وانتقل للمبلغ
+    const firstRow = document.querySelector('.item-row');
+    if (firstRow) {
+        const serviceInput = firstRow.querySelector('.row-service-input');
+        if (serviceInput) {
+            serviceInput.value = value;
+        }
+        // انتقال التركيز لحقل المبلغ في أول صف
+        const priceInput = firstRow.querySelector('.price-input');
+        if (priceInput) {
+            priceInput.select();
+            priceInput.focus();
+        }
+    }
+
+    // أيضاً عبّئ باقي الصفوف إذا كانت فارغة
+    let isFirst = true;
     document.querySelectorAll('.row-service-input').forEach(inp => {
-        inp.value = value;
+        if (isFirst) { isFirst = false; return; } // تجاوز الأول (تم تحديثه بالفعل)
+        if (!inp.value) inp.value = value;
     });
 }
 
@@ -573,5 +730,84 @@ document.addEventListener('keydown', function(e) {
         </div>
     </div>
 </div>
+
+<!-- مودال القيود المحاسبية لسند الصرف -->
+<div class="modal fade" id="expenseJournalModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content rounded-0">
+            <div class="modal-header bg-danger text-white py-2">
+                <h6 class="modal-title font-weight-bold"><i class="bi bi-journal-bookmark-fill ml-1"></i> القيود المحاسبية لسند الصرف</h6>
+                <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body p-3">
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered text-center">
+                        <thead class="bg-light">
+                            <tr><th>الحساب</th><th>مدين</th><th>دائن</th><th>البيان</th></tr>
+                        </thead>
+                        <tbody id="expenseJournalBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-secondary btn-sm rounded-0" data-dismiss="modal">إغلاق</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const actualExpenseJournalEntries = <?php echo json_encode($actual_entries); ?>;
+
+function openExpenseJournalModal() {
+    const body = document.getElementById('expenseJournalBody');
+    if (!body) return;
+    const entries = actualExpenseJournalEntries;
+    if (!entries || entries.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" class="text-muted py-3">لا توجد قيود محاسبية لهذا السند. احفظ السند أولاً.</td></tr>';
+    } else {
+        let td = 0, tc = 0, html = '';
+        entries.forEach(e => {
+            const d = parseFloat(e.debit)||0, c = parseFloat(e.credit)||0;
+            td += d; tc += c;
+            html += `<tr>
+                <td class="text-right">${e.account_name||''}</td>
+                <td class="${d>0?'text-danger font-weight-bold':'text-muted'}">${d>0?d.toFixed(2):'-'}</td>
+                <td class="${c>0?'text-success font-weight-bold':'text-muted'}">${c>0?c.toFixed(2):'-'}</td>
+                <td class="text-right text-muted" style="font-size:0.85em;">${e.narration||''}</td>
+            </tr>`;
+        });
+        html += `<tr class="table-info font-weight-bold"><td>الإجمالي</td><td>${td.toFixed(2)}</td><td>${tc.toFixed(2)}</td><td>${Math.abs(td-tc)<0.01?'✓ ميزان محقق':'⚠ ميزان غير محقق'}</td></tr>`;
+        body.innerHTML = html;
+    }
+    if (typeof $ !== 'undefined') $('#expenseJournalModal').modal('show');
+}
+
+function confirmDeleteExpense() {
+    const expenseId = <?php echo $editing_id ?: 0; ?>;
+    if (expenseId > 0) {
+        const msg = 'هل أنت متأكد من حذف سند الصرف رقم #' + expenseId + '؟\nسيتم إلغاء القيود المحاسبية واسترجاع المبلغ للصندوق. لا يمكن التراجع.';
+        if (typeof AqnexConfirm !== 'undefined') {
+            AqnexConfirm.show('تأكيد الحذف النهائي', msg, function() {
+                window.location.href = 'delete.php?id=' + expenseId;
+            });
+        } else {
+            if (confirm(msg)) window.location.href = 'delete.php?id=' + expenseId;
+        }
+    } else {
+        if (typeof AqnexConfirm !== 'undefined') {
+            AqnexConfirm.show('تأكيد التصفية', 'هل تريد مسح البيانات وبدء سند جديد؟', function() {
+                window.location.href = 'create.php';
+            });
+        } else {
+            if (confirm('تصفية؟')) window.location.href = 'create.php';
+        }
+    }
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'F8') { e.preventDefault(); openExpenseJournalModal(); }
+});
+</script>
 
 <?php require_once($dir_prefix . 'includes/footer.php'); ?>

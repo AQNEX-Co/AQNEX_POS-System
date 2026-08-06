@@ -80,7 +80,9 @@ try {
     <link rel="stylesheet" type="text/css" href="<?php echo $prefix; ?>files/bootstrap-icons/bootstrap-icons.min.css">
     
     <!-- التنسيق المخصص -->
+    <link rel="stylesheet" type="text/css" href="<?php echo $prefix; ?>assets/css/select2.min.css">
     <link rel="stylesheet" type="text/css" href="<?php echo $prefix; ?>assets/css/custom.css">
+    <link rel="stylesheet" type="text/css" href="<?php echo $prefix; ?>assets/css/aqnex-dialogs.css">
 
     <!-- شاشة التحميل الرسمية — تعريف موحد -->
     <style>
@@ -294,61 +296,7 @@ try {
 </div>
 
     <div class="wrapper">
-        <!-- Print header (visible only when printing) -->
-        <?php if (!isset($no_print_header) || !$no_print_header): ?>
-        <div class="print-header" style="direction: rtl; width: 100%; border-bottom: 2px solid #000; padding-bottom: 12px; margin-bottom: 20px;">
-            <table style="width: 100%; border-collapse: collapse; border: none; margin: 0; padding: 0;">
-                <tr style="border: none;">
-                    <!-- اليمين: معلومات المتجر باللغة العربية -->
-                    <td style="width: 35%; text-align: right; vertical-align: middle; font-family: 'Tajawal', sans-serif; font-size: 11px; line-height: 1.5; border: none; padding: 0;">
-                        <h3 style="margin: 0 0 4px 0; font-size: 15px; font-weight: 800; color: #000;"><?php echo htmlspecialchars($global_settings['store_name'] ?? ''); ?></h3>
-                        <div style="font-weight: 600; color: #334155;"><?php echo htmlspecialchars($global_settings['address'] ?? ''); ?></div>
-                        <div style="font-weight: 600; color: #334155;">هاتف: <?php echo htmlspecialchars($global_settings['phone'] ?? ''); ?></div>
-                        <?php if (!empty($global_settings['commercial_register']) && (!isset($global_settings['report_show_cr']) || $global_settings['report_show_cr'] == 1)): ?>
-                            <div style="font-size: 10px; color: #475569;">سجل تجاري: <?php echo htmlspecialchars($global_settings['commercial_register']); ?></div>
-                        <?php endif; ?>
-                        <?php if (!empty($global_settings['tax_number']) && (!isset($global_settings['report_show_tax']) || $global_settings['report_show_tax'] == 1)): ?>
-                            <div style="font-size: 10px; color: #475569;">الرقم الضريبي: <?php echo htmlspecialchars($global_settings['tax_number']); ?></div>
-                        <?php endif; ?>
-                    </td>
-                    
-                    <!-- الوسط: شعار الشركة وعنوان التقرير -->
-                    <td style="width: 30%; text-align: center; vertical-align: middle; border: none; padding: 0;">
-                        <?php 
-                        $show_logo = (!isset($global_settings['report_show_logo']) || $global_settings['report_show_logo'] == 1) && !empty($logo_url);
-                        if ($show_logo): 
-                        ?>
-                            <img src="<?php echo $logo_url; ?>" style="max-height: 70px; object-fit: contain; margin-bottom: 6px; border: 1px solid #cbd5e1; padding: 3px; border-radius: 4px;">
-                        <?php endif; ?>
-                        <div style="font-size: 15px; font-weight: 800; text-decoration: underline; color: #000; margin-top: 4px; letter-spacing: 0.5px;">
-                            <?php echo isset($report_title) ? htmlspecialchars($report_title) : 'تقرير رسمي'; ?>
-                        </div>
-                        <?php if (!empty($global_settings['report_header_subtitle'])): ?>
-                            <div style="font-size: 10px; margin-top: 3px; color: #475569; font-weight: 700;"><?php echo htmlspecialchars($global_settings['report_header_subtitle']); ?></div>
-                        <?php endif; ?>
-                    </td>
-                    
-                    <!-- اليسار: معلومات المتجر باللغة الإنجليزية -->
-                    <td style="width: 35%; text-align: left; vertical-align: middle; font-family: 'Tajawal', sans-serif; font-size: 11px; line-height: 1.5; direction: ltr; border: none; padding: 0;">
-                        <h3 style="margin: 0 0 4px 0; font-size: 15px; font-weight: 800; color: #000;"><?php echo htmlspecialchars($global_settings['store_name_en'] ?? 'AQNEX POS System'); ?></h3>
-                        <div style="font-weight: 600; color: #334155;"><?php echo htmlspecialchars($global_settings['address_en'] ?? 'Aden - Yemen'); ?></div>
-                        <div style="font-weight: 600; color: #334155;">Tel: <?php echo htmlspecialchars($global_settings['phone_en'] ?? '+967 777777777'); ?></div>
-                        <?php if (!empty($global_settings['commercial_register']) && (!isset($global_settings['report_show_cr']) || $global_settings['report_show_cr'] == 1)): ?>
-                            <div style="font-size: 10px; color: #475569;">C.R. No: <?php echo htmlspecialchars($global_settings['commercial_register']); ?></div>
-                        <?php endif; ?>
-                        <?php if (!empty($global_settings['tax_number']) && (!isset($global_settings['report_show_tax']) || $global_settings['report_show_tax'] == 1)): ?>
-                            <div style="font-size: 10px; color: #475569;">Tax ID: <?php echo htmlspecialchars($global_settings['tax_number']); ?></div>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            </table>
-            <?php if (!empty($global_settings['report_header_notes'])): ?>
-                <div class="print-header-notes" style="font-size: 9px; text-align: right; color: #475569; border: 1px dashed #cbd5e1; padding: 5px; margin-top: 6px; margin-bottom: 2px; background: #fafafa; border-radius: 4px;">
-                    <strong>ملاحظات التقرير:</strong> <?php echo nl2br(htmlspecialchars($global_settings['report_header_notes'])); ?>
-                </div>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
+
         <?php 
         // تضمين القائمة الجانبية إذا لم نكن في صفحة الدخول
         if ($current_page !== 'login.php' && $current_page !== 'forget.php') {

@@ -21,11 +21,21 @@ if (isset($_GET['ai_prefill'])) {
 
 $editing_id = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['qid']) ? intval($_GET['qid']) : 0);
 $editing_receipt = null;
+$actual_entries = [];
 
 if ($editing_id > 0) {
     $res_edit = $conn->query("SELECT * FROM receipts WHERE qid = $editing_id LIMIT 1");
     if ($res_edit && $res_edit->num_rows > 0) {
         $editing_receipt = $res_edit->fetch_assoc();
+        // جلب القيود المحاسبية الفعلية لهذا السند
+        $res_j = $conn->query("SELECT * FROM journal_entries WHERE ref_id = $editing_id AND ref_type = 'receipt' ORDER BY id ASC");
+        if ($res_j) {
+            while ($j_row = $res_j->fetch_assoc()) {
+                $amt = doubleval($j_row['amount']);
+                $actual_entries[] = ['account_name' => $j_row['account_debit'], 'debit' => $amt, 'credit' => 0, 'narration' => $j_row['description'] ?? ''];
+                $actual_entries[] = ['account_name' => $j_row['account_credit'], 'debit' => 0, 'credit' => $amt, 'narration' => $j_row['description'] ?? ''];
+            }
+        }
     } else {
         $editing_id = 0;
     }
@@ -34,108 +44,147 @@ if ($editing_id > 0) {
 $active_user_id = intval($_SESSION['SESS_MEMBER_ID']);
 $active_user_role = trim($_SESSION['SESS_LAST_NAME']);
 $is_admin = ($active_user_role === 'admin' || empty($active_user_role));
-
 if (isset($_POST['btn_save'])) {
-    $editing_id = isset($_POST['editing_id']) ? intval($_POST['editing_id']) : 0;
-    $build_date = date('Y-m-d', strtotime($_POST['build_date']));
-    $customers = $_POST['select2'];
-    $prices = $_POST['unit_price'];
-    $remarks = $_POST['t'];
-    $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
-    $box_name = get_box_name($conn, $selected_box_id);
-
-    $conn->begin_transaction();
+    $conn->begin_transaction(); // بدء الترانزكشن لضمان سلامة البيانات
     try {
+        $editing_id = isset($_POST['editing_id']) ? intval($_POST['editing_id']) : 0;
+        $build_date = date('Y-m-d', strtotime($_POST['build_date']));
+        $party_type = $conn->real_escape_string($_POST['party_type'] ?? 'customer'); // نوع الطرف: مورد أو عميل
+        
+        $customers  = $_POST['select2'] ?? $_POST['select_services'] ?? []; 
+        $prices     = $_POST['unit_price'] ?? [];
+        $remarks    = $_POST['t'] ?? [];
+        
+        $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
+        $box_name        = get_box_name($conn, $selected_box_id);
+        
+        // --- تصحيح مشكلة TypeError: إرسال القيمة null برمجياً ---
+        $sector_id_val   = (isset($_POST['sector_id']) && $_POST['sector_id'] !== '') ? intval($_POST['sector_id']) : null;
+        $sql_sector      = is_null($sector_id_val) ? "NULL" : $sector_id_val;
+
+        // --- أولاً: معالجة حالة التعديل (عكس الأثر القديم) ---
         if ($editing_id > 0) {
             $old_res = $conn->query("SELECT * FROM receipts WHERE qid = $editing_id LIMIT 1");
             if ($old_res && $old_row = $old_res->fetch_assoc()) {
-                $old_cust = $conn->real_escape_string($old_row['cust_name']);
+                $old_name = $conn->real_escape_string($old_row['cust_name']);
                 $old_price = doubleval($old_row['q_price']);
                 $old_box_id = intval($old_row['box_id']);
 
-                $conn->query("UPDATE customers SET cust_madeen = cust_madeen + $old_price WHERE cust_name = '$old_cust'");
+                // 1. عكس رصيد العميل أو المورد (إعادة الدين كما كان)
+                $check_mst = $conn->query("SELECT party_type FROM receipt_vouchers_mst WHERE id = $editing_id");
+                $old_type = ($check_mst && $r = $check_mst->fetch_assoc()) ? $r['party_type'] : 'customer';
+
+                if ($old_type === 'customer') {
+                    $conn->query("UPDATE customers SET cust_madeen = cust_madeen + $old_price WHERE cust_name = '$old_name'");
+                } else {
+                    $conn->query("UPDATE suppliers SET supp_daain = supp_daain - $old_price WHERE supp_name = '$old_name'");
+                }
+
+                // 2. عكس رصيد الصندوق (خصم المبلغ الذي أودع سابقاً)
                 if ($old_price > 0 && $old_box_id > 0) {
                     update_box_balance($conn, $old_box_id, $old_price, 'discount', "إلغاء إيداع سند قبض رقم #$editing_id للتعديل", date('Y-m-d'));
                 }
+
+                // 3. مسح القيود والتفاصيل القديمة
                 $conn->query("DELETE FROM journal_entries WHERE ref_type = 'receipt' AND ref_id = $editing_id");
                 $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'receipt' AND ref_id = $editing_id");
+                $conn->query("DELETE FROM receipt_vouchers_dtl WHERE voucher_id = $editing_id");
             }
+        }
 
-            $cust_name = $conn->real_escape_string($customers[0]);
-            $price = doubleval($prices[0]);
-            $row_remark = $conn->real_escape_string($remarks[0]);
+        // --- ثانياً: حفظ البيانات الجديدة بنظام Master-Detail ---
+        $count = count($customers);
+        $total_voucher_amount = 0;
+        foreach($prices as $p) $total_voucher_amount += doubleval($p);
 
-            if (!empty($cust_name) && $price > 0) {
-                $sql_update = "UPDATE `receipts` SET `q_date` = '$build_date', `cust_name` = '$cust_name', `q_price` = '$price', `remark` = '$row_remark', `total` = '$price', `box_id` = $selected_box_id WHERE `qid` = $editing_id";
-                if (!$conn->query($sql_update)) {
-                    throw new Exception("فشل تحديث سند القبض رقم #" . $editing_id);
+        for ($i = 0; $i < $count; $i++) {
+            $party_name = $conn->real_escape_string($customers[$i]);
+            $price      = doubleval($prices[$i]);
+            $row_remark = $conn->real_escape_string($remarks[$i]);
+            
+            if (!empty($party_name) && $price > 0) {
+                // حفظ الماستر والديل (البنية الاحترافية)
+                if ($i === 0) {
+                    if ($editing_id > 0) {
+                        $sql_up_rec = "UPDATE `receipts` SET `q_date` = '$build_date', `cust_name` = '$party_name', `q_price` = '$price', `remark` = '$row_remark', `total` = '$total_voucher_amount', `box_id` = $selected_box_id WHERE `qid` = $editing_id";
+                        $conn->query($sql_up_rec);
+                        $qid = $editing_id;
+                    } else {
+                        $sql_in_rec = "INSERT INTO `receipts`(`q_date`, `cust_name`, `q_price`, `remark`, `total`, `s`, `box_id`) 
+                                       VALUES ('$build_date', '$party_name', '$price', '$row_remark', '$total_voucher_amount', 0, $selected_box_id)";
+                        $conn->query($sql_in_rec);
+                        $qid = $conn->insert_id;
+                    }
+
+                    $v_no = 'REC-' . str_pad($qid, 6, '0', STR_PAD_LEFT);
+                    
+                    // تحديث/إدراج في جدول الماستر الجديد
+                    $conn->query("INSERT INTO receipt_vouchers_mst (id, voucher_no, voucher_date, party_type, party_name, total_amount, box_id, sector_id, remark, d_s)
+                                  VALUES ($qid, '$v_no', '$build_date', '$party_type', '$party_name', $total_voucher_amount, $selected_box_id, $sql_sector, '$row_remark', 0)
+                                  ON DUPLICATE KEY UPDATE party_type = '$party_type', party_name = '$party_name', total_amount = $total_voucher_amount, sector_id = $sql_sector, remark = '$row_remark'");
                 }
 
-                $sql_update_cust = "UPDATE `customers` SET `cust_madeen` = `cust_madeen` - $price WHERE `cust_name` = '$cust_name'";
-                if (!$conn->query($sql_update_cust)) {
-                    throw new Exception("فشل تحديث مديونية العميل: " . $cust_name);
+                // إدراج التفاصيل
+                $conn->query("INSERT INTO receipt_vouchers_dtl (voucher_id, amount, remark, d_s) VALUES ($qid, $price, '$row_remark', 0)");
+
+                // 1. تحديث أرصدة الموردين أو العملاء
+                if ($party_type === 'customer') {
+                    // القبض من عميل يقلل مديونيته
+                    $conn->query("UPDATE `customers` SET `cust_madeen` = `cust_madeen` - $price WHERE `cust_name` = '$party_name'");
+                } else {
+                    // القبض من مورد يزيد من دائنية المورد (أو سداد مسبق)
+                    $conn->query("UPDATE `suppliers` SET `supp_daain` = `supp_daain` + $price WHERE `supp_name` = '$party_name'");
                 }
-                update_box_balance($conn, $selected_box_id, $price, 'addition', "سند قبض رقم #$editing_id (معدل) - عميل: $cust_name", $build_date);
-                if (!post_journal_entry($conn, 'receipt', $editing_id, 'الصندوق - ' . $box_name, 'الذمم المدينة - ' . $cust_name, $price, "تعديل تحصيل دفعة بسند قبض رقم #$editing_id - $row_remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id)) {
-                    throw new Exception("فشل قيد اليومية للسند رقم: " . $editing_id);
-                }
-            }
-        } else {
-            $count = count($customers);
-            for ($i = 0; $i < $count; $i++) {
-                $cust_name = $conn->real_escape_string($customers[$i]);
-                $price = doubleval($prices[$i]);
-                $row_remark = $conn->real_escape_string($remarks[$i]);
+
+                // 2. تحديث رصيد الصندوق (إيداع)
+                update_box_balance($conn, $selected_box_id, $price, 'addition', "سند قبض #$qid للطرف: $party_name", $build_date);
                 
-                if (!empty($cust_name) && $price > 0) {
-                    $sql_service = "INSERT INTO `receipts`(`q_date`, `cust_name`, `q_price`, `remark`, `total`, `s`, `box_id`) 
-                                    VALUES ('$build_date', '$cust_name', '$price', '$row_remark', '$price', 0, $selected_box_id)";
-                    if (!$conn->query($sql_service)) {
-                        throw new Exception("فشل إدراج سند القبض للعميل: " . $cust_name);
-                    }
-                    $qid = $conn->insert_id;
-                    
-                    $sql_update_cust = "UPDATE `customers` SET `cust_madeen` = `cust_madeen` - $price WHERE `cust_name` = '$cust_name'";
-                    if (!$conn->query($sql_update_cust)) {
-                        throw new Exception("فشل تحديث مديونية العميل: " . $cust_name);
-                    }
-                    
-                    update_box_balance($conn, $selected_box_id, $price, 'addition', "سند قبض رقم #$qid - عميل: $cust_name", $build_date);
-                    
-                    if (!post_journal_entry($conn, 'receipt', $qid, 'الصندوق - ' . $box_name, 'الذمم المدينة - ' . $cust_name, $price, "تحصيل دفعة بسند قبض رقم #$qid - $row_remark", $_SESSION['SESS_FIRST_NAME'], $selected_box_id)) {
-                        throw new Exception("فشل قيد اليومية للسند رقم: " . $qid);
-                    }
+                // 3. تسجيل القيد المحاسبي (تمرير $sector_id_val كـ null أو int)
+                $debit_acc_name = "الصندوق - $box_name";
+                $credit_acc_name = ($party_type === 'customer') ? "الذمم المدينة - $party_name" : "الذمم الدائنة - $party_name";
+                $j_descr = ($editing_id > 0 ? "تعديل " : "") . "تحصيل دفعة بسند قبض رقم #$qid - $row_remark";
+                if (!post_journal_entry($conn, 'receipt', $qid, $debit_acc_name, $credit_acc_name, $price, $j_descr, $_SESSION['SESS_FIRST_NAME'], $selected_box_id, 'YER', 1, $sector_id_val)) {
+                    throw new Exception("فشل تسجيل القيد المحاسبي للسند #$qid");
+                }
 
-                    $res_cust_phone = $conn->query("SELECT phone FROM customers WHERE cust_name = '$cust_name' LIMIT 1");
-                    if ($res_cust_phone && $res_cust_phone->num_rows > 0) {
-                        $cust_phone = $res_cust_phone->fetch_assoc()['phone'];
-                        if (!empty($cust_phone)) {
-                            require_once($dir_prefix . 'app/Services/WhatsAppService.php');
-                            $msg = "شريكنا العزيز، تم استلام دفعة مالية منكم بمبلغ: " . number_format($price, 2) . " ر.ي. وتم تسجيل سند قبض رقم #{$qid}. شكراً لكم.";
-                            \AQNEX\Services\WhatsAppService::sendNotification($global_settings, $cust_phone, $msg);
-                        }
+                // 4. إشعار WhatsApp
+                $res_phone = $conn->query("SELECT phone FROM customers WHERE cust_name = '$party_name' LIMIT 1");
+                if ($res_phone && $res_phone->num_rows > 0) {
+                    $phone = $res_phone->fetch_assoc()['phone'];
+                    if (!empty($phone)) {
+                        require_once($dir_prefix . 'app/Services/WhatsAppService.php');
+                        $wa_msg = "شريكنا العزيز، تم استلام دفعة مالية منكم بمبلغ: " . number_format($price, 2) . " ر.ي بسند قبض رقم #{$qid}. شكراً لكم.";
+                        \AQNEX\Services\WhatsAppService::sendNotification($global_settings, $phone, $wa_msg);
                     }
                 }
             }
         }
         $conn->commit();
+        $last_qid = $qid ?? $editing_id;
+        echo "<script>window.location='create.php?qid=$last_qid&saved=1';</script>";
+        exit;
     } catch (Exception $e) {
         $conn->rollback();
-        echo "<script>alert('خطأ أثناء الحفظ: " . addslashes($e->getMessage()) . "');</script>";
+        echo "<script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof showSystemAlert === 'function') {
+                showSystemAlert('خطأ في العملية', " . json_encode($e->getMessage()) . ", 'danger');
+            } else {
+                alert('خطأ أثناء الحفظ: " . addslashes($e->getMessage()) . "');
+            }
+        });
+        </script>";
     }
-
-    echo "<script>window.location='index.php';</script>";
-    exit;
 }
 ?>
-<title>تسجيل مقبوضات جديدة - تكنولوجيا فون</title>
+<title> سند قبض </title>
 
 <div class="card-flat">
     <!-- AQNEX System Window Header Bar -->
     <div class="aqnex-window-header no-print">
         <div>
             <i class="bi bi-journal-check text-success ml-1"></i>
-            <span>أنظمة الحسابات - المقبوضات والمدفوعات - سند قبض جديد</span>
+            <span>أنظمة الحسابات - سند قبض </span>
         </div>
         <div>
             <span class="ml-3">المستخدم: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong></span>
@@ -167,12 +216,12 @@ if (isset($_POST['btn_save'])) {
             </button>
 
             <!-- 🗑 حذف / تصفية السند -->
-            <button type="button" class="tool-btn btn-delete" title="حذف وتصفية السند الحالي" onclick="if(confirm('هل أنت متأكد من رغبتك في تصفية السند؟')) window.location.href='create.php';">
+            <button type="button" class="tool-btn btn-delete" title="حذف وتصفية السند الحالي" onclick="confirmDeleteReceipt();">
                 <i class="bi bi-trash-fill"></i>
             </button>
 
             <!-- 📖 القيود المحاسبية للسند (F8) -->
-            <button type="button" class="tool-btn" title="عرض القيود المحاسبية الآلية للسند (F8)" onclick="alert('تتم إضافة القيود المحاسبية المزدوجة تلقائياً في الدفتر فور حفظ السند.');" style="color: #7c3aed; border-color: #ddd6fe;">
+            <button type="button" class="tool-btn btn-journal" title="عرض القيود المحاسبية للسند (F8)" onclick="openReceiptJournalModal();" style="color: #7c3aed; border-color: #ddd6fe;">
                 <i class="bi bi-journal-bookmark-fill"></i>
             </button>
 
@@ -212,28 +261,66 @@ if (isset($_POST['btn_save'])) {
                         </div>
                     </div>
 
-                    <div class="col-md-3">
-                        <div class="aqnex-form-group">
-                            <label class="aqnex-label">نوع الطرف:</label>
-                            <select id="mainPartyType" class="aqnex-select">
-                                <option value="customer" selected>عميل (ذمم مدينة)</option>
-                                <option value="supplier">مورد (ذمم دائنة)</option>
-                            </select>
-                        </div>
-                    </div>
+<!-- نوع الطرف -->
+<div class="col-md-3">
+    <div class="aqnex-form-group">
+        <label class="aqnex-label">نوع الطرف:</label>
+        <!-- أضفنا name="party_type" ليرسله الفورم -->
+        <select id="mainPartyType" name="party_type" class="aqnex-select" onchange="onReceiptPartyTypeChange(this.value)">
+            <option value="customer" selected>عميل (ذمم مدينة)</option>
+            <option value="supplier">مورد (ذمم دائنة)</option>
+        </select>
+    </div>
+</div>
 
-                    <div class="col-md-6">
+<!-- اختيار العميل / المورد -->
+<div class="col-md-6">
+    <div class="aqnex-form-group">
+        <label class="aqnex-label" id="mainPartySelectLabel">اختيار الحساب:</label>
+
+        <!-- حاوية العملاء -->
+        <div id="div_customer">
+            <select id="mainPartySelect_customer" class="aqnex-select" onchange="syncReceiptPartyToRows(this.value)">
+                <option value="">-- اختر عميل --</option>
+                <?php
+                $sql_cust = "SELECT cust_name, cust_madeen FROM customers WHERE d_s = 0 ORDER BY cust_id DESC";
+                $res_cust = $conn->query($sql_cust);
+                if ($res_cust) {
+                    while($row = $res_cust->fetch_assoc()) {
+                        echo "<option value='".htmlspecialchars($row['cust_name'])."'>".htmlspecialchars($row['cust_name'])." (المديونية: ".number_format(floatval($row['cust_madeen']), 2).")</option>";
+                    }
+                }
+                ?>
+            </select>
+        </div>
+
+        <!-- حاوية الموردين -->
+        <div id="div_supplier" class="d-none">
+            <select id="mainPartySelect_supplier" class="aqnex-select" onchange="syncReceiptPartyToRows(this.value)">
+                <option value="">-- اختر مورد --</option>
+                <?php
+                $res_supp_r = $conn->query("SELECT supp_name, supp_daain FROM suppliers WHERE d_s = 0 ORDER BY supp_id DESC");
+                if ($res_supp_r) {
+                    while($sr = $res_supp_r->fetch_assoc()) {
+                        echo "<option value='".htmlspecialchars($sr['supp_name'])."'>".htmlspecialchars($sr['supp_name'])." (الذمة: ".number_format(floatval($sr['supp_daain']), 2).")</option>";
+                    }
+                }
+                ?>
+            </select>
+        </div>
+    </div>
+</div>
+
+                    <div class="col-md-6 mt-1">
                         <div class="aqnex-form-group">
-                            <label class="aqnex-label" style="width: 130px;">اختيار العميل / المورد:</label>
-                            <select id="mainPartySelect" class="aqnex-select">
-                                <option value="">--اختر الحساب--</option>
+                            <label class="aqnex-label">القطاع / المركز:</label>
+                            <select name="sector_id" class="aqnex-select">
+                                <option value="">عام</option>
                                 <?php
-                                $sql_cust = "SELECT cust_name, cust_madeen FROM customers WHERE d_s = 0 ORDER BY cust_id DESC";
-                                $res_cust = $conn->query($sql_cust);
-                                if ($res_cust) {
-                                    while($row = $res_cust->fetch_assoc()) {
-                                        $sel_cp = ($editing_receipt && $editing_receipt['cust_name'] === $row['cust_name']) ? 'selected' : '';
-                                        echo "<option value='".htmlspecialchars($row['cust_name'])."' $sel_cp>".htmlspecialchars($row['cust_name'])." (المديونية: ".number_format(floatval($row['cust_madeen']), 2).")</option>";
+                                $res_sec = $conn->query("SELECT id, name FROM sectors ORDER BY name ASC");
+                                if ($res_sec) {
+                                    while($sec = $res_sec->fetch_assoc()) {
+                                        echo "<option value='{$sec['id']}'>" . htmlspecialchars($sec['name']) . "</option>";
                                     }
                                 }
                                 ?>
@@ -265,6 +352,7 @@ if (isset($_POST['btn_save'])) {
                     </div>
                 </div>
             </div>
+
 
             <!-- جدول بنود المقبوضات -->
             <div class="table-responsive mt-2">
@@ -342,6 +430,84 @@ if (isset($_POST['btn_save'])) {
 </div>
 
 <script type="text/javascript">
+
+// ============================================================
+// دالة تبديل نوع الطرف في سند القبض (عميل / مورد)
+// ============================================================
+function onReceiptPartyTypeChange(type) {
+    // 1. إخفاء كل الحاويات
+    document.getElementById('div_customer').classList.add('d-none');
+    document.getElementById('div_supplier').classList.add('d-none');
+    const label = document.getElementById('mainPartySelectLabel');
+
+    // 2. إظهار الحاوية المطلوبة وتغيير العنوان
+    if (type === 'supplier') {
+        document.getElementById('div_supplier').classList.remove('d-none');
+        if (label) label.textContent = 'اختيار المورد:';
+        // تركيز تلقائي على حقل البحث الذكي للمورد
+        setTimeout(() => {
+            const inp = document.querySelector('#div_supplier .header-autocomplete-input');
+            if (inp) inp.focus();
+        }, 100);
+    } else {
+        document.getElementById('div_customer').classList.remove('d-none');
+        if (label) label.textContent = 'اختيار العميل:';
+        setTimeout(() => {
+            const inp = document.querySelector('#div_customer .header-autocomplete-input');
+            if (inp) inp.focus();
+        }, 100);
+    }
+
+    // 3. مسح بيانات الجدول لضمان التناسق
+    document.querySelectorAll('#itemsContainer .select-customer').forEach(s => { s.value = ''; });
+}
+
+// ============================================================
+// دالة ربط الطرف المختار بالجدول + انتقال للمبلغ
+// ============================================================
+function syncReceiptPartyToRows(value) {
+    if (!value || value.trim() === '') return;
+
+    // عبّئ أول صف وانتقل للمبلغ
+    const firstRow = document.querySelector('.item-row');
+    if (firstRow) {
+        const sel = firstRow.querySelector('.select-customer');
+        if (sel) {
+            sel.value = value;
+            if (sel.value !== value) {
+                // أضف الخيار إذا لم يكن موجوداً
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.text = value;
+                opt.selected = true;
+                sel.add(opt);
+            }
+        }
+        // انتقل لحقل المبلغ
+        const priceInput = firstRow.querySelector('.price-input');
+        if (priceInput) {
+            priceInput.select();
+            priceInput.focus();
+        }
+    }
+
+    // باقي الصفوف (إذا كانت فارغة)
+    let isFirst = true;
+    document.querySelectorAll('#itemsContainer .select-customer').forEach(selectEl => {
+        if (isFirst) { isFirst = false; return; }
+        if (!selectEl.value) {
+            selectEl.value = value;
+            if (selectEl.value !== value) {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.text = value;
+                opt.selected = true;
+                selectEl.add(opt);
+            }
+        }
+    });
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     const itemsContainer = document.getElementById("itemsContainer");
     const addItemBtn = document.getElementById("addItemBtn");
@@ -358,41 +524,28 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById("grandTotalDisplay").value = totalVal.toFixed(2);
     }
     
-    // التغيير التلقائي للعميل من الترويسة ينعكس فوراً في الجدول دون الحاجة للاختيار ثانية
-    const mainPartySelect = document.getElementById("mainPartySelect");
-    if (mainPartySelect) {
-        mainPartySelect.addEventListener("change", function() {
-            const selectedParty = this.value;
-            if (!selectedParty) return;
-
-            document.querySelectorAll("#itemsContainer .select-customer").forEach(selectEl => {
-                selectEl.value = selectedParty;
-                if (selectEl.value !== selectedParty) {
-                    const opt = document.createElement("option");
-                    opt.value = selectedParty;
-                    opt.text = selectedParty;
-                    opt.selected = true;
-                    selectEl.add(opt);
-                }
-            });
-        });
-    }
-    
     // إضافة صف جديد
     addItemBtn.addEventListener("click", function() {
         const newRow = rowTemplate.cloneNode(true);
         const sel = newRow.querySelector("select");
-        const selectedParty = mainPartySelect ? mainPartySelect.value : "";
-        sel.value = selectedParty;
-        if (selectedParty && sel.value !== selectedParty) {
-            const opt = document.createElement("option");
-            opt.value = selectedParty;
-            opt.text = selectedParty;
-            opt.selected = true;
-            sel.add(opt);
+        const partyType = document.getElementById('mainPartyType').value;
+        const activeSel = partyType === 'supplier'
+            ? document.getElementById('mainPartySelect_supplier')
+            : document.getElementById('mainPartySelect_customer');
+        const selectedParty = activeSel ? activeSel.value : "";
+        if (sel) {
+            sel.value = selectedParty;
+            if (selectedParty && sel.value !== selectedParty) {
+                const opt = document.createElement("option");
+                opt.value = selectedParty;
+                opt.text = selectedParty;
+                opt.selected = true;
+                sel.add(opt);
+            }
         }
         newRow.querySelector(".price-input").value = "0";
-        newRow.querySelector("input[type='text']").value = "";
+        const remarkInput = newRow.querySelector("input[type='text']");
+        if (remarkInput) remarkInput.value = "";
         itemsContainer.appendChild(newRow);
     });
     
@@ -638,6 +791,105 @@ document.addEventListener('keydown', function(e) {
         </div>
     </div>
 </div>
+
+<!-- مودال القيود المحاسبية لسند القبض -->
+<div class="modal fade" id="receiptJournalModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content rounded-0">
+            <div class="modal-header bg-primary text-white py-2">
+                <h6 class="modal-title font-weight-bold"><i class="bi bi-journal-bookmark-fill ml-1"></i> القيود المحاسبية لسند القبض</h6>
+                <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body p-3">
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered text-center">
+                        <thead class="bg-light">
+                            <tr>
+                                <th>الحساب</th>
+                                <th>مدين</th>
+                                <th>دائن</th>
+                                <th>البيان</th>
+                            </tr>
+                        </thead>
+                        <tbody id="receiptJournalBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-secondary btn-sm rounded-0" data-dismiss="modal">إغلاق</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const actualReceiptJournalEntries = <?php echo json_encode($actual_entries); ?>;
+
+function openReceiptJournalModal() {
+    const body = document.getElementById('receiptJournalBody');
+    if (!body) return;
+    
+    const entries = actualReceiptJournalEntries;
+    if (!entries || entries.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" class="text-muted py-3">لا توجد قيود محاسبية مسجلة لهذا السند بعد. احفظ السند أولاً.</td></tr>';
+    } else {
+        let totalDebit = 0, totalCredit = 0;
+        let html = '';
+        entries.forEach(e => {
+            const debit = parseFloat(e.debit) || 0;
+            const credit = parseFloat(e.credit) || 0;
+            totalDebit += debit;
+            totalCredit += credit;
+            html += `<tr>
+                <td class="text-right">${e.account_name || ''}</td>
+                <td class="${debit > 0 ? 'text-danger font-weight-bold' : 'text-muted'}">${debit > 0 ? debit.toFixed(2) : '-'}</td>
+                <td class="${credit > 0 ? 'text-success font-weight-bold' : 'text-muted'}">${credit > 0 ? credit.toFixed(2) : '-'}</td>
+                <td class="text-right text-muted" style="font-size:0.85em;">${e.narration || ''}</td>
+            </tr>`;
+        });
+        html += `<tr class="table-info font-weight-bold">
+            <td>الإجمالي</td>
+            <td>${totalDebit.toFixed(2)}</td>
+            <td>${totalCredit.toFixed(2)}</td>
+            <td>${Math.abs(totalDebit - totalCredit) < 0.01 ? '✓ ميزان محقق' : '⚠ ميزان غير محقق'}</td>
+        </tr>`;
+        body.innerHTML = html;
+    }
+    
+    if (typeof $ !== 'undefined') {
+        $('#receiptJournalModal').modal('show');
+    }
+}
+
+function confirmDeleteReceipt() {
+    const receiptId = <?php echo $editing_id ?: 0; ?>;
+    if (receiptId > 0) {
+        const msg = 'هل أنت متأكد من حذف سند القبض رقم #' + receiptId + '؟\nسيتم إلغاء القيود المحاسبية واسترجاع المديونية للحساب. لا يمكن التراجع.';
+        if (typeof AqnexConfirm !== 'undefined') {
+            AqnexConfirm.show('تأكيد الحذف النهائي', msg, function() {
+                window.location.href = 'delete.php?id=' + receiptId;
+            });
+        } else {
+            if (confirm(msg)) window.location.href = 'delete.php?id=' + receiptId;
+        }
+    } else {
+        if (typeof AqnexConfirm !== 'undefined') {
+            AqnexConfirm.show('تأكيد التصفية', 'هل تريد مسح البيانات وبدء سند جديد؟', function() {
+                window.location.href = 'create.php';
+            });
+        } else {
+            if (confirm('تصفية السند؟')) window.location.href = 'create.php';
+        }
+    }
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'F8') {
+        e.preventDefault();
+        openReceiptJournalModal();
+    }
+});
+</script>
 
 <?php
 require_once($dir_prefix . 'includes/footer.php');

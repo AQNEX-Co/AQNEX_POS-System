@@ -5,6 +5,17 @@ require_once($dir_prefix . 'includes/header.php');
 
 check_permission(['admin', 'reports', 'customers']);
 
+// جلب إعدادات المنشأة والشعار
+$settings = \AQNEX\Services\SettingsService::loadSettings($conn);
+$store_name_ar = !empty($settings['store_name']) ? $settings['store_name'] : 'شركة أقنكس للأنظمة البرمجية المحدودة';
+$store_name_en = !empty($settings['store_name_en']) ? $settings['store_name_en'] : 'AQNEX POS & ERP Systems Co.';
+$phone         = !empty($settings['phone']) ? $settings['phone'] : '777777777';
+$address_ar    = !empty($settings['address']) ? $settings['address'] : 'اليمن - عدن - الشارع الرئيسي';
+$address_en    = !empty($settings['address_en']) ? $settings['address_en'] : 'Main St, Aden, Yemen';
+$cr_number     = !empty($settings['commercial_register']) ? $settings['commercial_register'] : 'CR-104928';
+$tax_number    = !empty($settings['tax_number']) ? $settings['tax_number'] : 'TAX-300192847';
+$logo_src      = !empty($settings['logo']) ? $dir_prefix . ltrim($settings['logo'], '/') : $dir_prefix . 'assets/icon/tec.jpg';
+
 // ==========================================
 // الفلاتر واستعلامات البيانات
 // ==========================================
@@ -134,10 +145,34 @@ if ($res_customers) {
 
 <div class="page-inner">
 
-<!-- ترويسة الطباعة الرسمية -->
-<div class="print-header text-center">
-    <h3 class="font-weight-bold mb-1">التقرير السنوي / كشف الحسابات الإجمالي للعملاء</h3>
-    <p class="text-muted mb-0">تاريخ التقرير: <?php echo date("Y-m-d H:i"); ?> | طُبع بواسطة: <?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'المدير'); ?></p>
+<!-- ترويسة المتجر الرسمية (شعار بالمنتصف + عربي يمين + إنجليزي يسار) -->
+<div class="official-enterprise-header">
+    <div class="header-right">
+        <div class="company-title-ar"><?php echo htmlspecialchars($store_name_ar); ?></div>
+        <div class="company-info-item">السجل التجاري: <strong><?php echo htmlspecialchars($cr_number); ?></strong></div>
+        <div class="company-info-item">الرقم الضريبي: <strong><?php echo htmlspecialchars($tax_number); ?></strong></div>
+        <div class="company-info-item">الهاتف: <strong><?php echo htmlspecialchars($phone); ?></strong></div>
+        <div class="company-info-item">العنوان: <?php echo htmlspecialchars($address_ar); ?></div>
+    </div>
+    
+    <div class="header-center">
+        <img src="<?php echo htmlspecialchars($logo_src); ?>" class="company-logo-img" alt="Logo" onerror="this.src='<?php echo $dir_prefix; ?>assets/icon/tec.jpg'">
+    </div>
+    
+    <div class="header-left">
+        <div class="company-title-en"><?php echo htmlspecialchars($store_name_en); ?></div>
+        <div class="company-info-item">C.R: <strong><?php echo htmlspecialchars($cr_number); ?></strong></div>
+        <div class="company-info-item">VAT No: <strong><?php echo htmlspecialchars($tax_number); ?></strong></div>
+        <div class="company-info-item">Tel: <strong><?php echo htmlspecialchars($phone); ?></strong></div>
+        <div class="company-info-item">Addr: <?php echo htmlspecialchars($address_en); ?></div>
+    </div>
+</div>
+
+<div class="official-report-banner">
+    <h3>تقرير العملاء وحسابات الإجماليات الشامل (Customers Master Report)</h3>
+    <div class="banner-sub">
+        تاريخ التقرير: <strong><?php echo date("Y/m/d H:i"); ?></strong> | طُبع بواسطة: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'المدير'); ?></strong>
+    </div>
 </div>
 
 <!-- رأس الصفحة -->
@@ -217,21 +252,23 @@ if ($res_customers) {
 
 <!-- جدول العملاء الشامل -->
 <div class="card-flat">
-    <div class="card-header">
-        <h5><i class="bi bi-person-badge ml-2 text-primary"></i>سجل أرصدة العملاء الإجمالي</h5>
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="m-0 font-weight-bold"><i class="bi bi-person-badge ml-2 text-primary"></i>سجل أرصدة العملاء الإجمالي</h5>
+        <span class="badge badge-light border px-2 py-1">إجمالي العملاء: <?php echo count($customers_list); ?></span>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="report-table">
+            <table class="report-table sap-grid-table">
                 <thead>
                     <tr>
                         <th style="width:6%;">رقم العميل</th>
-                        <th style="width:24%;">اسم العميل</th>
-                        <th style="width:14%;">رقم الجوال</th>
-                        <th style="width:16%;">العنوان / المنطقة</th>
-                        <th style="width:10%;">عدد الفواتير</th>
-                        <th style="width:14%;">إجمالي المبيعات</th>
-                        <th style="width:16%;">رصيد الدين (عليه / له)</th>
+                        <th style="width:22%;">اسم العميل</th>
+                        <th style="width:13%;">رقم الجوال</th>
+                        <th style="width:15%;">العنوان / المنطقة</th>
+                        <th style="width:9%;">عدد الفواتير</th>
+                        <th style="width:13%;">إجمالي المبيعات</th>
+                        <th style="width:15%;">رصيد الدين (عليه / له)</th>
+                        <th style="width:7%;" class="no-print">إجراءات</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -259,14 +296,35 @@ if ($res_customers) {
                                 }
                                 ?>
                             </td>
+                            <td class="text-center no-print">
+                                <a href="account_statement.php?type=customer&account_name=<?php echo urlencode($c['cust_name']); ?>&account_id=<?php echo $c['cust_id']; ?>" class="btn btn-xs btn-primary font-weight-bold" title="عرض كشف حساب العميل التفصيلي المستقل">
+                                    <i class="bi bi-eye-fill"></i>
+                                </a>
+                            </td>
                         </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="7" class="text-center py-4 text-muted">لا توجد نتائج مطابقة لخيارات البحث</td></tr>
+                        <tr><td colspan="8" class="text-center py-4 text-muted">لا توجد نتائج مطابقة لخيارات البحث</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
+    </div>
+</div>
+
+<!-- تذييل الاعتماد والتوقيع المحاسبي الرسمي للطباعة -->
+<div class="sap-signature-block">
+    <div>
+        <div>إعداد المحاسب المختص</div>
+        <div style="margin-top: 30px;">التوقيع: ..................</div>
+    </div>
+    <div>
+        <div>مراجعة وتدقيق الحسابات</div>
+        <div style="margin-top: 30px;">التوقيع: ..................</div>
+    </div>
+    <div>
+        <div>اعتماد المدير المالي / العام</div>
+        <div style="margin-top: 30px;">التوقيع: ..................</div>
     </div>
 </div>
 

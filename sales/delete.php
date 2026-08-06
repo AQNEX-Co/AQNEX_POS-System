@@ -4,90 +4,136 @@ require_once($dir_prefix . 'includes/connect.php');
 require_once($dir_prefix . 'includes/auth.php');
 require_once($dir_prefix . 'includes/accounting_helper.php');
 
-// Verify session and admin status before outputting any HTML to prevent "headers already sent" warning
-if (!\AQNEX\Services\AuthService::isAdmin()) {
-    \AQNEX\Services\AuthService::denyAccess();
-}
+check_permission(['admin', 'cashier', 'inventory']);
 
 if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
-    header('Location: index.php');
+    header('Location: create.php?msg=invalid');
     exit;
 }
 
 $sale_id = intval($_GET['id']);
 
-// 1. جلب بيانات الفاتورة
-$res_sale = $conn->query("SELECT * FROM sales WHERE id = $sale_id AND delete_status = 0");
-if (!$res_sale || $res_sale->num_rows === 0) {
-    header('Location: index.php');
+// 1. البحث في جدول الماستر الجديد sales_invoices_mst أولاً ثم الجدول القديم sales
+$mst_invoice = null;
+$old_invoice = null;
+
+$chk_mst = $conn->query("SHOW TABLES LIKE 'sales_invoices_mst'");
+if ($chk_mst && $chk_mst->num_rows > 0) {
+    $res_mst = $conn->query("SELECT * FROM sales_invoices_mst WHERE id = $sale_id AND d_s = 0 LIMIT 1");
+    if ($res_mst && $res_mst->num_rows > 0) {
+        $mst_invoice = $res_mst->fetch_assoc();
+    }
+}
+
+if (!$mst_invoice) {
+    $chk_old = $conn->query("SHOW TABLES LIKE 'sales'");
+    if ($chk_old && $chk_old->num_rows > 0) {
+        $res_old = $conn->query("SELECT * FROM sales WHERE id = $sale_id AND delete_status = 0 LIMIT 1");
+        if ($res_old && $res_old->num_rows > 0) {
+            $old_invoice = $res_old->fetch_assoc();
+        }
+    }
+}
+
+if (!$mst_invoice && !$old_invoice) {
+    header('Location: index.php?msg=notfound');
     exit;
 }
-$sale = $res_sale->fetch_assoc();
-$cust_name = $conn->real_escape_string($sale['cust_name']);
-$remaining_total = doubleval($sale['remaining_total'] ?? 0);
 
 $conn->begin_transaction();
 try {
-    // 2. استرجاع الكميات الخاصة بالفاتورة الأصلية والمردودات المرتبطة بها
-    $res_items = $conn->query("SELECT * FROM sales_items WHERE sales_id = $sale_id");
-    if ($res_items) {
-        while ($item = $res_items->fetch_assoc()) {
-            $qty = intval($item['quantity'] ?? 0);
-            $parts = explode(' ', trim((string)($item['name'] ?? '')), 2);
-            $product_id = intval($parts[0]);
+    if ($mst_invoice) {
+        // --- أ. الحذف من الهيكل الموحد الجديد (sales_invoices_mst & dtl) ---
+        $cust_id = intval($mst_invoice['cust_id'] ?? 0);
+        $cust_name = $conn->real_escape_string($mst_invoice['cust_name']);
+        $net_total = floatval($mst_invoice['net_amount']);
+        $paid_amount = floatval($mst_invoice['paid_amount']);
+        $rem_amount = floatval($mst_invoice['remaining_amount']);
+        $box_id = intval($mst_invoice['box_id'] ?? 1);
 
-            if ($product_id > 0) {
-                $conn->query("UPDATE products SET quantity = quantity + $qty, total = quantity * buy_price WHERE id = $product_id");
+        // 1. استرجاع الكميات للمخزون من جدول تفاصيل المبيعات الجديد
+        $res_dtl = $conn->query("SELECT * FROM sales_invoices_dtl WHERE invoice_id = $sale_id AND d_s = 0");
+        if ($res_dtl && $res_dtl->num_rows > 0) {
+            while ($dtl = $res_dtl->fetch_assoc()) {
+                $p_id = intval($dtl['product_id'] ?? 0);
+                $qty  = floatval($dtl['quantity'] ?? 0);
+                if ($p_id > 0 && $qty > 0) {
+                    $conn->query("UPDATE products SET quantity = quantity + $qty, total = quantity * buy_price WHERE id = $p_id");
+                    $conn->query("INSERT INTO inventory_log (product_id, product_name, type, qty_change, new_qty, reason, user)
+                                  SELECT id, name, 'sale_delete', $qty, quantity, 'حذف فاتورة مبيعات رقم #$sale_id', '" . ($_SESSION['SESS_FIRST_NAME'] ?? 'المدير') . "'
+                                  FROM products WHERE id = $p_id LIMIT 1");
+                }
             }
         }
-    }
 
-    $res_returns = $conn->query("SELECT product_id, quantity FROM sales_returns WHERE sales_id = $sale_id AND status = 'active'");
-    if ($res_returns) {
-        while ($ret = $res_returns->fetch_assoc()) {
-            $ret_qty = intval($ret['quantity'] ?? 0);
-            $ret_product_id = intval($ret['product_id'] ?? 0);
-            if ($ret_product_id > 0 && $ret_qty > 0) {
-                $conn->query("UPDATE products SET quantity = GREATEST(0, quantity - $ret_qty), total = quantity * buy_price WHERE id = $ret_product_id");
+        // 2. عكس مديونية العميل إذا كان هناك مبلغ آجل
+        if ($rem_amount > 0) {
+            if ($cust_id > 0) {
+                $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $rem_amount) WHERE cust_id = $cust_id");
+            } elseif (!empty($cust_name) && $cust_name !== 'عميل نقدي') {
+                $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $rem_amount) WHERE cust_name = '$cust_name'");
             }
         }
-    }
 
-    // 3. إعادة خصم مديونية العميل إذا كان هناك آجل
-    if (!empty($cust_name) && $cust_name !== 'عميل نقدي' && $remaining_total > 0) {
-        $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $remaining_total) WHERE cust_name = '$cust_name'");
-    }
-
-    // 4. عكس تأثير الصندوق (خصم المبالغ المدفوعة نقداً)
-    $paid_amount = doubleval($sale['total'] ?? 0) - $remaining_total;
-    if ($paid_amount > 0) {
-        $box_id = intval($sale['box_id'] ?? 1);
-        if (!update_box_balance($conn, $box_id, $paid_amount, 'discount', "إلغاء فاتورة مبيعات رقم #$sale_id للعميل $cust_name", date('Y-m-d'))) {
-            throw new Exception("فشل تحديث رصيد الصندوق (قد يكون الرصيد غير كافٍ)");
+        // 3. عكس تأثير الصندوق (خصم المبلغ المدفوع من الصندوق)
+        if ($paid_amount > 0 && $box_id > 0) {
+            update_box_balance($conn, $box_id, $paid_amount, 'discount', "إلغاء دفعة فاتورة مبيعات رقم #$sale_id للعميل $cust_name", date('Y-m-d'));
         }
+
+        // 4. أرشفة وحذف السجلات
+        @$conn->query("INSERT INTO sales_invoices_mst_history SELECT * FROM sales_invoices_mst WHERE id = $sale_id");
+        @$conn->query("INSERT INTO sales_invoices_dtl_history SELECT * FROM sales_invoices_dtl WHERE invoice_id = $sale_id");
+        @$conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE ref_type = 'sale' AND ref_id = $sale_id");
+
+        $conn->query("DELETE FROM sales_invoices_dtl WHERE invoice_id = $sale_id");
+        $conn->query("DELETE FROM sales_invoices_mst WHERE id = $sale_id");
+        $conn->query("DELETE FROM accounting_journal_entries WHERE source_type = 'sale' AND source_id = $sale_id");
+        $conn->query("DELETE FROM journal_entries WHERE ref_type = 'sale' AND ref_id = $sale_id");
+        $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'sale' AND ref_id = $sale_id");
+
+    } else {
+        // --- ب. الحذف من الهيكل التقليدي (sales & sales_items) ---
+        $cust_name = $conn->real_escape_string($old_invoice['cust_name']);
+        $remaining_total = doubleval($old_invoice['remaining_total'] ?? 0);
+        $paid_amount = doubleval($old_invoice['total'] ?? 0) - $remaining_total;
+
+        $res_items = $conn->query("SELECT * FROM sales_items WHERE sales_id = $sale_id");
+        if ($res_items) {
+            while ($item = $res_items->fetch_assoc()) {
+                $qty = intval($item['quantity'] ?? 0);
+                $parts = explode(' ', trim((string)($item['name'] ?? '')), 2);
+                $product_id = intval($parts[0]);
+                if ($product_id > 0) {
+                    $conn->query("UPDATE products SET quantity = quantity + $qty, total = quantity * buy_price WHERE id = $product_id");
+                }
+            }
+        }
+
+        if (!empty($cust_name) && $cust_name !== 'عميل نقدي' && $remaining_total > 0) {
+            $conn->query("UPDATE customers SET cust_madeen = GREATEST(0, cust_madeen - $remaining_total) WHERE cust_name = '$cust_name'");
+        }
+
+        if ($paid_amount > 0) {
+            $box_id = intval($old_invoice['box_id'] ?? 1);
+            update_box_balance($conn, $box_id, $paid_amount, 'discount', "إلغاء فاتورة مبيعات رقم #$sale_id للعميل $cust_name", date('Y-m-d'));
+        }
+
+        @$conn->query("INSERT INTO sales_history SELECT * FROM sales WHERE id = $sale_id");
+        @$conn->query("INSERT INTO sales_items_history SELECT * FROM sales_items WHERE sales_id = $sale_id");
+        @$conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE ref_type = 'sale' AND ref_id = $sale_id");
+
+        $conn->query("DELETE FROM sales_items WHERE sales_id = $sale_id");
+        $conn->query("DELETE FROM sales WHERE id = $sale_id");
+        $conn->query("DELETE FROM journal_entries WHERE ref_type = 'sale' AND ref_id = $sale_id");
+        $conn->query("DELETE FROM accounting_journal WHERE ref_type = 'sale' AND ref_id = $sale_id");
     }
-
-    // 5. أرشفة السجلات التاريخية والقيود إلى جداول التاريخ (History)
-    $conn->query("INSERT INTO sales_history SELECT * FROM sales WHERE id = $sale_id");
-    $conn->query("INSERT INTO sales_items_history SELECT * FROM sales_items WHERE sales_id = $sale_id");
-    $conn->query("INSERT INTO sales_returns_history SELECT * FROM sales_returns WHERE sales_id = $sale_id");
-    $conn->query("INSERT INTO journal_entries_history SELECT * FROM journal_entries WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
-    $conn->query("INSERT INTO accounting_journal_history SELECT * FROM accounting_journal WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
-
-    // 6. حذف السجلات والقيود المحاسبية من الجداول الفعالة
-    $conn->query("DELETE FROM accounting_journal_entries WHERE (source_type = 'sale' AND source_id = $sale_id) OR (source_type = 'return' AND source_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
-    $conn->query("DELETE FROM journal_entries WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
-    $conn->query("DELETE FROM accounting_journal WHERE (ref_type = 'sale' AND ref_id = $sale_id) OR (ref_type = 'return' AND ref_id IN (SELECT id FROM sales_returns WHERE sales_id = $sale_id))");
-    $conn->query("DELETE FROM sales_returns WHERE sales_id = $sale_id");
-    $conn->query("DELETE FROM sales_items WHERE sales_id = $sale_id");
-    $conn->query("DELETE FROM sales WHERE id = $sale_id");
 
     $conn->commit();
-    header('Location: index.php?msg=deleted');
+    header('Location: create.php?msg=deleted');
     exit;
 } catch (Exception $e) {
     $conn->rollback();
-    header('Location: index.php?msg=error');
+    header('Location: create.php?msg=error');
     exit;
 }
 ?>

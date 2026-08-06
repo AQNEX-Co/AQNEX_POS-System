@@ -170,7 +170,7 @@ $is_settings_active = ($module == 'settings');
                         إغلاق اليومية
                     </a>
                 </li>
-<!-- 
+
                 <li class="<?php echo ($module == 'receipts' && basename($_SERVER['PHP_SELF']) == 'create.php') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>receipts/create.php">
                         <span class="icon-wrapper" style="color:#10b981;"><i class="bi bi-arrow-down-circle-fill"></i></span>
@@ -182,7 +182,7 @@ $is_settings_active = ($module == 'settings');
                         <span class="icon-wrapper" style="color:#ef4444;"><i class="bi bi-arrow-up-circle-fill"></i></span>
                         سند الصرف
                     </a>
-                </li> -->
+                </li>
                 <li class="<?php echo ($module == 'ledger') ? 'active' : ''; ?>">
                     <a href="<?php echo $prefix; ?>accounting/ledger.php">
                         <span class="icon-wrapper"><i class="bi bi-folder2-open"></i></span>
@@ -391,7 +391,7 @@ $is_settings_active = ($module == 'settings');
         <?php endif; ?>
 
         <!-- 5. مركز الصيانة والورشة (Repair Center) -->
-        <?php if (($is_admin || sidebar_has_access('sales')) && $industry_type === 'Telecom'): ?>
+        <?php // if (($is_admin || sidebar_has_access('sales')) && $industry_type === 'Telecom'): ?>
         <li class="<?php echo $is_repair_active ? 'active' : ''; ?>">
             <a href="#repairSubmenu" data-toggle="collapse" aria-expanded="<?php echo $is_repair_active ? 'true' : 'false'; ?>" class="dropdown-toggle">
                 <span class="icon-wrapper"><i class="bi bi-wrench-adjustable-circle"></i></span>
@@ -427,7 +427,7 @@ $is_settings_active = ($module == 'settings');
                 </li>
             </ul>
         </li>
-        <?php endif; ?>
+        <?php // endif; ?>
         <!-- 6. الخزينة والبنوك (Finance & Treasury) -->
         <!-- <?php if ($is_admin || sidebar_has_access('box') || sidebar_has_access('receipts') || sidebar_has_access('expenses')): ?>
         <li class="<?php echo $is_finance_active ? 'active' : ''; ?>">

@@ -198,7 +198,7 @@ $currency = $global_settings['currency'] ?? 'ر.ي';
                                     <a href="view.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 text-decoration-none" title="عرض الفاتورة">
                                         <?php echo get_icon('eye', 'ml-1'); ?> عرض
                                     </a>
-                                    <a href="edit.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 ml-1 text-decoration-none">
+                                    <a href="create.php?id=<?php echo $row['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-2 ml-1 text-decoration-none">
                                         <?php echo get_icon('edit', 'ml-1'); ?> تعديل
                                     </a>
                                     <?php if ($is_admin): ?>

@@ -1,0 +1,153 @@
+/* ═════════════════════════════════════════════════════════════════
+   AQNEX POS - Custom Desktop Classic Alert Modal (Real-time Validation)
+   Matches classic ERP / Onyx Pro window aesthetic
+   ═════════════════════════════════════════════════════════════════ */
+
+.aqnex-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 99999;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    direction: rtl;
+}
+
+.aqnex-modal-overlay.active {
+    display: flex !important;
+    animation: aqnexFadeIn 0.15s ease-out;
+}
+
+@keyframes aqnexFadeIn {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.aqnex-dialog-window {
+    background: #f4f5f8;
+    border: 1px solid #717d93;
+    border-radius: 6px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.15);
+    width: 90%;
+    max-width: 480px;
+    overflow: hidden;
+    margin: auto;
+}
+
+/* Header bar */
+.aqnex-dialog-header {
+    background: linear-gradient(180deg, #e9ecef 0%, #d8dde3 100%);
+    border-bottom: 1px solid #b8c1cc;
+    padding: 6px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+}
+
+.aqnex-dialog-title {
+    font-weight: 700;
+    font-size: 13.5px;
+    color: #1e293b;
+    letter-spacing: 0.3px;
+    direction: ltr; /* Keeps "Message No - 886" nicely formatted */
+}
+
+.aqnex-dialog-close {
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    line-height: 1;
+    color: #475569;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: all 0.1s ease;
+}
+
+.aqnex-dialog-close:hover {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+.aqnex-dialog-close:active {
+    background: #cbd5e1;
+}
+
+/* Body container */
+.aqnex-dialog-body {
+    padding: 25px 20px 20px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.aqnex-dialog-content {
+    flex: 1;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.5;
+}
+
+.aqnex-dialog-icon-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.aqnex-info-icon-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #3b82f6 0%, #1d4ed8 100%);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 900;
+    font-family: Georgia, 'Times New Roman', serif;
+    box-shadow: inset 0 1px 2px rgba(255,255,255,0.6), 0 2px 5px rgba(29,78,216,0.3);
+}
+
+/* Footer / OK Button */
+.aqnex-dialog-footer {
+    padding: 10px 20px 18px 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.aqnex-dialog-btn-ok {
+    background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+    border: 1px solid #94a3b8;
+    border-radius: 3px;
+    color: #0f172a;
+    font-weight: 700;
+    font-size: 13.5px;
+    padding: 5px 32px;
+    cursor: pointer;
+    outline: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    transition: all 0.1s ease;
+}
+
+.aqnex-dialog-btn-ok:hover,
+.aqnex-dialog-btn-ok:focus {
+    background: linear-gradient(180deg, #f8fafc 0%, #cbd5e1 100%);
+    border-color: #475569;
+    outline: 1px dotted #3b82f6;
+}
+
+.aqnex-dialog-btn-ok:active {
+    background: #cbd5e1;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}

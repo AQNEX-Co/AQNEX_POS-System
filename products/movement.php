@@ -31,16 +31,61 @@ if ($prod_id > 0) {
     $result_sales = $conn->query($sql_sales);
 }
 
-// جلب تفاصيل المشتريات للمنتج بالاسم
-$result_buys = false;
-if (!empty($product_name)) {
-    $sql_buys = "SELECT * FROM purchase_items WHERE name = '" . $conn->real_escape_string($product_name) . "' ORDER BY buyid DESC";
-    $result_buys = $conn->query($sql_buys);
+// جلب تفاصيل المشتريات والتوريد للمنتج من جداول الفواتير الحديثة والقديمة
+$purchase_rows = [];
+if ($prod_id > 0 || !empty($product_name)) {
+    $pname_esc = $conn->real_escape_string($product_name);
+    $w = "dtl.d_s = 0";
+    if ($prod_id > 0) {
+        $w .= " AND (dtl.product_id = $prod_id OR dtl.product_name = '$pname_esc' OR dtl.product_name LIKE '$pname_esc %')";
+    } else {
+        $w .= " AND (dtl.product_name = '$pname_esc' OR dtl.product_name LIKE '$pname_esc %')";
+    }
+
+    $sql_dtl = "SELECT dtl.*, mst.invoice_no, mst.invoice_date, mst.supp_name, mst.paid_amount, mst.remaining_amount 
+                FROM purchase_invoices_dtl dtl 
+                JOIN purchase_invoices_mst mst ON dtl.invoice_id = mst.id 
+                WHERE $w 
+                ORDER BY dtl.id DESC";
+    $res_dtl = $conn->query($sql_dtl);
+    if ($res_dtl && $res_dtl->num_rows > 0) {
+        while ($r = $res_dtl->fetch_assoc()) {
+            $purchase_rows[] = [
+                'doc_no' => $r['invoice_no'] ?: '#' . $r['invoice_id'],
+                'supp_name' => $r['supp_name'] ?: 'مورد عام',
+                'quantity' => floatval($r['quantity']),
+                'unit_cost' => floatval($r['unit_cost']),
+                'total_cost' => floatval($r['total_cost']),
+                'paid' => floatval($r['paid_amount']),
+                'remaining' => floatval($r['remaining_amount']),
+                'date' => $r['invoice_date']
+            ];
+        }
+    }
+}
+
+// الاستعلام من الجداول القديمة (purchase_items) في حال لم تكن في الماستر
+if (empty($purchase_rows) && !empty($product_name)) {
+    $pname_esc = $conn->real_escape_string($product_name);
+    $sql_buys = "SELECT * FROM purchase_items WHERE name = '$pname_esc' OR name LIKE '$pname_esc %' ORDER BY buyid DESC";
+    $res_buys = $conn->query($sql_buys);
+    if ($res_buys && $res_buys->num_rows > 0) {
+        while ($r = $res_buys->fetch_assoc()) {
+            $purchase_rows[] = [
+                'doc_no' => '#' . $r['buyid'],
+                'supp_name' => $r['supp_name'] ?: 'مورد عام',
+                'quantity' => floatval($r['quantity']),
+                'unit_cost' => floatval($r['buy_price']),
+                'total_cost' => floatval($r['buy_price'] * $r['quantity']),
+                'paid' => floatval($r['pushtosupp']),
+                'remaining' => floatval($r['total_d']),
+                'date' => $r['buys_date']
+            ];
+        }
+    }
 }
 ?>
 <title>تقرير حركة المنتج: <?php echo htmlspecialchars($product_name); ?> - تكنولوجيا فون</title>
-
-
 
 <div class="row no-print mb-4">
     <div class="col-md-6">
@@ -53,7 +98,7 @@ if (!empty($product_name)) {
             <i class="bi bi-printer ml-1"></i>طباعة كشف الحركة
         </button>
         <a href="index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-            <i class="fa fa-arrow-left ml-1"></i>عودة للمنتجات
+            <i class="fa fa-arrow-left ml-1"></i>عودة للممنتجات
         </a>
     </div>
 </div>
@@ -129,19 +174,19 @@ if (!empty($product_name)) {
                         <?php
                         $total_bought_qty = 0;
                         $total_bought_val = 0;
-                        if ($result_buys && $result_buys->num_rows > 0) {
-                            while($row = $result_buys->fetch_assoc()) {
+                        if (!empty($purchase_rows)) {
+                            foreach ($purchase_rows as $row) {
                                 $total_bought_qty += $row['quantity'];
-                                $total_bought_val += $row['buy_price']; // buy_price stores total line cost
+                                $total_bought_val += $row['total_cost'];
                                 ?>
                                 <tr>
-                                    <td>#<?php echo $row['buyid']; ?></td>
+                                    <td><?php echo htmlspecialchars($row['doc_no']); ?></td>
                                     <td class="font-weight-bold text-secondary"><?php echo htmlspecialchars($row['supp_name']); ?></td>
                                     <td><?php echo htmlspecialchars($row['quantity']); ?></td>
-                                    <td class="text-success"><?php echo number_format($row['pushtosupp'], 2); ?></td>
-                                    <td class="text-danger"><?php echo number_format($row['total_d'], 2); ?></td>
-                                    <td class="font-weight-bold text-dark"><?php echo number_format($row['buy_price'], 2); ?></td>
-                                    <td><?php echo htmlspecialchars($row['buys_date']); ?></td>
+                                    <td class="text-success"><?php echo number_format($row['paid'], 2); ?></td>
+                                    <td class="text-danger"><?php echo number_format($row['remaining'], 2); ?></td>
+                                    <td class="font-weight-bold text-dark"><?php echo number_format($row['total_cost'], 2); ?></td>
+                                    <td><?php echo htmlspecialchars($row['date']); ?></td>
                                 </tr>
                                 <?php
                             }

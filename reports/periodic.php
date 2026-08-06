@@ -259,7 +259,7 @@ $net_profit = $total_profit - $total_spent - $total_returns_profit_impact;
     </div>
 
     <!-- البطاقات الإحصائية للمجاميع -->
-    <div class="row mb-4 mt-4">
+    <div class="row mb-4 mt-4 no-print">
         <div class="col-md-3">
             <div class="stat-card success mb-3">
                 <div class="stat-info">
@@ -507,6 +507,21 @@ $net_profit = $total_profit - $total_spent - $total_returns_profit_impact;
     </div>
 <?php endif; ?>
 
+    <!-- تذييل الاعتماد والتوقيع المحاسبي الرسمي للطباعة -->
+    <div class="sap-signature-block">
+        <div>
+            <div>إعداد رئيس القسم المالي</div>
+            <div style="margin-top: 30px;">التوقيع: ..................</div>
+        </div>
+        <div>
+            <div>مراجعة وتدقيق المراجعة الداخلية</div>
+            <div style="margin-top: 30px;">التوقيع: ..................</div>
+        </div>
+        <div>
+            <div>اعتماد المدير العام</div>
+            <div style="margin-top: 30px;">التوقيع: ..................</div>
+        </div>
+    </div>
 <?php
 require_once($dir_prefix . 'includes/footer.php');
 ?>

@@ -1406,7 +1406,11 @@ select:focus {
 }
 
 @media print {
-    .tooltip, .tooltip-inner, .tooltip-arrow, .popover, [role="tooltip"], .no-print {
+    /* إخفاء العناصر التي لا تطبع */
+    .tooltip, .tooltip-inner, .tooltip-arrow, .popover, [role="tooltip"], .no-print,
+    .kpi-row, .kpi-card, .stat-card, .filter-panel, .page-title-bar .ptb-actions,
+    .filter-row, .search-panel, .filter-section, .report-filters,
+    .aqnex-toolbar, .aqnex-window-header, .ptb-actions {
         display: none !important;
     }
     .text-danger { color: #dc3545 !important; }
@@ -1922,3 +1926,310 @@ label,
         border-bottom: 1px solid #ccc !important;
     }
 }
+
+/* إصلاح إخفاء القوائم المنسدلة الأساسية عند تهيئة Select2 */
+.select2-hidden-accessible {
+    border: 0 !important;
+    clip: rect(0 0 0 0) !important;
+    -webkit-clip-path: inset(50%) !important;
+    clip-path: inset(50%) !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 1px !important;
+    white-space: nowrap !important;
+}
+
+/* ============================================================
+   🎯 الهوية البصرية الموحدة للمودالات (System-Wide Onyx Modal System)
+   ============================================================ */
+.modal-dialog {
+    margin: 1.75rem auto;
+}
+
+.modal-content {
+    border: 1px solid #334155 !important;
+    border-radius: 4px !important;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.3) !important;
+    overflow: hidden;
+    background-color: #ffffff;
+}
+
+.modal-header {
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+    color: #ffffff !important;
+    padding: 10px 16px !important;
+    border-bottom: 1px solid #334155 !important;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.modal-header .modal-title {
+    font-size: 0.95rem !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.modal-header .close, .modal-header .btn-close {
+    color: #ffffff !important;
+    opacity: 0.85;
+    text-shadow: none;
+    font-size: 1.25rem;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    transition: opacity 0.15s;
+}
+
+.modal-header .close:hover, .modal-header .btn-close:hover {
+    opacity: 1;
+    color: #ef4444 !important;
+}
+
+.modal-body {
+    padding: 16px !important;
+    font-size: 0.82rem;
+    color: #1e293b;
+    background: #ffffff;
+}
+
+.modal-footer {
+    background: #f8fafc !important;
+    border-top: 1px solid #e2e8f0 !important;
+    padding: 8px 16px !important;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* ============================================================
+   🏛 النظام القياسي لتقارير الأنظمة المالية الكبرى (SAP / Onyx Pro ERP Reports)
+   ============================================================ */
+.sap-report-card {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+}
+
+.sap-report-header {
+    background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+    border-bottom: 1px solid #cbd5e1;
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sap-report-title {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #0f172a;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sap-kpi-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.sap-kpi-box {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 12px 14px;
+    position: relative;
+    border-right: 4px solid #2563eb;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.sap-kpi-box.kpi-debit { border-right-color: #dc2626; }
+.sap-kpi-box.kpi-credit { border-right-color: #16a34a; }
+.sap-kpi-box.kpi-balance { border-right-color: #0284c7; }
+
+.sap-kpi-box .sap-kpi-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #64748b;
+    margin-bottom: 4px;
+}
+
+.sap-kpi-box .sap-kpi-val {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #0f172a;
+    font-family: monospace, sans-serif;
+}
+
+.sap-grid-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #ffffff;
+    border: 1px solid #94a3b8;
+    font-size: 0.78rem;
+}
+
+.sap-grid-table thead th {
+    background: linear-gradient(180deg, #f1f5f9 0%, #cbd5e1 100%);
+    color: #0f172a;
+    font-weight: 800;
+    text-align: center;
+    padding: 7px 8px;
+    border: 1px solid #94a3b8;
+    white-space: nowrap;
+}
+
+.sap-grid-table tbody td {
+    padding: 6px 8px;
+    border: 1px solid #cbd5e1;
+    vertical-align: middle;
+    color: #1e293b;
+}
+
+.sap-grid-table tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+.sap-grid-table tbody tr:hover {
+    background-color: #eff6ff;
+}
+
+.sap-signature-block {
+    display: none;
+}
+
+/* طباعة التقارير المعتمدة */
+@media print {
+    .sap-signature-block {
+        display: flex !important;
+        justify-content: space-around !important;
+        margin-top: 35px !important;
+        border-top: 2px solid #000000 !important;
+        padding-top: 15px !important;
+        text-align: center !important;
+        font-weight: bold !important;
+        font-size: 0.85rem !important;
+        color: #000000 !important;
+    }
+    
+    .sap-grid-table {
+        border: 1px solid #000000 !important;
+    }
+    
+    .sap-grid-table th {
+        background: #e2e8f0 !important;
+        color: #000000 !important;
+        border: 1px solid #000000 !important;
+    }
+    
+    .sap-grid-table td {
+        border: 1px solid #000000 !important;
+        color: #000000 !important;
+    }
+}
+
+/* ===== Official Enterprise SAP/Onyx Header ===== */
+.official-enterprise-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: #ffffff;
+    border-bottom: 3px double #1e293b;
+    margin-bottom: 16px;
+    direction: rtl;
+    font-family: inherit;
+}
+
+.official-enterprise-header .header-right {
+    text-align: right;
+    flex: 1;
+}
+
+.official-enterprise-header .header-right .company-title-ar {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #0f172a;
+    margin-bottom: 3px;
+}
+
+.official-enterprise-header .header-center {
+    text-align: center;
+    flex: 0 0 140px;
+    padding: 0 10px;
+}
+
+.official-enterprise-header .header-center .company-logo-img {
+    max-height: 70px;
+    max-width: 130px;
+    object-fit: contain;
+}
+
+.official-enterprise-header .header-left {
+    text-align: left;
+    flex: 1;
+    direction: ltr;
+}
+
+.official-enterprise-header .header-left .company-title-en {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #0f172a;
+    margin-bottom: 3px;
+}
+
+.company-info-item {
+    font-size: 0.73rem;
+    font-weight: 700;
+    color: #475569;
+    line-height: 1.35;
+}
+
+.official-report-banner {
+    text-align: center;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    padding: 8px 14px;
+    margin-bottom: 16px;
+    border-radius: 4px;
+}
+
+.official-report-banner h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #0f172a;
+}
+
+.official-report-banner .banner-sub {
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-top: 3px;
+}
+
+@media print {
+    .official-enterprise-header {
+        border-bottom: 3px double #000000 !important;
+        margin-bottom: 12px !important;
+        padding: 5px 0 !important;
+    }
+    .official-report-banner {
+        border: 1px solid #000000 !important;
+        background: #f8fafc !important;
+    }
+}
+

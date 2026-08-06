@@ -43,7 +43,7 @@ if (isset($_POST['btn_apply_preset'])) {
     }
 }
 
-// التأكد من وجود جدول الموديولات وإنشاءه أو تهيئته إذا كان مفقوداً
+// التأكد من وجود جدول الموديولات وإنشاءه إذا كان مفقوداً
 $checkModules = $conn->query("SHOW TABLES LIKE 'system_modules'");
 if (!$checkModules || $checkModules->num_rows == 0) {
     $conn->query("CREATE TABLE IF NOT EXISTS `system_modules` (
@@ -65,13 +65,11 @@ if (!$checkModules || $checkModules->num_rows == 0) {
         ('label_printing', 'طباعة ملصقات الباركود', 1)");
 }
 
-// تأكد من وجود صف الصيانة إذا كانت الجداول موجودة بالفعل
 $checkRepair = $conn->query("SELECT 1 FROM `system_modules` WHERE `module_key` = 'repair_service' LIMIT 1");
 if (!$checkRepair || $checkRepair->num_rows == 0) {
     $conn->query("INSERT INTO `system_modules` (`module_key`, `module_name`, `is_enabled`) VALUES ('repair_service', 'وحدة الصيانة', 0)");
 }
 
-// جلب قائمة الموديولات الحالية
 $modules_list = [];
 $res_m = $conn->query("SELECT * FROM `system_modules` ORDER BY `id` ASC");
 if ($res_m) {
@@ -81,151 +79,155 @@ if ($res_m) {
 }
 ?>
 
-<title>لوحة تفعيل الموديولات - تكنولوجيا فون</title>
+<title>لوحة تفعيل الموديولات - AQNEX POS</title>
+<link rel="stylesheet" href="<?php echo $prefix; ?>assets/css/settings.css">
 
-<?php
-$active_tab = 'modules';
-require_once 'settings_nav.php';
-?>
-
-<div class="card-flat">
-    <div class="card-header">
-        <h5><?php echo get_icon('cog', 'ml-2 text-primary'); ?> تخصيص وتفعيل موديولات النظام قطاعياً</h5>
-    </div>
-    
-    <div class="card-body">
-        <?php if (!empty($error)): ?>
-            <div class="alert alert-danger rounded-0 mb-4"><?php echo htmlspecialchars($error); ?></div>
-        <?php endif; ?>
-        <?php if (!empty($success)): ?>
-            <div class="alert alert-success rounded-0 mb-4"><?php echo htmlspecialchars($success); ?></div>
-        <?php endif; ?>
-
-        <!-- قسم التخصيص السريع حسب نوع النشاط التجاري -->
-        <div class="card bg-light border rounded-0 p-4 mb-4">
-            <h6 class="font-weight-bold mb-3 text-primary"><i class="fa fa-magic ml-2"></i>معالج التخصيص السريع (قوالب الأنشطة التجارية)</h6>
-            <p class="text-muted small">اختر نوع النشاط التجاري للعميل لتفعيل الميزات المتطابقة وتعطيل الميزات غير الضرورية بضغطة واحدة:</p>
-            
-            <form method="POST" class="form-inline mt-3">
-                <div class="form-group mb-2">
-                    <select name="preset" class="form-control rounded-0 font-weight-bold" style="min-width: 250px;" required>
-                        <option value="">-- اختر قالب النشاط --</option>
-                        <option value="grocery">بقالة وسوبرماركت / مواد غذائية</option>
-                        <option value="electronics">معرض جوالات وإلكترونيات وصيانة</option>
-                        <option value="general">نشاط تجاري عام / تجارة عامة / خدمات</option>
-                    </select>
-                </div>
-                <button type="submit" name="btn_apply_preset" class="btn btn-primary rounded-0 mb-2 mr-3 font-weight-bold px-4" onclick="return confirm('هل أنت متأكد من تطبيق القالب؟ سيؤدي ذلك إلى تعديل ميزات الموديولات الحالية لتناسب النشاط المختار.')">
-                    <i class="fa fa-flash ml-1"></i> تطبيق القالب المختار
-                </button>
-            </form>
+<div class="settings-shell">
+    <div class="row mb-3 no-print align-items-center">
+        <div class="col-md-7">
+            <span class="eyebrow">إعدادات النظام وإدارة الموارد</span>
+            <h3 class="mb-1">
+                <span class="icon-chip"><i class="bi bi-cpu"></i></span>
+                تخصيص وتفعيل موديولات النظام
+            </h3>
+            <p class="text-muted small mb-0">تفعيل أو تعطيل الأقسام والميزات المتقدمة (مثل تتبع تواريخ الصلاحية، السيريال، التقسيط، والصيانة) حسب نشاط المنشأة.</p>
         </div>
+        <div class="col-md-5 text-left">
+            <a href="../home.php" class="btn-formal-secondary text-decoration-none">
+                <i class="bi bi-arrow-right-short ml-1"></i> العودة للرئيسية
+            </a>
+        </div>
+    </div>
 
-        <form method="POST">
-            <div class="alert alert-info rounded-0 mb-4">
-                <?php echo get_icon('info-circle', 'ml-2'); ?>
-                يمكنك هنا تفعيل أو تعطيل الميزات المتقدمة للنظام بناءً على نوع نشاط العميل التجاري لتبسيط واجهات المستخدم وتفادي التعقيد.
-            </div>
+    <div class="row justify-content-center no-print">
+        <div class="col-lg-12">
+            
+            <?php if (!empty($success)): ?>
+                <div class="alert-formal is-success mb-4"><i class="bi bi-check-circle ml-1"></i> <?php echo htmlspecialchars($success); ?></div>
+            <?php endif; ?>
+            <?php if (!empty($error)): ?>
+                <div class="alert-formal is-error mb-4"><i class="bi bi-exclamation-triangle ml-1"></i> <?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
 
-            <div class="row">
-                <?php if (empty($modules_list)): ?>
-                    <div class="col-12">
-                        <div class="alert alert-warning rounded-0">
-                            لا توجد موديولات متاحة حالياً. تأكد من أن قاعدة البيانات متصلة بشكل صحيح وأن جدول `system_modules` موجود ومهيأ.
+            <!-- Shared Sub-Navigation Menu -->
+            <?php 
+            $active_tab = 'modules'; 
+            require_once 'settings_nav.php'; 
+            ?>
+
+            <div class="tab-content tab-content-custom mb-5">
+                <div class="tab-pane-inner">
+                    
+                    <!-- Quick Presets Formal Card -->
+                    <div class="formal-card mb-4">
+                        <div class="formal-card-head is-accent">
+                            <i class="bi bi-magic ml-1 text-primary"></i> معالج التخصيص السريع (قوالب الأنشطة التجارية)
+                        </div>
+                        <div class="formal-card-body">
+                            <p class="small text-muted mb-3">اختر نوع النشاط التجاري لتشغيل القواعد والتفعيلات الموصى بها تلقائياً بضغطة زر واحدة:</p>
+                            <form method="POST" class="form-inline">
+                                <div class="form-group mb-2">
+                                    <select name="preset" class="form-control rounded-0 font-weight-bold" style="min-width: 280px;" required>
+                                        <option value="">-- اختر قالب النشاط --</option>
+                                        <option value="grocery">بقالة وسوبرماركت / مواد غذائية</option>
+                                        <option value="electronics">معرض جوالات وإلكترونيات وصيانة</option>
+                                        <option value="general">نشاط تجاري عام / تجارة عامة / خدمات</option>
+                                    </select>
+                                </div>
+                                <button type="submit" name="btn_apply_preset" class="btn-formal-primary mb-2 mr-3" onclick="return confirm('هل أنت متأكد من تطبيق القالب المختار؟')">
+                                    <i class="bi bi-lightning-charge ml-1"></i> تطبيق القالب المختار
+                                </button>
+                            </form>
                         </div>
                     </div>
-                <?php endif; ?>
 
-                <?php foreach ($modules_list as $mod): ?>
-                    <div class="col-md-6 mb-4">
-                        <div class="card border rounded-0 h-100 shadow-sm transition-all hover-shadow">
-                            <div class="card-body d-flex flex-column justify-content-between">
-                                <div>
-                                    <div class="d-flex justify-content-between align-items-center mb-3">
-                                        <h6 class="font-weight-bold text-dark mb-0">
+                    <h5 class="section-heading">قائمة الموديولات والميزات المتاحة بالنظام</h5>
+
+                    <form method="POST">
+                        <div class="row">
+                            <?php foreach ($modules_list as $mod): ?>
+                                <div class="col-md-6 mb-4">
+                                    <div class="formal-card h-100">
+                                        <div class="formal-card-head d-flex justify-content-between align-items-center">
+                                            <span>
+                                                <?php 
+                                                switch($mod['module_key']) {
+                                                    case 'barcode_units': echo '<i class="bi bi-tags ml-1"></i>'; break;
+                                                    case 'expiry_tracking': echo '<i class="bi bi-calendar-x ml-1"></i>'; break;
+                                                    case 'serial_imei_tracking': echo '<i class="bi bi-upc-scan ml-1"></i>'; break;
+                                                    case 'repair_service': echo '<i class="bi bi-tools ml-1"></i>'; break;
+                                                    case 'installments': echo '<i class="bi bi-wallet2 ml-1"></i>'; break;
+                                                    case 'thermal_printing': echo '<i class="bi bi-printer ml-1"></i>'; break;
+                                                    case 'label_printing': echo '<i class="bi bi-aspect-ratio ml-1"></i>'; break;
+                                                }
+                                                echo htmlspecialchars($mod['module_name']); 
+                                                ?>
+                                            </span>
+                                            <div class="custom-control custom-switch">
+                                                <input type="checkbox" name="modules[<?php echo htmlspecialchars($mod['module_key']); ?>]" 
+                                                       class="custom-control-input" 
+                                                       id="switch_<?php echo htmlspecialchars($mod['module_key']); ?>" 
+                                                       value="1" 
+                                                       <?php echo ($mod['is_enabled'] == 1) ? 'checked' : ''; ?>>
+                                                <label class="custom-control-label font-weight-bold text-white" 
+                                                       for="switch_<?php echo htmlspecialchars($mod['module_key']); ?>">
+                                                    <?php echo ($mod['is_enabled'] == 1) ? 'مفعل' : 'معطل'; ?>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="formal-card-body small text-muted">
                                             <?php 
-                                            // أيقونة حسب نوع الموديول
                                             switch($mod['module_key']) {
-                                                case 'barcode_units': echo get_icon('tags', 'ml-2 text-primary'); break;
-                                                case 'expiry_tracking': echo get_icon('calendar', 'ml-2 text-danger'); break;
-                                                case 'serial_imei_tracking': echo get_icon('bolt', 'ml-2 text-warning'); break;
-                                                case 'repair_service': echo get_icon('briefcase', 'ml-2 text-info'); break;
-                                                case 'installments': echo get_icon('money', 'ml-2 text-success'); break;
-                                                case 'thermal_printing': echo get_icon('print', 'ml-2 text-secondary'); break;
-                                                case 'label_printing': echo get_icon('archive', 'ml-2 text-dark'); break;
+                                                case 'barcode_units': 
+                                                    echo 'يتيح إدارة الباركودات المتعددة وتعيين أسعار مختلفة لنفس المنتج حسب وحدات القياس (كرتون، حبة، باكت) مع دعم الاحتساب التلقائي للمخزون.'; 
+                                                    break;
+                                                case 'expiry_tracking': 
+                                                    echo 'تتبع فترات وتواريخ انتهاء الصلاحية للمنتجات الغذائية والطبية، وتنبيه الإدارة عند اقتراب تواريخ الانتهاء لتفادي الخسائر المالية.'; 
+                                                    break;
+                                                case 'serial_imei_tracking': 
+                                                    echo 'خاص بمتاجر الجوالات والإلكترونيات. يتيح تتبع الرقم التسلسلي الفريد (Serial Number / IMEI) للأجهزة الخلوية ومتابعة الضمان والقطع بشكل دقيق.'; 
+                                                    break;
+                                                case 'repair_service': 
+                                                    echo 'موديول استلام وصيانة الأجهزة المعطلة، ومتابعة حالة الفحص والصيانة وسحب قطع الغيار من المخزن وحساب التكاليف والربحية تلقائياً.'; 
+                                                    break;
+                                                case 'installments': 
+                                                    echo 'نظام بيع الأجهزة بالتقسيط المالي مع جدولة الدفعات وتواريخ استحقاقها وإرسال إشعارات السداد وتحصيل الأقساط بطريقة محاسبية سليمة.'; 
+                                                    break;
+                                                case 'thermal_printing': 
+                                                    echo 'تشغيل الطباعة الحرارية المباشرة (Silent Print) للفواتير والإيصالات دون الحوار التفاعلي للمتصفح عبر السوكيت والشبكة المحلية.'; 
+                                                    break;
+                                                case 'label_printing': 
+                                                    echo 'إنشاء وتصميم طباعة الملصقات اللاصقة (Labels/ZPL) لباركود السلع وربطها المباشر بطابعات الباركود المتاحة.'; 
+                                                    break;
                                             }
-                                            echo htmlspecialchars($mod['module_name']); 
                                             ?>
-                                        </h6>
-                                        <div class="custom-control custom-switch">
-                                            <input type="checkbox" name="modules[<?php echo htmlspecialchars($mod['module_key']); ?>]" 
-                                                   class="custom-control-input" 
-                                                   id="switch_<?php echo htmlspecialchars($mod['module_key']); ?>" 
-                                                   value="1" 
-                                                   <?php echo ($mod['is_enabled'] == 1) ? 'checked' : ''; ?>>
-                                            <label class="custom-control-label font-weight-bold" 
-                                                   for="switch_<?php echo htmlspecialchars($mod['module_key']); ?>">
-                                                <?php echo ($mod['is_enabled'] == 1) ? 'نشط' : 'معطل'; ?>
-                                            </label>
                                         </div>
                                     </div>
-                                    <p class="text-muted small">
-                                        <?php 
-                                        switch($mod['module_key']) {
-                                            case 'barcode_units': 
-                                                echo 'يتيح إدارة الباركودات المتعددة وتعيين أسعار مختلفة لنفس المنتج حسب وحدات القياس (كرتون، حبة، باكت) مع دعم الاحتساب التلقائي للمخزون.'; 
-                                                break;
-                                            case 'expiry_tracking': 
-                                                echo 'تتبع فترات وتواريخ انتهاء الصلاحية للمنتجات الغذائية والطبية، وتنبيه الإدارة عند اقتراب تواريخ الانتهاء لتفادي الخسائر المالية.'; 
-                                                break;
-                                            case 'serial_imei_tracking': 
-                                                echo 'خاص بمتاجر الجوالات والإلكترونيات. يتيح تتبع الرقم التسلسلي الفريد (Serial Number / IMEI) للأجهزة الخلوية ومتابعة الضمان والقطع بشكل دقيق.'; 
-                                                break;
-                                            case 'repair_service': 
-                                                echo 'موديول استلام وصيانة الأجهزة المعطلة، ومتابعة حالة الفحص والصيانة وسحب قطع الغيار من المخزن وحساب التكاليف والربحية تلقائياً.'; 
-                                                break;
-                                            case 'installments': 
-                                                echo 'نظام بيع الأجهزة بالتقسيط المالي مع جدولة الدفعات وتواريخ استحقاقها وإرسال إشعارات السداد وتحصيل الأقساط بطريقة محاسبية سليمة.'; 
-                                                break;
-                                            case 'thermal_printing': 
-                                                echo 'تشغيل الطباعة الحرارية المباشرة (Silent Print) للفواتير والإيصالات دون الحوار التفاعلي للمتصفح عبر السوكيت والشبكة المحلية.'; 
-                                                break;
-                                            case 'label_printing': 
-                                                echo 'إنشاء وتصميم طباعة الملصقات اللاصقة (Labels/ZPL) لباركود السلع وربطها المباشر بطابعات الباركود المتاحة.'; 
-                                                break;
-                                        }
-                                        ?>
-                                    </p>
                                 </div>
-                            </div>
+                            <?php endforeach; ?>
                         </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
 
-            <div class="text-left mt-4 border-top pt-3">
-                <button type="submit" name="btn_save_modules" class="btn-flat btn-flat-primary btn-lg px-5">
-                    <?php echo get_icon('check', 'ml-1'); ?> حفظ وتحديث موديولات النظام
-                </button>
+                        <div class="text-left mt-3">
+                            <button type="submit" name="btn_save_modules" class="btn-formal-primary">
+                                <i class="bi bi-check2-circle ml-1"></i> حفظ وتحديث موديولات النظام
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
-        </form>
+        </div>
     </div>
 </div>
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-    // تحديث النصوص التوضيحية عند التغيير المباشر للمفاتيح
     document.querySelectorAll(".custom-control-input").forEach(sw => {
         sw.addEventListener("change", function() {
             const label = this.nextElementSibling;
             if (this.checked) {
-                label.textContent = "نشط";
-                label.classList.add("text-success");
-                label.classList.remove("text-muted");
+                label.textContent = "مفعل";
             } else {
                 label.textContent = "معطل";
-                label.classList.remove("text-success");
-                label.classList.add("text-muted");
             }
         });
     });

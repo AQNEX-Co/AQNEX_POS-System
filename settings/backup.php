@@ -16,7 +16,6 @@ if (isset($_GET['export'])) {
     }
     $conn->set_charset("utf8mb4");
 
-    // تنظيف المخزن المؤقت للـ PHP
     if (ob_get_level()) {
         ob_end_clean();
     }
@@ -52,9 +51,7 @@ if (isset($_GET['export'])) {
         $create_res = $conn->query("SHOW CREATE TABLE `$table`");
         if ($create_res) {
             $create_row = $create_res->fetch_row();
-            $create_sql = $create_row[1];
-            // تحويل إلى CREATE TABLE IF NOT EXISTS
-            $create_sql = preg_replace('/CREATE TABLE/i', 'CREATE TABLE IF NOT EXISTS', $create_sql);
+            $create_sql = preg_replace('/CREATE TABLE/i', 'CREATE TABLE IF NOT EXISTS', $create_row[1]);
             echo $create_sql . ";\n\n";
         }
 
@@ -94,7 +91,6 @@ if (isset($_GET['export'])) {
 
 require_once(__DIR__ . '/../includes/header.php');
 
-// حماية الصفحة: المدير فقط يمكنه الدخول أو من لديه صلاحية إعدادات النظام
 if (!$is_admin && !sidebar_has_access('settings')) {
     echo "<div class='container mt-5 text-right'><div class='alert alert-danger'>غير مسموح لك بالوصول إلى هذه الصفحة.</div></div>";
     require_once(__DIR__ . '/../includes/footer.php');
@@ -104,7 +100,6 @@ if (!$is_admin && !sidebar_has_access('settings')) {
 $message = '';
 $message_type = 'success';
 
-// استيراد النسخة الاحتياطية
 if (isset($_POST['restore'])) {
     if (isset($_FILES['backup_file']) && $_FILES['backup_file']['error'] === UPLOAD_ERR_OK) {
         $file_tmp = $_FILES['backup_file']['tmp_name'];
@@ -120,7 +115,6 @@ if (isset($_POST['restore'])) {
             $success_count = 0;
             $error_count = 0;
 
-            // تعطيل فحص المفاتيح الخارجية لتجنب القيود المؤقتة أثناء الاستيراد
             $conn->query("SET FOREIGN_KEY_CHECKS = 0;");
             $conn->query("SET NAMES utf8mb4;");
 
@@ -137,8 +131,6 @@ if (isset($_POST['restore'])) {
                         $success_count++;
                     } else {
                         $error_count++;
-                        // للاستكشاف في حال وجود خطأ كبير
-                        // error_log("Backup Restore Error: " . $conn->error . " | Query: " . $query_buffer);
                     }
                     $query_buffer = '';
                 }
@@ -161,186 +153,101 @@ if (isset($_POST['restore'])) {
 }
 ?>
 
-<style>
-    .backup-container {
-        padding: 20px;
-        background: #f8fafc;
-        min-height: calc(100vh - 80px);
-    }
-    .backup-card {
-        border: none;
-        border-radius: 12px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        background: #ffffff;
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-        margin-bottom: 25px;
-        overflow: hidden;
-    }
-    .backup-card:hover {
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
-    }
-    .backup-header-gradient {
-        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-        color: #ffffff;
-        padding: 20px 25px;
-    }
-    .backup-header-gradient-alt {
-        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-        color: #ffffff;
-        padding: 20px 25px;
-    }
-    .card-title-icon {
-        font-size: 1.5rem;
-        margin-left: 10px;
-        vertical-align: middle;
-    }
-    .btn-backup {
-        padding: 12px 24px;
-        font-size: 1rem;
-        font-weight: 600;
-        border-radius: 8px;
-        transition: all 0.2s ease;
-    }
-    .btn-export {
-        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-        border: none;
-        color: #ffffff;
-    }
-    .btn-export:hover {
-        opacity: 0.9;
-        transform: scale(1.02);
-        color: #ffffff;
-    }
-    .btn-restore {
-        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-        border: none;
-        color: #ffffff;
-    }
-    .btn-restore:hover {
-        opacity: 0.9;
-        transform: scale(1.02);
-        color: #ffffff;
-    }
-    .file-upload-wrapper {
-        border: 2px dashed #cbd5e1;
-        border-radius: 10px;
-        padding: 30px;
-        text-align: center;
-        background: #f8fafc;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    .file-upload-wrapper:hover {
-        border-color: #0284c7;
-        background: #f0f9ff;
-    }
-    .file-upload-icon {
-        font-size: 2.5rem;
-        color: #94a3b8;
-        margin-bottom: 10px;
-    }
-    .info-box {
-        background-color: #f0fdf4;
-        border-right: 4px solid #16a34a;
-        color: #15803d;
-        padding: 15px;
-        border-radius: 4px;
-        font-size: 0.9rem;
-    }
-</style>
+<title>النسخ الاحتياطي واستعادة البيانات - AQNEX POS</title>
+<link rel="stylesheet" href="<?php echo $prefix; ?>assets/css/settings.css">
 
-<div class="backup-container text-right">
-<?php
-$active_tab = 'backup';
-require_once 'setup_nav.php';
-?>
-    <!-- عنوان الصفحة الرئيسي -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <h2 class="font-weight-bold" style="color: #1e293b;">
-                <i class="bi bi-database card-title-icon" style="color: #0284c7;"></i>
+<div class="settings-shell">
+    <div class="row mb-3 no-print align-items-center">
+        <div class="col-md-7">
+            <span class="eyebrow">إعدادات النظام وإدارة الموارد</span>
+            <h3 class="mb-1">
+                <span class="icon-chip"><i class="bi bi-cloud-arrow-up"></i></span>
                 النسخ الاحتياطي واستعادة البيانات
-            </h2>
-            <p class="text-muted" style="font-size: 0.95rem;">
-                إدارة وحماية بيانات النظام بالكامل. يمكنك تصدير نسخة احتياطية من جداولك أو استعادتها بأمان وتحديثها دون خطر فقدان بقية البيانات المدخلة.
-            </p>
+            </h3>
+            <p class="text-muted small mb-0">حماية وتصدير نسخة احتياطية كاملة من قاعدة البيانات واستعادتها بأمان وقت الحاجة.</p>
+        </div>
+        <div class="col-md-5 text-left">
+            <a href="../home.php" class="btn-formal-secondary text-decoration-none">
+                <i class="bi bi-arrow-right-short ml-1"></i> العودة للرئيسية
+            </a>
         </div>
     </div>
 
-    <!-- رسائل التنبيه والنجاح -->
-    <?php if (!empty($message)): ?>
-        <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show rounded-lg shadow-sm border-0 mb-4" role="alert">
-            <div class="d-flex align-items-center">
-                <i class="bi <?php echo ($message_type === 'success') ? 'bi-check-circle-fill' : (($message_type === 'warning') ? 'bi-exclamation-triangle-fill' : 'bi-x-circle-fill'); ?> ml-2" style="font-size: 1.2rem;"></i>
-                <div>
+    <div class="row justify-content-center no-print">
+        <div class="col-lg-12">
+            
+            <?php if (!empty($message)): ?>
+                <div class="alert-formal is-<?php echo ($message_type === 'danger') ? 'error' : $message_type; ?> mb-4">
+                    <i class="bi <?php echo ($message_type === 'success') ? 'bi-check-circle' : 'bi-exclamation-triangle'; ?> ml-1"></i>
                     <?php echo htmlspecialchars($message); ?>
                 </div>
-            </div>
-            <button type="text" class="close" data-dismiss="alert" aria-label="Close" style="outline: none;">
-                <span aria-hidden="true">&times;</span>
-            </button>
-        </div>
-    <?php endif; ?>
+            <?php endif; ?>
 
-    <div class="row">
-        <!-- قسم التصدير -->
-        <div class="col-md-6">
-            <div class="card backup-card">
-                <div class="backup-header-gradient-alt">
-                    <h5 class="m-0 font-weight-bold">
-                        <i class="bi bi-cloud-arrow-down card-title-icon"></i>
-                        تصدير نسخة احتياطية
-                    </h5>
-                </div>
-                <div class="card-body p-4">
-                    <p class="card-text text-muted" style="line-height: 1.6;">
-                        يقوم النظام بإنشاء ملف استعلامات SQL يحتوي على هيكل الجداول والبيانات بصيغة <strong>REPLACE INTO</strong>.
-                    </p>
-                    <div class="info-box mb-4">
-                        <i class="bi bi-info-circle-fill ml-1"></i>
-                        <strong>ميزة هامة:</strong> صيغة REPLACE تضمن أنه عند استعادة هذا الملف مستقبلاً، سيتم استبدال البيانات المتطابقة بالمعرف (Primary Key) مع المحافظة على البيانات الجديدة الأخرى المضافة بعد التصدير دون حذفها.
-                    </div>
-                    <div class="text-center py-3">
-                        <a href="?export=1" class="btn btn-export btn-backup shadow">
-                            <i class="bi bi-download ml-1"></i>
-                            إنشاء وتحميل ملف النسخة الاحتياطية (.sql)
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
+            <!-- Shared Sub-Navigation Menu -->
+            <?php 
+            $active_tab = 'backup'; 
+            require_once 'settings_nav.php'; 
+            ?>
 
-        <!-- قسم الاستعادة -->
-        <div class="col-md-6">
-            <div class="card backup-card">
-                <div class="backup-header-gradient">
-                    <h5 class="m-0 font-weight-bold">
-                        <i class="bi bi-cloud-arrow-up card-title-icon"></i>
-                        استعادة نسخة احتياطية
-                    </h5>
-                </div>
-                <div class="card-body p-4">
-                    <form method="post" enctype="multipart/form-data">
-                        <p class="card-text text-muted" style="line-height: 1.6;">
-                            حدد ملف نسخة احتياطية صالح بصيغة <strong>.sql</strong> تم تصديره مسبقاً من هذا النظام ليتم تركيبه واستعادة السجلات.
-                        </p>
-                        
-                        <div class="form-group mb-4">
-                            <div class="file-upload-wrapper" id="upload-wrapper" onclick="document.getElementById('backup_file').click();">
-                                <i class="bi bi-file-earmark-arrow-up file-upload-icon" id="upload-icon"></i>
-                                <h6 class="font-weight-bold" id="upload-text">اضغط هنا أو اسحب الملف للرفع</h6>
-                                <p class="text-muted small m-0" id="file-details">ملفات SQL فقط (.sql)</p>
-                                <input type="file" name="backup_file" id="backup_file" style="display: none;" accept=".sql" onchange="fileSelected(this)">
+            <div class="tab-content tab-content-custom mb-5">
+                <div class="tab-pane-inner">
+                    <h5 class="section-heading">إدارة وتوليد النسخ الاحتياطية واسترجاع السجلات</h5>
+
+                    <div class="row">
+                        <!-- Export Section -->
+                        <div class="col-md-6 mb-4">
+                            <div class="formal-card h-100">
+                                <div class="formal-card-head is-accent">
+                                    <i class="bi bi-cloud-arrow-down ml-1 text-primary"></i> تصدير نسخة احتياطية (Export SQL)
+                                </div>
+                                <div class="formal-card-body d-flex flex-column justify-content-between">
+                                    <div>
+                                        <p class="small text-muted mb-3" style="line-height:1.6;">
+                                            يقوم النظام بإنشاء ملف استعلامات SQL متكامل يتضمن هيكل الجداول وبيانات السجلات بصيغة <code>REPLACE INTO</code>.
+                                        </p>
+                                        <div class="p-3 mb-4 rounded small" style="background: var(--good-soft); border: 1px solid #bbf7d0; color: var(--good);">
+                                            <i class="bi bi-shield-check ml-1"></i>
+                                            <strong>أمان واستقرار:</strong> تضمن صيغة الاستبدال المحافظة على دمج البيانات وحمايتها من التكرار أو الفقدان عند إعادة الاستيراد.
+                                        </div>
+                                    </div>
+                                    <div class="text-center pt-2">
+                                        <a href="?export=1" class="btn-formal-primary justify-content-center btn-block">
+                                            <i class="bi bi-download ml-1"></i> إنشاء وتحميل ملف النسخة الاحتياطية (.sql)
+                                        </a>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="text-center">
-                            <button type="submit" name="restore" class="btn btn-restore btn-backup shadow px-5" onclick="return confirm('تنبيه: سيتم استعادة البيانات واستبدال السجلات المشتركة الحالية بما يقابلها في ملف النسخة. هل تريد الاستمرار؟')">
-                                <i class="bi bi-play-circle ml-1"></i>
-                                بدء استعادة البيانات
-                            </button>
+                        <!-- Restore Section -->
+                        <div class="col-md-6 mb-4">
+                            <div class="formal-card h-100">
+                                <div class="formal-card-head is-accent">
+                                    <i class="bi bi-cloud-arrow-up ml-1 text-primary"></i> استعادة نسخة احتياطية (Restore SQL)
+                                </div>
+                                <div class="formal-card-body">
+                                    <form method="post" enctype="multipart/form-data">
+                                        <p class="small text-muted mb-3" style="line-height:1.6;">
+                                            اختر ملف نسخة احتياطية بصيغة <strong>.sql</strong> تم تصديره مسبقاً لاسترجاع بيانات السجلات.
+                                        </p>
+                                        
+                                        <div class="form-group mb-3">
+                                            <div class="p-4 text-center border rounded cursor-pointer" id="upload-wrapper" onclick="document.getElementById('backup_file').click();" style="background: var(--surface-soft); border-style: dashed !important; border-color: var(--line) !important;">
+                                                <i class="bi bi-file-earmark-arrow-up text-primary" id="upload-icon" style="font-size: 2.2rem;"></i>
+                                                <h6 class="font-weight-bold mt-2 mb-1" id="upload-text" style="font-size: 13.5px; color: var(--ink-900);">اضغط هنا أو اسحب الملف للرفع</h6>
+                                                <span class="small text-muted d-block" id="file-details">ملفات SQL فقط (.sql)</span>
+                                                <input type="file" name="backup_file" id="backup_file" style="display: none;" accept=".sql" onchange="fileSelected(this)">
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" name="restore" class="btn-formal-success btn-block justify-content-center" onclick="return confirm('تنبيه: سيتم استعادة البيانات واستبدال السجلات الحالية بالمحتوى المرفق. هل تريد الاستمرار؟')">
+                                            <i class="bi bi-play-circle ml-1"></i> بدء استعادة البيانات
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
                         </div>
-                    </form>
+                    </div>
                 </div>
             </div>
         </div>
@@ -348,33 +255,31 @@ require_once 'setup_nav.php';
 </div>
 
 <script>
-    function fileSelected(input) {
-        const file = input.files[0];
-        const wrapper = document.getElementById('upload-wrapper');
-        const icon = document.getElementById('upload-icon');
-        const text = document.getElementById('upload-text');
-        const details = document.getElementById('file-details');
+function fileSelected(input) {
+    const file = input.files[0];
+    const wrapper = document.getElementById('upload-wrapper');
+    const icon = document.getElementById('upload-icon');
+    const text = document.getElementById('upload-text');
+    const details = document.getElementById('file-details');
 
-        if (file) {
-            wrapper.style.borderColor = '#16a34a';
-            wrapper.style.backgroundColor = '#f0fdf4';
-            icon.className = 'bi bi-file-earmark-check-fill file-upload-icon';
-            icon.style.color = '#16a34a';
-            text.innerText = 'تم اختيار الملف بنجاح!';
-            text.style.color = '#15803d';
-            details.innerHTML = `<strong>الاسم:</strong> ${file.name} <br> <strong>الحجم:</strong> ${(file.size / 1024).toFixed(2)} كيلوبايت`;
-        }
+    if (file) {
+        wrapper.style.borderColor = 'var(--good)';
+        wrapper.style.backgroundColor = 'var(--good-soft)';
+        icon.className = 'bi bi-file-earmark-check-fill text-success';
+        text.innerText = 'تم اختيار الملف بنجاح!';
+        details.innerHTML = `<strong>الاسم:</strong> ${file.name} <br> <strong>الحجم:</strong> ${(file.size / 1024).toFixed(2)} كيلوبايت`;
     }
+}
 
-    // إضافة ميزة السحب والإفلات للملفات
-    const dropZone = document.getElementById('upload-wrapper');
-    const fileInput = document.getElementById('backup_file');
+const dropZone = document.getElementById('upload-wrapper');
+const fileInput = document.getElementById('backup_file');
 
+if (dropZone && fileInput) {
     ['dragenter', 'dragover'].forEach(eventName => {
         dropZone.addEventListener(eventName, (e) => {
             e.preventDefault();
-            dropZone.style.borderColor = '#0284c7';
-            dropZone.style.backgroundColor = '#f0f9ff';
+            dropZone.style.borderColor = 'var(--accent)';
+            dropZone.style.backgroundColor = 'var(--accent-soft)';
         }, false);
     });
 
@@ -383,17 +288,15 @@ require_once 'setup_nav.php';
             e.preventDefault();
             if (eventName === 'drop') {
                 const dt = e.dataTransfer;
-                const files = dt.files;
-                fileInput.files = files;
+                fileInput.files = dt.files;
                 fileSelected(fileInput);
             } else {
-                dropZone.style.borderColor = '#cbd5e1';
-                dropZone.style.backgroundColor = '#f8fafc';
+                dropZone.style.borderColor = 'var(--line)';
+                dropZone.style.backgroundColor = 'var(--surface-soft)';
             }
         }, false);
     });
+}
 </script>
 
-<?php
-require_once(__DIR__ . '/../includes/footer.php');
-?>
+<?php require_once(__DIR__ . '/../includes/footer.php'); ?>

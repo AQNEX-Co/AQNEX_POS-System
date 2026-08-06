@@ -91,6 +91,8 @@ function translate_ref_type($type) {
     switch ($type) {
         case 'sale': return 'مبيعات';
         case 'return': return 'مرتجع مبيعات';
+        case 'sales_return': return 'مرتجع مبيعات';
+        case 'purchase_return': return 'مرتجع مشتريات';
         case 'purchase': return 'مشتريات';
         case 'expense': return 'مصروفات';
         case 'receipt': return 'سند قبض';

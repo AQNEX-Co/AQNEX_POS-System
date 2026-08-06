@@ -31,41 +31,84 @@ if (!$result || $result->num_rows == 0) {
 $supplier = $result->fetch_assoc();
 $supp_name = $supplier['supp_name'];
 
-// --- جلب الحركات من جدول السندات المحاسبية ---
+// --- جلب الحركات الفعالة للمورد (مشتريات وسندات صرف) ---
 $transactions = [];
-$total_debit = 0;   // مدين (عليه)
-$total_credit = 0;  // دائن (له)
+$total_debit = 0;   // مدين (ما دفعناه للمورد - يخصم من الدين)
+$total_credit = 0;  // دائن (قيمة المشتريات - يضيف للدين)
+$seen_keys = [];
 
-// ملاحظة: نستخدم party_type = 'supplier' كما تم حفظها في دالة create_payment
-$sql_v = "SELECT voucher_type, voucher_no, voucher_date, amount, description, created_at 
-          FROM accounting_vouchers 
-          WHERE party_type = 'supplier' AND party_id = $id AND status = 'posted'
-          ORDER BY voucher_date ASC, id ASC";
-          
-$res_v = $conn->query($sql_v);
+$supp_name_esc = $conn->real_escape_string($supp_name);
 
-if ($res_v && $res_v->num_rows > 0) {
-    while ($row = $res_v->fetch_assoc()) {
-        // منطق محاسبة الموردين:
-        // voucher_type = 'payment' (سند صرف) -> نحن دفعنا للمورد -> يقل ديننا له -> يُسجل كـ "دائن" (له)
-        // voucher_type = 'receipt' (سند قبض) -> نحن استلمنا من المورد -> يُسجل كـ "مدين" (عليه)
+// 1. فواتير المشتريات
+$res_p = $conn->query("SELECT id, invoice_no, invoice_date, net_amount, paid_amount, remaining_amount, remark FROM purchase_invoices_mst WHERE (supp_id = $id OR supp_name = '$supp_name_esc') AND d_s = 0 ORDER BY invoice_date ASC, id ASC");
+if ($res_p) {
+    while ($r = $res_p->fetch_assoc()) {
+        $key = 'pur_' . $r['id'];
+        if (isset($seen_keys[$key])) continue;
+        $seen_keys[$key] = true;
         
-        $is_payment = ($row['voucher_type'] === 'payment');
-        $debit_val = $is_payment ? 0.0 : floatval($row['amount']);
-        $credit_val = $is_payment ? floatval($row['amount']) : 0.0;
+        $tot = floatval($r['net_amount']);
+        $paid = floatval($r['paid_amount']);
         
-        $total_debit += $debit_val;
-        $total_credit += $credit_val;
-        
+        $total_credit += $tot;
+        if ($paid > 0) $total_debit += $paid;
+
         $transactions[] = [
-            'v_no' => $row['voucher_no'],
-            'date' => date('Y-m-d', strtotime($row['voucher_date'])),
-            'desc' => !empty($row['description']) ? $row['description'] : ($is_payment ? 'سند صرف للمورد' : 'سند قبض من المورد'),
-            'debit' => $debit_val,
-            'credit' => $credit_val
+            'v_no' => $r['invoice_no'] ?: '#' . $r['id'],
+            'date' => $r['invoice_date'],
+            'desc' => $r['remark'] ?: 'فاتورة مشتريات',
+            'debit' => $paid,
+            'credit' => $tot
         ];
     }
 }
+
+// 2. سندات الصرف الحديثة (payment_vouchers_mst)
+$res_pay = $conn->query("SELECT id, voucher_no, voucher_date, total_amount, remark FROM payment_vouchers_mst WHERE (party_id = $id OR party_name = '$supp_name_esc') AND d_s = 0 ORDER BY voucher_date ASC, id ASC");
+if ($res_pay) {
+    while ($r = $res_pay->fetch_assoc()) {
+        $key = 'pay_' . $r['id'];
+        if (isset($seen_keys[$key])) continue;
+        $seen_keys[$key] = true;
+
+        $amt = floatval($r['total_amount']);
+        $total_debit += $amt;
+
+        $transactions[] = [
+            'v_no' => $r['voucher_no'] ?: '#' . $r['id'],
+            'date' => $r['voucher_date'],
+            'desc' => $r['remark'] ?: 'سند صرف للمورد',
+            'debit' => $amt,
+            'credit' => 0.0
+        ];
+    }
+}
+
+// 3. سندات الصرف التقليدية (treasury_expenses)
+$res_te = $conn->query("SELECT sid, sdate, sprice, sremark FROM treasury_expenses WHERE (st = '$supp_name_esc' OR sname = '$supp_name_esc') AND s = 0 ORDER BY sdate ASC, sid ASC");
+if ($res_te) {
+    while ($r = $res_te->fetch_assoc()) {
+        $key = 'pay_' . $r['sid'];
+        if (isset($seen_keys[$key])) continue;
+        $seen_keys[$key] = true;
+
+        $amt = floatval($r['sprice']);
+        $total_debit += $amt;
+
+        $transactions[] = [
+            'v_no' => '#' . $r['sid'],
+            'date' => $r['sdate'],
+            'desc' => $r['sremark'] ?: 'سند صرف للمورد',
+            'debit' => $amt,
+            'credit' => 0.0
+        ];
+    }
+}
+
+// ترتيب الحركات تسلسلياً حسب التاريخ
+usort($transactions, function($a, $b) {
+    return strtotime($a['date']) - strtotime($b['date']);
+});
 
 // حساب الرصيد النهائي بناءً على الأعمدة المباشرة لضمان الدقة المطلقة
 $final_balance = floatval($supplier['supp_daain']) - floatval($supplier['supp_madeen']);

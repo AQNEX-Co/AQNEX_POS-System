@@ -1,6 +1,6 @@
 ; ==============================================================
 ; AQNEX Business Solutions - Inno Setup Script
-; Application: AQNEX POS/ERP
+; Application: AQNEX POS/ERP System
 ; Architecture: x64
 ; ==============================================================
 
@@ -41,19 +41,18 @@ DisableFinishedPage=no
 PrivilegesRequired=admin
 
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "arabic"; MessagesFile: "compiler:Languages\Arabic.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "install_db"; Description: "تثبيت خادم قاعدة بيانات MariaDB محلي مستقل (المنفذ 3307)"; GroupDescription: "خيارات قاعدة البيانات"; Flags: checkedonce
+Name: "desktopicon"; Description: "إنشاء اختصار تشغيل المساعد لنظام AQNEX على سطح المكتب"; GroupDescription: "خيارات التثبيت"; Flags: checkedonce
+Name: "install_db"; Description: "تثبيت وتجهيز خادم قاعدة البيانات المحلي الشامل (MariaDB المنفذ 3307)"; GroupDescription: "قواعد البيانات"; Flags: checkedonce
 
 [Files]
-; 1. All files and folders from your 'tech' folder (The source project)
-; We will copy everything into a subfolder named 'app' on the client's machine for better organization
+; 1. All files and folders from project root
 Source: "..\*"; DestDir: "{app}\app"; Excludes: "installer\*, runtime\*, *.zip, *.iss, clean.bat, files_list.txt, license_manager\*, licensing_system\*, show_pass.php, update_patch.php"; Flags: recursesubdirs createallsubdirs ignoreversion
 
-; 2. Visual Assets for the Shortcut
+; 2. Visual Assets for Shortcut & Icons
 Source: "assets\logo.png"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
 Source: "assets\icon.ico"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
 
@@ -61,10 +60,10 @@ Source: "assets\icon.ico"; DestDir: "{app}\installer\assets"; Flags: ignoreversi
 Source: "configure_paths.php"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "run_init_db.php"; DestDir: "{app}\installer"; Flags: ignoreversion
 
-; 3. Visual C++ Redistributable
+; 3. Visual C++ Redistributable (Silent Installer)
 Source: "redist\VC_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
-; 4. Runtime package (Apache, PHP, MariaDB) - BUNDLED LOCALLY, no internet needed
+; 4. Runtime package (Apache, PHP, MariaDB) - BUNDLED LOCALLY
 Source: "runtime\runtime.zip"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Dirs]
@@ -72,49 +71,46 @@ Name: "{app}\runtime"
 Name: "{app}\backups"
 
 [Icons]
-; Shortcut to launch the system as an Edge Web App (Port 8181)
+; Shortcut to launch system as standalone Web App (Port 8181)
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{#MyAppExeName}"; Parameters: "--app=http://localhost:8181/index.php"; IconFilename: "{app}\installer\assets\icon.ico"; Tasks: desktopicon
 Name: "{commonprograms}\{#MyAppName}"; Filename: "{#MyAppExeName}"; Parameters: "--app=http://localhost:8181/index.php"; IconFilename: "{app}\installer\assets\icon.ico"
 
 [Run]
-; 1. Install Visual C++ Redistributable Silently (Only if needed)
-Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing System Components (VC++ Redistributable)..."; Check: NeedsFramework
+; 1. Install Visual C++ Redistributable (x64)
+Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "جاري تثبيت مكونات النظام الضرورية (VC++ Redistributable)..."; Check: NeedsFramework
 
-; 2. Extract the Runtime Package (Apache, PHP, MariaDB)
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Expand-Archive -Path '{tmp}\runtime.zip' -DestinationPath '{app}' -Force"""; StatusMsg: "Configuring server environment..."; Flags: runhidden
+; 2. Extract Server Runtime Package
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Expand-Archive -Path '{tmp}\runtime.zip' -DestinationPath '{app}' -Force"""; StatusMsg: "جاري استخراج وتجهيز بيئة الخادم المحلي (Apache/PHP/MariaDB)..."; Flags: runhidden
 
-; 3. Run Path Configuration Script (Updates httpd.conf, php.ini, and my.ini based on database type selection)
-Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"" ""local"""; StatusMsg: "Applying local path configurations..."; Flags: runhidden; Tasks: install_db
-Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"" ""external"""; StatusMsg: "Applying local path configurations..."; Flags: runhidden; Tasks: not install_db
+; 3. Apply Local Path Configuration (httpd.conf, php.ini, my.ini)
+Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"" ""local"""; StatusMsg: "جاري إعداد ضوابط الخادم والمسارات المحلية..."; Flags: runhidden; Tasks: install_db
+Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\configure_paths.php"" ""{app}"" ""external"""; StatusMsg: "جاري إعداد ضوابط الخادم والمسارات المحلية..."; Flags: runhidden; Tasks: not install_db
 
-; 4. Register Apache and MariaDB as Windows Services
-Filename: "{app}\runtime\apache\bin\httpd.exe"; Parameters: "-k install -n ""AQNEX_Apache"""; StatusMsg: "Registering Web Server Service..."; Flags: runhidden
-Filename: "{app}\runtime\mariadb\bin\mariadbd.exe"; Parameters: "--install ""AQNEX_MariaDB"""; StatusMsg: "Registering Database Service..."; Flags: runhidden; Tasks: install_db
+; 4. Register Services
+Filename: "{app}\runtime\apache\bin\httpd.exe"; Parameters: "-k install -n ""AQNEX_Apache"""; StatusMsg: "جاري تسجيل خدمة خادم الويب (AQNEX_Apache)..."; Flags: runhidden
+Filename: "{app}\runtime\mariadb\bin\mariadbd.exe"; Parameters: "--install ""AQNEX_MariaDB"""; StatusMsg: "جاري تسجيل خدمة خادم قاعدة البيانات (AQNEX_MariaDB)..."; Flags: runhidden; Tasks: install_db
 
 ; 5. Start Services
 Filename: "sc.exe"; Parameters: "start AQNEX_MariaDB"; Flags: runhidden; Tasks: install_db
 Filename: "sc.exe"; Parameters: "start AQNEX_Apache"; Flags: runhidden
 
-; 5.5. انتظر 10 ثواني حتى تنتهي MariaDB من التهيئة قبل محاولة الاتصال
-Filename: "powershell.exe"; Parameters: "-Command ""Start-Sleep -Seconds 10"""; StatusMsg: "Waiting for database service to start..."; Flags: runhidden; Tasks: install_db
+; 5.5. Pause 10 Seconds for MariaDB initialization
+Filename: "powershell.exe"; Parameters: "-Command ""Start-Sleep -Seconds 10"""; StatusMsg: "جاري انتظار اكتمال تشغيل خادم قاعدة البيانات..."; Flags: runhidden; Tasks: install_db
 
-; 6. Initialize Database and Import Schema (Crucial for offline DB setup)
-; تشغيل سكربت التهيئة وحفظ المخرجات في ملف لوج للمساعدة في التشخيص
-Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\run_init_db.php"" ""{app}"""; StatusMsg: "Initializing database and schemas..."; Flags: runhidden; Tasks: install_db
+; 6. Initialize Database & Seed Clean Client Records
+Filename: "{app}\runtime\php\php.exe"; Parameters: "-f ""{app}\installer\run_init_db.php"" ""{app}"""; StatusMsg: "جاري إنشاء قاعدة البيانات النظيفة للعميل وتطبيق الهجرات والتثبيت التأسيسي..."; Flags: runhidden; Tasks: install_db
 
-; 7. Launch the App after Installation
-Filename: "{#MyAppExeName}"; Parameters: "--app=http://localhost:8181/index.php"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: postinstall nowait shellexec
+; 7. Launch System App After Finish
+Filename: "{#MyAppExeName}"; Parameters: "--app=http://localhost:8181/index.php"; Description: "تشغيل تطبيق AQNEX POS الان"; Flags: postinstall nowait shellexec
 
 [UninstallRun]
-; Stop and Remove Services on Uninstall
+; Stop and Uninstall Services
 Filename: "sc.exe"; Parameters: "stop AQNEX_Apache"; Flags: runhidden; RunOnceId: "StopApache"
 Filename: "sc.exe"; Parameters: "stop AQNEX_MariaDB"; Flags: runhidden; RunOnceId: "StopMariaDB"
 Filename: "{app}\runtime\apache\bin\httpd.exe"; Parameters: "-k uninstall -n ""AQNEX_Apache"""; Flags: runhidden; RunOnceId: "UninstallApache"
 Filename: "{app}\runtime\mariadb\bin\mariadbd.exe"; Parameters: "--remove ""AQNEX_MariaDB"""; Flags: runhidden; RunOnceId: "UninstallMariaDB"
 
-
 [Code]
-// 1. Check for VC++ Redistributable (x64)
 function NeedsFramework(): Boolean;
 begin
   Result := not RegKeyExists(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64');
@@ -123,9 +119,8 @@ end;
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  // Ensure we are on 64-bit OS
   if not Is64BitInstallMode then begin
-    MsgBox('This application requires a 64-bit version of Windows.', mbCriticalError, MB_OK);
+    MsgBox('يتطلب هذا البرنامج نظام تشغيل ويندوز 64-بت.', mbCriticalError, MB_OK);
     Result := False;
   end;
 end;

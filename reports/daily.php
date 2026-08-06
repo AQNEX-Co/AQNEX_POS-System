@@ -332,7 +332,7 @@ $printed_by = $_SESSION['SESS_FIRST_NAME'] ?? 'مسؤول النظام';
 <!-- الهيدر الرسمي للتقرير المالي -->
 <div class="official-report-header">
     <div class="official-report-title">
-        <h2>تقرير الحركة المالية اليومية الرسمي</h2>
+        <h2>تقرير الحركة المالية اليومية</h2>
         <p>مسودة تسوية العمليات النقدية والآجلة ليوم واحد</p>
     </div>
     <div class="official-report-logo">
@@ -681,7 +681,7 @@ usort($unified_ledger, function($a, $b) {
 
 <!-- قسم الاعتمادات والتوقيعات الرسمية للتقرير المالي -->
 <div class="signature-section">
-    <div class="signature-title">الاعتمادات والمطابقة الرسمية للحركة المالية:</div>
+    <div class="signature-title">الاعتمادات والمطابقة للحركة المالية:</div>
     <div class="signature-row">
         <div class="signature-box">توقيع أمين الصندوق / الكاشير</div>
         <div class="signature-box">المحاسب المالي المسؤول</div>

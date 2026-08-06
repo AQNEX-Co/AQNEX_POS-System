@@ -2,10 +2,16 @@
     </div> <!-- End .wrapper -->
     
     <!-- استدعاء ملفات الجافا سكربت المشتركة -->
-    <script type="text/javascript" src="<?php echo isset($prefix) ? $prefix : ''; ?>files/bower_components/jquery/js/jquery.min.js"></script>
-    <script type="text/javascript" src="<?php echo isset($prefix) ? $prefix : ''; ?>files/bower_components/popper.js/js/popper.min.js"></script>
-    <script type="text/javascript" src="<?php echo isset($prefix) ? $prefix : ''; ?>files/bower_components/bootstrap/js/bootstrap.min.js"></script>
-    <script type="text/javascript" src="<?php echo isset($prefix) ? $prefix : ''; ?>assets/js/barcode-listener.js"></script>
+    <?php $rel_prefix = isset($dir_prefix) ? $dir_prefix : (isset($prefix) ? $prefix : ''); ?>
+    <script type="text/javascript" src="<?php echo $rel_prefix; ?>files/bower_components/jquery/js/jquery.min.js"></script>
+    <script type="text/javascript" src="<?php echo $rel_prefix; ?>files/bower_components/popper.js/js/popper.min.js"></script>
+    <script type="text/javascript" src="<?php echo $rel_prefix; ?>files/bower_components/bootstrap/js/bootstrap.min.js"></script>
+    <script type="text/javascript" src="<?php echo $rel_prefix; ?>assets/js/select2.min.js?v=<?php echo time(); ?>"></script>
+    <script type="text/javascript" src="<?php echo $rel_prefix; ?>assets/js/barcode-listener.js?v=<?php echo time(); ?>"></script>
+    <script type="text/javascript" src="<?php echo $rel_prefix; ?>assets/js/aqnex-core.js?v=<?php echo time(); ?>"></script>
+
+
+
 
     <!-- محرك تفعيل Bootstrap Icons وتحويل الأزرار ديناميكياً مع تفعيل Tooltips -->
     <script type="text/javascript">
@@ -239,14 +245,23 @@
             console.error("Error setting dynamic print title:", e);
         }
 
-        // 5. تأكيد تسجيل الخروج مباشرة دون المطالبة بالترحيل
+        // 5. تأكيد تسجيل الخروج التفاعلي بتنسيق AqnexConfirm وتعميم التنبيهات
         try {
-            var logoutLinks = document.querySelectorAll('a[href$="auth/logout.php"], a[href$="/auth/logout.php"]');
+            var logoutLinks = document.querySelectorAll('a[href*="logout.php"], .logout-link');
             logoutLinks.forEach(function(a) {
                 a.addEventListener('click', function(e) {
                     e.preventDefault();
-                    if (confirm('هل أنت متأكد من تسجيل الخروج؟')) {
-                        window.location.href = this.getAttribute('href');
+                    var href = this.getAttribute('href');
+                    if (typeof AqnexConfirm !== 'undefined') {
+                        AqnexConfirm.show('هل أنت متأكد من رغبتك في تسجيل الخروج من النظام؟', function(confirmed) {
+                            if (confirmed) {
+                                window.location.href = href;
+                            }
+                        });
+                    } else {
+                        if (confirm('هل أنت متأكد من رغبتك في تسجيل الخروج من النظام؟')) {
+                            window.location.href = href;
+                        }
                     }
                 });
             });
@@ -254,6 +269,14 @@
             console.error("Error setting logout confirm handler:", e);
         }
 
+        // 6. تعميم التنسيق الجديد الفوري التفاعلي بدلاً من alert العادية
+        window.alert = function(msg) {
+            if (typeof AqnexAlert !== 'undefined' && AqnexAlert.show) {
+                AqnexAlert.show(500, msg);
+            } else {
+                console.log("Alert message:", msg);
+            }
+        };
     });
 
     // تحديث الساعة لحظياً كل ثانية - يستهدف عنصر الـ Topbar الجديد
@@ -300,30 +323,223 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 });
 
-// ============================================================
-// تحسين تجربة القوائم المنسدلة والإكمال التلقائي (Select2 & Autocomplete UX)
-// تنظيف نص البحث السابق فور فتح القائمة لإظهار جميع الخيارات
-// ============================================================
-if (typeof $ !== 'undefined') {
-    $(document).on('select2:open', function(e) {
-        // عند فتح أي قائمة Select2 بالنظام، نقوم بتفريغ نص البحث فوراً لكي تظهر جميع الخيارات للمستخدم
-        setTimeout(function() {
-            var searchField = document.querySelector('.select2-container--open .select2-search__field');
-            if (searchField) {
-                searchField.value = '';
-                searchField.focus();
-                searchField.dispatchEvent(new Event('input', { bubbles: true }));
+
+function setupHeaderSelectAutocomplete(selectEl) {
+    if (!selectEl) return;
+    // حماية تامة لمنع التكرار نهائياً في أي شاشة
+    if (selectEl.getAttribute('data-autocomplete-attached') === 'true') return;
+    if (selectEl.closest('.header-autocomplete-wrapper')) return;
+    if (selectEl.parentNode && selectEl.parentNode.classList.contains('header-autocomplete-wrapper')) return;
+    if (selectEl.parentNode && selectEl.parentNode.querySelector('.header-autocomplete-wrapper')) return;
+
+    selectEl.setAttribute('data-autocomplete-attached', 'true');
+    selectEl.dataset.autocompleteAttached = "true";
+
+    // تدمير وإزالة أي بقايا كائنات من مكتبة Select2 القديمة لمنع ظهور الحقول المزدوجة
+    if (typeof $ !== 'undefined' && $.fn && $.fn.select2 && $(selectEl).data('select2')) {
+        try { $(selectEl).select2('destroy'); } catch(e) {}
+    }
+    if (selectEl.parentNode) {
+        selectEl.parentNode.querySelectorAll('.select2-container, .select2').forEach(el => el.remove());
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'header-autocomplete-wrapper position-relative';
+    wrapper.style.cssText = 'position: relative !important; width: 100% !important; flex: 1 1 auto !important; display: inline-block !important; vertical-align: middle !important; margin: 0 !important; padding: 0 !important;';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'aqnex-input header-autocomplete-input font-weight-bold';
+    input.autocomplete = 'off';
+    input.placeholder = '-- اختر أو ابحث --';
+    input.style.cssText = 'width: 100% !important; height: 28px !important; font-size: 0.82rem !important; text-align: right !important; cursor: pointer !important; background-color: #ffffff !important; border: 1px solid #94a3b8 !important; border-radius: 3px !important; padding: 0 6px !important;';
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'autocomplete-dropdown d-none shadow-sm';
+    dropdown.style.cssText = 'position: absolute !important; top: 100% !important; right: 0 !important; left: 0 !important; width: 100% !important; max-height: 220px !important; overflow-y: auto !important; background: #ffffff !important; border: 1px solid #cbd5e1 !important; border-top: none !important; z-index: 999999 !important; box-shadow: 0 8px 16px rgba(0,0,0,0.2) !important; border-bottom-left-radius: 4px !important; border-bottom-right-radius: 4px !important;';
+
+    const isRequired = selectEl.hasAttribute('required') || selectEl.required;
+    if (isRequired) {
+        selectEl.removeAttribute('required');
+        selectEl.required = false;
+        input.required = true;
+    }
+
+    selectEl.parentNode.insertBefore(wrapper, selectEl);
+    wrapper.appendChild(input);
+    wrapper.appendChild(dropdown);
+    wrapper.appendChild(selectEl);
+    selectEl.style.cssText = 'display: none !important; opacity: 0 !important; visibility: hidden !important; width: 0 !important; height: 0 !important; position: absolute !important; pointer-events: none !important;';
+
+    function syncTextFromSelect() {
+        if (selectEl.selectedIndex >= 0 && selectEl.options[selectEl.selectedIndex]) {
+            input.value = selectEl.options[selectEl.selectedIndex].text.trim();
+        } else {
+            input.value = '';
+        }
+        if (isRequired) {
+            if (selectEl.value && selectEl.value !== '') {
+                input.setCustomValidity('');
             }
-        }, 10);
+        }
+    }
+
+    syncTextFromSelect();
+    selectEl.addEventListener('change', syncTextFromSelect);
+
+    function renderOptions(filterText) {
+        dropdown.innerHTML = '';
+        const query = (filterText || '').trim().toLowerCase();
+        let count = 0;
+
+        Array.from(selectEl.options).forEach((opt) => {
+            const text = opt.text.trim();
+            const val = opt.value;
+            if (!val && !text) return;
+
+            if (!query || text.toLowerCase().includes(query) || val.toLowerCase().includes(query)) {
+                const item = document.createElement('div');
+                item.className = 'autocomplete-item text-right' + (selectEl.value === val ? ' active' : '');
+                item.style.cssText = 'padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #f1f5f9; font-size: 0.82rem; font-weight: 600; color: #1e293b; transition: background 0.15s ease;';
+                item.textContent = text;
+
+                item.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    if (selectEl.value !== val) {
+                        opt.selected = true;
+                        selectEl.value = val;
+                        syncTextFromSelect();
+                        dropdown.classList.add('d-none');
+                        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else {
+                        syncTextFromSelect();
+                        dropdown.classList.add('d-none');
+                    }
+                });
+
+                dropdown.appendChild(item);
+                count++;
+            }
+        });
+
+        if (count === 0) {
+            dropdown.innerHTML = '<div style="padding: 8px; color: #94a3b8; font-size: 0.78rem; text-align: center;">لا توجد نتائج</div>';
+        }
+        dropdown.classList.remove('d-none');
+    }
+
+    let isSelectingOption = false;
+
+    input.addEventListener('focus', function() {
+        renderOptions('');
     });
 
-    // عند اختيار أي عنصر من Select2 إغلاق القائمة فوراً
-    $(document).on('select2:select', function(e) {
-        $(e.target).select2('close');
+    input.addEventListener('click', function(e) {
+        e.stopPropagation();
+        renderOptions('');
+    });
+
+    input.addEventListener('input', function() {
+        renderOptions(input.value);
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!wrapper.contains(e.target)) {
+            dropdown.classList.add('d-none');
+            syncTextFromSelect();
+        }
+    });
+
+    input.addEventListener('keydown', function(e) {
+        const items = dropdown.querySelectorAll('.autocomplete-item');
+        if (items.length === 0) return;
+        let currentIdx = Array.from(items).findIndex(it => it.classList.contains('active'));
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (currentIdx >= 0) items[currentIdx].classList.remove('active');
+            currentIdx = (currentIdx + 1) % items.length;
+            items[currentIdx].classList.add('active');
+            items[currentIdx].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (currentIdx >= 0) items[currentIdx].classList.remove('active');
+            currentIdx = (currentIdx - 1 + items.length) % items.length;
+            items[currentIdx].classList.add('active');
+            items[currentIdx].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (currentIdx >= 0 && items[currentIdx]) {
+                items[currentIdx].dispatchEvent(new Event('mousedown'));
+            } else if (items[0]) {
+                items[0].dispatchEvent(new Event('mousedown'));
+            }
+        } else if (e.key === 'Escape') {
+            dropdown.classList.add('d-none');
+            syncTextFromSelect();
+        }
     });
 }
 
-// اختصار الحفظ الموحد بالنظام زر (F10) وإغلاق القوائم عند الانتقال بزر الانتر
+function runHeaderAutocompleteEngine() {
+    if (window.disableHeaderAutocomplete) return;
+    const selectors = [
+        'select.form-control',
+        'select.form-select',
+        'select.aqnex-select',
+        'select.onyx-select',
+        'select[name="refund_method"]',
+        'select[name="refund_source"]',
+        'select[name="reason"]',
+        'select[name="type"]',
+        'select[name="debt_status"]',
+        'select[name="balance_status"]',
+        'select[name="account_type"]',
+        'select[name="sector_id"]',
+        'select#boxSelect',
+        'select[name="box_id"]',
+        'select#select2',
+        'select[name="customer_name"]',
+        'select[name="select2"]',
+        'select[name="select2[]"]',
+        'select.select-customer',
+        'select#supplierSelect2',
+        'select[name="supplier_name"]',
+        'select#invoiceTypeSelect',
+        'select[name="invoice_type"]',
+        'select#currencySelect',
+        'select[name="currency_code"]',
+        'select#salesPaymentMethodSelect',
+        'select#paymentMethodSelect',
+        'select#salesWalletTypeSelect',
+        'select#walletTypeSelect',
+        'select[name="expense_type"]',
+        'select[name="payment_method"]',
+        'select[name="payment_type"]'
+    ];
+
+    const elements = document.querySelectorAll(selectors.join(','));
+    const uniqueElements = Array.from(new Set(elements));
+
+    uniqueElements.forEach(function(sel) {
+        if (!sel.closest('table') && !sel.closest('#itemsTable') && !sel.closest('#itemsContainer') && !sel.classList.contains('select-product') && !sel.classList.contains('unit-id') && !sel.classList.contains('serial-select')) {
+            setupHeaderSelectAutocomplete(sel);
+        }
+    });
+
+    // إزالة أية كائنات متكررة متبقية لـ Select2 في الصفحة بأكملها
+    document.querySelectorAll('.select2-container').forEach(s2 => {
+        if (s2.parentNode && s2.parentNode.querySelector('.header-autocomplete-wrapper')) {
+            s2.remove();
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    runHeaderAutocompleteEngine();
+});
+
+// اختصار الحفظ الموحد بالنظام زر (F10)
 document.addEventListener('keydown', function(e) {
     if (e.key === 'F10') {
         e.preventDefault();
@@ -340,19 +556,11 @@ document.addEventListener('keydown', function(e) {
                 }
             }
         }
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-        // إغلاق كافة القوائم المنسدلة غير المجهولة فور الانتقال للحقل التالي
-        document.querySelectorAll('.autocomplete-dropdown').forEach(function(d) {
-            d.classList.add('d-none');
-        });
-        if (typeof $ !== 'undefined' && $.fn.select2) {
-            $('.select2-hidden-accessible').select2('close');
-        }
     }
 });
 
 // دالة إظهار التنبيهات الفورية المنبثقة (Enterprise Popup Alert)
-window.showSystemAlert = function(title, message, type) {
+window.showSystemAlert = function(title, message, type, targetElementToFocus) {
     type = type || 'warning';
     var iconClass = 'bi-exclamation-triangle-fill text-warning';
     var headerBg = 'linear-gradient(135deg, #7c2d12 0%, #b45309 100%)';
@@ -368,15 +576,15 @@ window.showSystemAlert = function(title, message, type) {
     }
 
     var alertModalHtml = `
-    <div class="modal fade" id="systemAlertModal" tabindex="-1" role="dialog" aria-hidden="true" style="z-index: 99999;">
-        <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 440px;">
+    <div class="modal fade" id="systemAlertModal" tabindex="-1" role="dialog" aria-hidden="true" style="z-index: 999999; display: flex !important; align-items: center !important; justify-content: center !important;">
+        <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 460px; width: 92%; margin: auto !important; top: 0 !important;">
             <div class="modal-content" style="border-radius: 6px !important; overflow: hidden; border: none; box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
                 <div class="modal-header" style="background: ${headerBg} !important; color: #fff; padding: 12px 18px;">
                     <h5 class="modal-title" style="font-size: 1rem; font-weight: 700; color: #fff; margin: 0; display: flex; align-items: center; gap: 8px;">
                         <i class="bi ${iconClass}" style="font-size: 1.2rem; color: #fff !important;"></i>
                         <span>${title}</span>
                     </h5>
-                    <button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="إغلاق" style="color: #fff; opacity: 0.9; background: none; border: none; font-size: 1.4rem;">
+                    <button type="button" class="close text-white" data-dismiss="modal" data-bs-dismiss="modal" aria-label="إغلاق" style="color: #fff; opacity: 0.9; background: none; border: none; font-size: 1.4rem;">
                         <span aria-hidden="true">&times;</span>
                     </button>
                 </div>
@@ -384,7 +592,7 @@ window.showSystemAlert = function(title, message, type) {
                     ${message}
                 </div>
                 <div class="modal-footer" style="padding: 10px 18px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
-                    <button type="button" class="btn btn-dark btn-sm px-4" data-dismiss="modal" data-bs-dismiss="modal" style="font-weight: 700; border-radius: 4px !important;">حسناً (Enter)</button>
+                    <button type="button" id="btnDismissSystemAlert" class="btn btn-dark btn-sm px-4" data-dismiss="modal" data-bs-dismiss="modal" style="font-weight: 700; border-radius: 4px !important;">موافق (Enter)</button>
                 </div>
             </div>
         </div>
@@ -395,14 +603,63 @@ window.showSystemAlert = function(title, message, type) {
 
     document.body.insertAdjacentHTML('beforeend', alertModalHtml);
 
-    var $alertModal = $('#systemAlertModal');
-    if ($alertModal && typeof $alertModal.modal === 'function') {
-        $alertModal.modal('show');
-        $alertModal.on('shown.bs.modal', function() {
-            $(this).find('button').focus();
+    const modalEl = document.getElementById('systemAlertModal');
+    const dismissBtn = document.getElementById('btnDismissSystemAlert');
+
+    function focusTarget() {
+        if (!targetElementToFocus) return;
+        let el = targetElementToFocus;
+        if (typeof el === 'string') {
+            el = document.querySelector(el) || document.getElementById(el);
+        }
+        if (el) {
+            if (el.parentNode && el.parentNode.querySelector('input.header-autocomplete-input')) {
+                const wrapperInput = el.parentNode.querySelector('input.header-autocomplete-input');
+                wrapperInput.focus();
+                wrapperInput.click();
+            } else {
+                el.focus();
+                if (typeof el.select === 'function') el.select();
+            }
+        }
+    }
+
+    if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+        const $m = $('#systemAlertModal');
+        $m.modal('show');
+        $m.on('shown.bs.modal', function() {
+            if (dismissBtn) dismissBtn.focus();
+        });
+        $m.on('hidden.bs.modal', function() {
+            $m.remove();
+            focusTarget();
         });
     } else {
-        alert(title + "\n" + message);
+        modalEl.classList.add('show');
+        modalEl.style.display = 'block';
+        if (dismissBtn) dismissBtn.focus();
+    }
+
+    function handleAlertKeydown(e) {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            document.removeEventListener('keydown', handleAlertKeydown, true);
+            if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+                $('#systemAlertModal').modal('hide');
+            } else {
+                modalEl.remove();
+                focusTarget();
+            }
+        }
+    }
+    document.addEventListener('keydown', handleAlertKeydown, true);
+
+    if (dismissBtn) {
+        dismissBtn.addEventListener('click', function() {
+            document.removeEventListener('keydown', handleAlertKeydown, true);
+            setTimeout(focusTarget, 150);
+        });
     }
 };
 
@@ -413,6 +670,10 @@ document.addEventListener('keydown', function(e) {
         var isInputField = target.tagName === 'INPUT' || target.tagName === 'SELECT';
         var isTextArea = target.tagName === 'TEXTAREA';
         var isSubmitBtn = target.type === 'submit' || target.classList.contains('btn-save-action');
+
+        if (target.closest('#itemsContainer') || target.closest('.item-row')) {
+            return;
+        }
 
         if (isInputField && !isSubmitBtn && !isTextArea && !target.closest('.aqnex-select-container')) {
             var form = target.form;
@@ -519,9 +780,9 @@ document.addEventListener('keydown', function(e) {
         }
     ?>
     <!-- زر تشغيل المساعد الذكي العائم -->
-    <!-- <button id="ai-assistant-toggle" class="no-print" style="position: fixed; bottom: 25px; left: 25px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%); color: #fff; border: none; box-shadow: 0 8px 30px rgba(2, 132, 199, 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; z-index: 10001; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); outline: none;">
+    <button id="ai-assistant-toggle" class="no-print" title="المساعد الذكي (AQNEX AI)" style="position: fixed; bottom: 25px; left: 25px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%); color: #fff; border: none; box-shadow: 0 8px 30px rgba(2, 132, 199, 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; z-index: 10001; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); outline: none;">
         <i class="bi bi-robot" id="toggle-icon"></i>
-    </button> -->
+    </button>
 
     <!-- لوحة المساعد الذكي الجانبية (Slide-in Sidebar Drawer) -->
     <div id="ai-assistant-panel" class="no-print" style="position: fixed; top: 0; left: -380px; width: 380px; height: 100vh; background: rgba(15, 23, 42, 0.98); border-right: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 10px 0 40px rgba(0, 0, 0, 0.5); z-index: 10000; display: flex; flex-direction: column; transition: left 0.3s ease; font-family: 'Tajawal', sans-serif;">
@@ -729,7 +990,7 @@ document.addEventListener('keydown', function(e) {
             messagesContainer.appendChild(loadingDiv);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
             
-            fetch("<?php echo $pfx; ?>api/ai_assistant.php", {
+            fetch("<?php echo $prefix; ?>api/ai_assistant.php", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -829,80 +1090,6 @@ document.addEventListener('keydown', function(e) {
         });
     });
 
-    // ────────────────────────────────────────────────────────────────────────
-    // 🚀 AQNEX POS - إضافة ميزات التنقل بزر Enter والـ Autocomplete الشامل
-    // ────────────────────────────────────────────────────────────────────────
-    
-    // 1. حقن تنسيق الاستايل الفاخر للـ Autocomplete
-    (function() {
-        var style = document.createElement('style');
-        style.innerHTML = `
-            .aqnex-select-container {
-                position: relative;
-                display: inline-block;
-                width: 100%;
-            }
-            .aqnex-select-input {
-                width: 100%;
-                padding: 8px 12px;
-                font-family: 'Tajawal', sans-serif;
-                font-size: 0.95rem;
-                font-weight: 600;
-                border: 1px solid #ced4da;
-                background-color: #fff;
-                color: #495057;
-                outline: none;
-                transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
-                cursor: pointer;
-            }
-            .aqnex-select-input:focus {
-                border-color: #1d6bff;
-                box-shadow: 0 0 0 0.2rem rgba(29, 107, 255, 0.25);
-            }
-            .aqnex-select-dropdown {
-                position: absolute;
-                top: 100%;
-                left: 0;
-                right: 0;
-                z-index: 1050;
-                display: none;
-                max-height: 250px;
-                overflow-y: auto;
-                margin-top: 2px;
-                padding: 5px 0;
-                background-color: #fff;
-                border: 1px solid rgba(0, 0, 0, 0.15);
-                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.175);
-                direction: rtl;
-                text-align: right;
-            }
-            .aqnex-select-item {
-                padding: 8px 15px;
-                font-size: 0.9rem;
-                color: #212529;
-                cursor: pointer;
-                transition: background-color 0.15s;
-            }
-            .aqnex-select-item:hover, .aqnex-select-item.active {
-                background-color: #f1f5f9;
-                color: #1d6bff;
-                font-weight: bold;
-            }
-            .aqnex-select-item.selected-val {
-                background-color: #e2e8f0;
-                color: #0f172a;
-                font-weight: bold;
-            }
-            .aqnex-select-item.no-results {
-                color: #7d8590;
-                text-align: center;
-                cursor: default;
-                font-style: italic;
-            }
-        `;
-        document.head.appendChild(style);
-    })();
-
     // 2. التنقل بين الحقول عبر زر Enter ومنع الحفظ التلقائي بالفورم
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
@@ -971,9 +1158,9 @@ document.addEventListener('keydown', function(e) {
     ajaxObserver.observe(document.body, { childList: true, subtree: true });
 
     function initAqnexAutocomplete() {
-        var selects = document.querySelectorAll('select:not(.no-autocomplete):not([multiple])');
+        var selects = document.querySelectorAll('select:not(.no-autocomplete):not([multiple]):not(.select-category)');
         selects.forEach(function(select) {
-            if (select.dataset.aqnexInit === 'true' || select.style.display === 'none') {
+            if (select.dataset.aqnexInit === 'true' || select.style.display === 'none' || select.classList.contains('select2-hidden-accessible') || select.classList.contains('select-category')) {
                 return; // تم تهيئته مسبقاً أو حقل مخفي مخصص
             }
             select.dataset.aqnexInit = 'true';
@@ -982,7 +1169,11 @@ document.addEventListener('keydown', function(e) {
             var container = document.createElement('div');
             container.className = 'aqnex-select-container';
             if (select.className) {
-                container.classList.add('original-' + select.className);
+                select.className.split(/\s+/).forEach(function(cls) {
+                    if (cls && cls !== 'select2-hidden-accessible') {
+                        container.classList.add('original-' + cls);
+                    }
+                });
             }
             
             var input = document.createElement('input');
@@ -1111,6 +1302,301 @@ document.addEventListener('keydown', function(e) {
             });
         });
     }
+    </script>
+    <!-- مودال البحث السريع الموحد للأصناف (F4) -->
+    <div class="modal fade" id="quickProductSearchModal" tabindex="-1" role="dialog" aria-hidden="true" style="z-index: 99999;">
+        <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content text-right border-0 shadow">
+                <div class="modal-header bg-primary text-white py-2">
+                    <h5 class="modal-title font-weight-bold" style="font-size: 1.05rem;"><i class="bi bi-search ml-2"></i>البحث عن صنف (F4)</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal" data-bs-dismiss="modal" aria-label="إغلاق">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="input-group mb-3">
+                        <div class="input-group-prepend">
+                            <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+                        </div>
+                        <input type="text" id="quickProductSearchInput" class="form-control form-control-lg font-weight-bold" placeholder="ابحث باسم المنتج، الباركود..." autocomplete="off">
+                    </div>
+                    <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+                        <table class="table table-hover table-bordered table-sm text-center mb-0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>الباركود</th>
+                                    <th>اسم المنتج</th>
+                                    <th>سعر البيع</th>
+                                    <th>سعر الشراء</th>
+                                    <th>المخزون</th>
+                                    <th>إجراء</th>
+                                </tr>
+                            </thead>
+                            <tbody id="quickProductSearchResults">
+                                <tr><td colspan="6" class="text-muted py-3">اكتب كلمة البحث للبدء...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2 justify-content-between">
+                    <small class="text-muted"><i class="bi bi-keyboard ml-1"></i> اضغط ⬇ ⬆ للتنقل و Enter للاختيار السريع</small>
+                    <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal" data-bs-dismiss="modal">إغلاق</button>
+                </div>
+    <!-- 📄 مودال عرض وطباعة الوثائق المنفصلة (Universal Document Viewer Modal) -->
+    <div class="modal fade" id="universalDocViewModal" tabindex="-1" role="dialog" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title font-weight-bold" id="universalDocTitle">
+                        <i class="bi bi-file-earmark-text-fill ml-1"></i> معاينة الوثيقة المالية
+                    </h6>
+                    <button type="button" class="close text-white" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body p-3" id="universalDocBody">
+                    <div class="text-center p-4 text-muted">جاري تحميل بيانات الوثيقة...</div>
+                </div>
+                <div class="modal-footer bg-light justify-content-between">
+                    <small class="text-muted"><i class="bi bi-info-circle ml-1"></i> يمكن طباعة الوثيقة بشكل مستقل دون التأثير على التقرير</small>
+                    <div>
+                        <button type="button" class="btn btn-primary btn-sm px-3" onclick="printUniversalDoc();">
+                            <i class="bi bi-printer-fill ml-1"></i> طباعة الوثيقة
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm px-3" data-dismiss="modal" data-bs-dismiss="modal">إغلاق</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    window.openDocumentViewerModal = function(type, docId, title) {
+        var modalEl = document.getElementById('universalDocViewModal');
+        if (!modalEl) return;
+        if (modalEl.parentNode !== document.body) {
+            document.body.appendChild(modalEl);
+        }
+        
+        document.getElementById('universalDocTitle').innerHTML = '<i class="bi bi-file-earmark-text-fill ml-1"></i> ' + (title || 'معاينة الوثيقة المستقلة') + ' ' + (docId ? '#' + docId : '');
+        var docBody = document.getElementById('universalDocBody');
+        docBody.innerHTML = '<div class="text-center p-4 text-muted"><i class="spinner-border text-primary spinner-border-sm ml-2"></i> جاري تحميل تفاصيل الأصناف والبيانات الرسمية للوثيقة...</div>';
+        
+        if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+            $('#universalDocViewModal').modal('show');
+        } else {
+            modalEl.classList.add('show');
+            modalEl.style.display = 'block';
+        }
+
+        var apiUrl = '../api/fetch_document_details.php?type=' + encodeURIComponent(type) + '&id=' + encodeURIComponent(docId);
+        fetch(apiUrl)
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                docBody.innerHTML = html;
+            })
+            .catch(function(err) {
+                docBody.innerHTML = '<div class="alert alert-danger text-center p-3 font-weight-bold">حدث خطأ أثناء تحميل تفاصيل الوثيقة: ' + err.message + '</div>';
+            });
+    };
+
+    window.printUniversalDoc = function() {
+        var content = document.getElementById('universalDocBody').innerHTML;
+        var printWin = window.open('', '_blank', 'width=800,height=600');
+        printWin.document.write(`
+            <!DOCTYPE html>
+            <html dir="rtl" lang="ar">
+            <head>
+                <title>طباعة وثيقة مستقلة</title>
+                <link rel="stylesheet" href="../assets/css/bootstrap-rtl.min.css">
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; direction: rtl; text-align: right; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+                    th, td { border: 1px solid #000; padding: 6px; text-align: center; }
+                    th { background: #f1f5f9; }
+                </style>
+            </head>
+            <body>
+                ${content}
+                <script>window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); }<\/script>
+            </body>
+            </html>
+        `);
+        printWin.document.close();
+    };
+    // ────────────────────────────────────────────────────────────────────────
+    // 🎯 التركيز المباشر والتنقل بالأسهم الشامل في جميع المودالات (Global Modal Handling)
+    // ────────────────────────────────────────────────────────────────────────
+    (function() {
+        var style = document.createElement('style');
+        style.innerHTML = `
+            .modal-backdrop { z-index: 10400 !important; }
+            .modal { z-index: 10500 !important; }
+        `;
+        document.head.appendChild(style);
+    })();
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // 1. نقل المودال لـ document.body تلقائياً لفك قيود التراكب (Z-Index Stacking) وتركيز التصفح
+        if (typeof $ !== 'undefined' && $.fn && $.fn.on) {
+            $(document).on('show.bs.modal', '.modal', function() {
+                if (this.parentNode !== document.body) {
+                    document.body.appendChild(this);
+                }
+            });
+            $(document).on('shown.bs.modal', '.modal', function() {
+                var searchInp = this.querySelector('input[type="text"]:not([readonly]), input[type="search"], #quickProductSearchInput, #searchPurchaseQuery, #modalInvoiceSearchInput, #newSupplierNameInput');
+                if (searchInp) {
+                    searchInp.focus();
+                    if (typeof searchInp.select === 'function') searchInp.select();
+                }
+            });
+        }
+
+        // 2. معالجة التصفح بالأسهم (ArrowUp, ArrowDown, Enter) في كافة المودالات
+        document.addEventListener('keydown', function(e) {
+            var openModal = document.querySelector('.modal.show, .modal[style*="display: block"]');
+            if (!openModal) return;
+
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+                var activeEl = document.activeElement;
+                // إذا كان المودال مفتوحاً ولم تكن في حقل ادخال يتطلب الانتر العادي
+                var rows = Array.from(openModal.querySelectorAll('tbody tr')).filter(function(r) {
+                    return r.style.display !== 'none' && !r.querySelector('td[colspan]');
+                });
+
+                if (rows.length === 0) return;
+
+                var currentIndex = rows.findIndex(function(r) {
+                    return r.classList.contains('active-modal-row') || r.classList.contains('table-primary') || r.classList.contains('table-success');
+                });
+
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (currentIndex >= 0) {
+                        rows[currentIndex].classList.remove('active-modal-row', 'table-primary', 'table-success');
+                    }
+                    var nextIndex = (currentIndex + 1) % rows.length;
+                    rows[nextIndex].classList.add('table-primary', 'active-modal-row');
+                    rows[nextIndex].scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (currentIndex >= 0) {
+                        rows[currentIndex].classList.remove('active-modal-row', 'table-primary', 'table-success');
+                    }
+                    var prevIndex = (currentIndex - 1 + rows.length) % rows.length;
+                    rows[prevIndex].classList.add('table-primary', 'active-modal-row');
+                    rows[prevIndex].scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'Enter') {
+                    if (currentIndex >= 0 && rows[currentIndex]) {
+                        var targetRow = rows[currentIndex];
+                        var actionBtn = targetRow.querySelector('.btn-primary, .btn-success, button, a');
+                        if (actionBtn && activeEl !== actionBtn) {
+                            e.preventDefault();
+                            actionBtn.click();
+                        } else if (targetRow.onclick || targetRow.getAttribute('onclick')) {
+                            e.preventDefault();
+                            targetRow.click();
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    window.openQuickProductModal = function() {
+        let modalEl = document.getElementById('quickProductSearchModal');
+        if (!modalEl) return;
+        let searchInp = document.getElementById('quickProductSearchInput');
+        if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+            $('#quickProductSearchModal').modal('show');
+        } else {
+            modalEl.classList.add('show');
+            modalEl.style.display = 'block';
+        }
+        setTimeout(() => {
+            if (searchInp) { searchInp.value = ''; searchInp.focus(); }
+            window.performQuickProductSearch('');
+        }, 200);
+    };
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'F4') {
+            e.preventDefault();
+            window.openQuickProductModal();
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (e.target.id === 'quickProductSearchBtn' || e.target.closest('#quickProductSearchBtn') || e.target.classList.contains('quick-product-btn')) {
+            e.preventDefault();
+            window.openQuickProductModal();
+        }
+    });
+
+    window.performQuickProductSearch = function(q) {
+        let tbody = document.getElementById('quickProductSearchResults');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">جاري البحث...</td></tr>';
+        fetch(`../api/search_products.php?q=${encodeURIComponent(q)}`)
+            .then(res => res.json())
+            .then(products => {
+                if (!products || products.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">لا توجد نتائج مطابقة</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = products.map((p, idx) => {
+                    let pJson = JSON.stringify(p).replace(/'/g, "&#39;");
+                    let escapeHtml = str => (str || '').toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    return `
+                        <tr class="search-result-item ${idx === 0 ? 'table-primary active-modal-row' : ''}" style="cursor:pointer;" onclick="selectGlobalProductResult('${pJson}')">
+                            <td>${escapeHtml(p.barcode || '-')}</td>
+                            <td class="font-weight-bold text-right">${escapeHtml(p.name)}</td>
+                            <td class="text-success font-weight-bold">${parseFloat(p.price || 0).toFixed(2)}</td>
+                            <td class="text-primary font-weight-bold">${parseFloat(p.buy_price || 0).toFixed(2)}</td>
+                            <td><span class="badge ${p.quantity > 0 ? 'badge-success' : 'badge-danger'}">${parseFloat(p.quantity || 0)}</span></td>
+                            <td><button type="button" class="btn btn-xs btn-primary font-weight-bold" title="اختيار الصنف"><i class="bi bi-arrow-down-square-fill"></i></button></td>
+                        </tr>
+                    `;
+                }).join('');
+            })
+            .catch(err => {
+                console.error('Quick product search err:', err);
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">حدث خطأ أثناء تحميل الأصناف</td></tr>';
+            });
+    };
+
+    window.selectGlobalProductResult = function(productJson) {
+        let p = typeof productJson === 'string' ? JSON.parse(productJson) : productJson;
+        if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+            $('#quickProductSearchModal').modal('hide');
+        } else {
+            let m = document.getElementById('quickProductSearchModal');
+            if (m) m.style.display = 'none';
+        }
+
+        if (typeof window.selectProductForRow === 'function') {
+            let rows = document.querySelectorAll('.item-row');
+            let targetRow = rows.length > 0 ? rows[rows.length - 1] : null;
+            if (!targetRow || (targetRow.querySelector('.select-product') && targetRow.querySelector('.select-product').value !== '')) {
+                let addBtn = document.getElementById('addItemBtn');
+                if (addBtn) addBtn.click();
+                let newRows = document.querySelectorAll('.item-row');
+                targetRow = newRows[newRows.length - 1];
+            }
+            window.selectProductForRow(targetRow, p);
+        } else if (typeof window.addScannedPurchaseProduct === 'function') {
+            window.addScannedPurchaseProduct(p);
+        } else if (typeof window.addScannedSalesProduct === 'function') {
+            window.addScannedSalesProduct(p);
+        }
+    };
+
+    document.addEventListener('input', function(e) {
+        if (e.target.id === 'quickProductSearchInput') {
+            window.performQuickProductSearch(e.target.value.trim());
+        }
+    });
     </script>
     </body>
     </html>

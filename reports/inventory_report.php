@@ -178,7 +178,7 @@ if ($res_products) {
         <div class="icon-wrap"><i class="bi bi-pie-chart-fill"></i></div>
         <div>
             <h4>تقرير الجرد والمخزون الشامل</h4>
-            <small>كشف رسمي بقيمة المخزون، توزيع التصنيفات، والأصناف المنخفضة والنافذة</small>
+            <small>كشف بقيمة المخزون، توزيع التصنيفات، والأصناف المنخفضة والنافذة</small>
         </div>
     </div>
     <div class="ptb-actions">
@@ -264,12 +264,12 @@ if ($res_products) {
 
 <!-- توزيع المخزون حسب التصنيف -->
 <div class="card-flat mb-4">
-    <div class="card-header">
-        <h5><i class="bi bi-diagram-2 ml-2 text-primary"></i>توزيع وقيمة المخزون حسب مجموعات الأصناف</h5>
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="m-0 font-weight-bold"><i class="bi bi-diagram-2 ml-2 text-primary"></i>توزيع وقيمة المخزون حسب مجموعات الأصناف</h5>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="report-table">
+            <table class="report-table sap-grid-table">
                 <thead>
                     <tr>
                         <th style="width:5%;">#</th>
@@ -307,23 +307,25 @@ if ($res_products) {
 
 <!-- جدول المنتجات التفصيلي -->
 <div class="card-flat">
-    <div class="card-header">
-        <h5><i class="bi bi-box-seam ml-2 text-primary"></i>كشف جرد الأصناف التفصيلي (مرتبة حسب القيمة)</h5>
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="m-0 font-weight-bold"><i class="bi bi-box-seam ml-2 text-primary"></i>كشف جرد الأصناف التفصيلي (مرتبة حسب القيمة)</h5>
+        <span class="badge badge-light border px-2 py-1">عدد المنتجات: <?php echo count($products_list); ?></span>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="report-table">
+            <table class="report-table sap-grid-table">
                 <thead>
                     <tr>
                         <th style="width:6%;">رقم الصنف</th>
-                        <th style="width:12%;">الباركود</th>
-                        <th style="width:24%;">اسم المنتج / الصنف</th>
-                        <th style="width:12%;">التصنيف</th>
+                        <th style="width:11%;">الباركود</th>
+                        <th style="width:22%;">اسم المنتج / الصنف</th>
+                        <th style="width:11%;">التصنيف</th>
                         <th style="width:8%;">حالة المخزون</th>
-                        <th style="width:8%;">الكمية</th>
-                        <th style="width:10%;">سعر الشراء</th>
-                        <th style="width:10%;">سعر البيع</th>
+                        <th style="width:7%;">الكمية</th>
+                        <th style="width:9%;">سعر الشراء</th>
+                        <th style="width:9%;">سعر البيع</th>
                         <th style="width:10%;">إجمالي التكلفة</th>
+                        <th style="width:7%;" class="no-print">إجراءات</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -352,14 +354,35 @@ if ($res_products) {
                             <td class="text-center"><?php echo number_format($buy_p, 2); ?></td>
                             <td class="text-center font-weight-bold text-primary"><?php echo number_format($sale_p, 2); ?></td>
                             <td class="text-center font-weight-bold text-dark"><?php echo number_format($total_c, 2); ?></td>
+                            <td class="text-center no-print">
+                                <button type="button" class="btn btn-xs btn-primary font-weight-bold" title="عرض تفاصيل كارت الصنف والمخزون في نافذة منفصلة" onclick="openDocumentViewerModal('كارت الصنف والمخزون', '<?php echo $p['id']; ?>', '<?php echo htmlspecialchars(addslashes($p['name'])); ?>');">
+                                    <i class="bi bi-eye-fill"></i>
+                                </button>
+                            </td>
                         </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="9" class="text-center py-4 text-muted">لا توجد نتائج مطابقة لشروط البحث</td></tr>
+                        <tr><td colspan="10" class="text-center py-4 text-muted">لا توجد نتائج مطابقة لشروط البحث</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
+    </div>
+</div>
+
+<!-- تذييل الاعتماد والتوقيع المحاسبي الرسمي للطباعة -->
+<div class="sap-signature-block">
+    <div>
+        <div>إعداد أخصائي المخزون</div>
+        <div style="margin-top: 30px;">التوقيع: ..................</div>
+    </div>
+    <div>
+        <div>مراجعة وتدقيق الجرد</div>
+        <div style="margin-top: 30px;">التوقيع: ..................</div>
+    </div>
+    <div>
+        <div>اعتماد مدير المستودعات والمالية</div>
+        <div style="margin-top: 30px;">التوقيع: ..................</div>
     </div>
 </div>
 

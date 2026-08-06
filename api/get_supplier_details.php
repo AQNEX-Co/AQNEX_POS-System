@@ -4,9 +4,11 @@ require_once(__DIR__ . '/../includes/connect.php');
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
-require_once(__DIR__ . '/../includes/auth.php');
+if (!isset($_SESSION['SESS_MEMBER_ID'])) {
+    echo json_encode(['status' => 'error', 'message' => 'غير مصرح بالوصول']);
+    exit;
+}
 
-check_permission(['admin', 'cashier', 'inventory', 'reports']);
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -38,7 +40,7 @@ if ($res && $res->num_rows > 0) {
         'supp_name' => $row['supp_name'],
         'phone' => $row['phone'],
         'daain' => $daain,
-        'madeen' => madeen,
+        'madeen' => $madeen,
         'balance' => $net_balance
     ]);
 } else {

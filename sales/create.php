@@ -63,18 +63,76 @@ $editing_invoice_id = isset($_GET['id']) ? intval($_GET['id']) : (isset($_GET['e
 $editing_invoice = null;
 $editing_items = [];
 
+$actual_entries = [];
 if ($editing_invoice_id > 0) {
-    $res_edit_mst = $conn->query("SELECT * FROM sales WHERE id = $editing_invoice_id AND delete_status = 0 LIMIT 1");
+    $res_edit_mst = $conn->query("SELECT * FROM sales_invoices_mst WHERE id = $editing_invoice_id AND d_s = 0 LIMIT 1");
     if ($res_edit_mst && $res_edit_mst->num_rows > 0) {
         $editing_invoice = $res_edit_mst->fetch_assoc();
-        $res_edit_dtl = $conn->query("SELECT * FROM sales_items WHERE sales_id = $editing_invoice_id ORDER BY id ASC");
+        $editing_invoice['build_date'] = $editing_invoice['invoice_date'] ?? date('Y-m-d');
+        $res_edit_dtl = $conn->query("SELECT * FROM sales_invoices_dtl WHERE invoice_id = $editing_invoice_id AND d_s = 0 ORDER BY id ASC");
         if ($res_edit_dtl) {
             while ($item_row = $res_edit_dtl->fetch_assoc()) {
-                $editing_items[] = $item_row;
+                $editing_items[] = [
+                    'id'          => $item_row['product_id'],
+                    'p_id'        => $item_row['product_id'],
+                    'name'        => $item_row['product_name'],
+                    'unit_name'   => $item_row['unit_name'],
+                    'quantity'    => $item_row['quantity'],
+                    'unit_price'  => $item_row['unit_price'],
+                    'all_tot'     => $item_row['total_price'],
+                    'bush'        => $item_row['paid_amount'] ?? 0,
+                    'd'           => $item_row['discount_amount'] ?? $item_row['discount'] ?? 0,
+                    'dis'         => $item_row['remaining_amount'] ?? 0
+                ];
             }
         }
     } else {
+        $res_old = $conn->query("SELECT * FROM sales WHERE id = $editing_invoice_id AND delete_status = 0 LIMIT 1");
+        if ($res_old && $res_old->num_rows > 0) {
+            $editing_invoice = $res_old->fetch_assoc();
+            $res_old_dtl = $conn->query("SELECT * FROM sales_items WHERE sales_id = $editing_invoice_id ORDER BY p_id ASC");
+            if ($res_old_dtl) {
+                while ($item_row = $res_old_dtl->fetch_assoc()) {
+                    $editing_items[] = $item_row;
+                }
+            }
+        }
+    }
+
+    if (!$editing_invoice) {
         $editing_invoice_id = 0;
+    } else {
+        $returns_map = [];
+        $res_returns = $conn->query("SELECT product_id, SUM(quantity) as ret_qty, SUM(refund_amount) as ret_refund FROM sales_returns WHERE sales_id = $editing_invoice_id AND status = 'active' GROUP BY product_id");
+        if ($res_returns) {
+            while ($r_row = $res_returns->fetch_assoc()) {
+                $returns_map[intval($r_row['product_id'])] = [
+                    'qty' => floatval($r_row['ret_qty']),
+                    'refund' => floatval($r_row['ret_refund'])
+                ];
+            }
+        }
+
+        $res_journal = $conn->query("SELECT * FROM journal_entries WHERE ref_id = $editing_invoice_id AND ref_type = 'sale' ORDER BY id ASC");
+        if ($res_journal) {
+            while ($j_row = $res_journal->fetch_assoc()) {
+                $amt = doubleval($j_row['amount']);
+                $actual_entries[] = [
+                    'account_code' => '',
+                    'account_name' => $j_row['account_debit'],
+                    'debit'        => $amt,
+                    'credit'       => 0,
+                    'narration'    => $j_row['description'] ?? ''
+                ];
+                $actual_entries[] = [
+                    'account_code' => '',
+                    'account_name' => $j_row['account_credit'],
+                    'debit'        => 0,
+                    'credit'       => $amt,
+                    'narration'    => $j_row['description'] ?? ''
+                ];
+            }
+        }
     }
 }
 
@@ -90,8 +148,8 @@ if (isset($_POST['btn_save'])) {
     $exchange_rate = doubleval($_POST['exchange_rate']);
     if ($exchange_rate <= 0) $exchange_rate = 1.0;
 
-    $selected_box_id = isset($_POST['box_id']) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
-    $active_box_id = $selected_box_id;
+    $selected_box_id = (!empty($_POST['box_id'])) ? intval($_POST['box_id']) : get_user_box_id($conn, $active_user_id);
+    $active_box_id = ($selected_box_id > 0) ? $selected_box_id : get_user_box_id($conn, $active_user_id);
     $box_name = get_box_name($conn, $active_box_id);
 
     $invoice_type   = in_array($_POST['invoice_type'] ?? '', ['cash','credit','account']) ? $_POST['invoice_type'] : 'cash';
@@ -181,12 +239,18 @@ if (isset($_POST['btn_save'])) {
                 $conn->query("DELETE FROM sales_items WHERE sales_id = $editing_invoice_id");
                 $conn->query("DELETE FROM journal_entries WHERE ref_id = $editing_invoice_id AND ref_type = 'sale'");
 
-                // 3. تحديث الفاتورة الحالية
+                $sector_id_val = isset($_POST['sector_id']) && $_POST['sector_id'] !== '' ? intval($_POST['sector_id']) : 'NULL';
+
+                // 3. تحديث الفاتورة الحالية في جداول الماستر السابقة والجديدة
                 $sql_update = "UPDATE `sales` SET `build_date` = '$build_date', `cust_name` = '$customer_name', `total` = '$invoice_total_base', `prifet` = '$grand_profit_base', `remark` = '$remark', `currency_code` = '$currency_code', `exchange_rate` = '$exchange_rate', `remaining_total` = '$total_remaining_base', `box_id` = $active_box_id, `invoice_type` = '$invoice_type', `payment_method` = '$payment_method', `wallet_type` = '$wallet_type' WHERE `id` = $editing_invoice_id";
                 if (!$conn->query($sql_update)) {
                     throw new Exception("فشل تحديث الفاتورة رقم #" . $editing_invoice_id);
                 }
                 $billing_id = $editing_invoice_id;
+
+                $inv_no = 'INV-' . str_pad($billing_id, 6, '0', STR_PAD_LEFT);
+                $conn->query("DELETE FROM sales_invoices_dtl WHERE invoice_id = $billing_id");
+                $conn->query("UPDATE sales_invoices_mst SET invoice_date = '$build_date', cust_id = " . ($customer_id ?: 'NULL') . ", cust_name = '$customer_name', total_amount = '$invoice_total_base', net_amount = '$invoice_total_base', paid_amount = '$total_paid_base', remaining_amount = '$total_remaining_base', invoice_type = '$invoice_type', payment_method = '$payment_method', box_id = $active_box_id, sector_id = $sector_id_val, currency_code = '$currency_code', exchange_rate = '$exchange_rate', remark = '$remark' WHERE id = $billing_id OR invoice_no = '$inv_no'");
             } else {
                 $sql_insert = "INSERT INTO `sales`(`build_date`, `cust_name`, `total`, `prifet`, `remark`, `delete_status`, `currency_code`, `exchange_rate`, `remaining_total`, `box_id`, `invoice_type`, `payment_method`, `wallet_type`) 
                                VALUES ('$build_date', '$customer_name', '$invoice_total_base', '$grand_profit_base', '$remark', 0, '$currency_code', '$exchange_rate', '$total_remaining_base', $active_box_id, '$invoice_type', '$payment_method', '$wallet_type')";
@@ -194,6 +258,12 @@ if (isset($_POST['btn_save'])) {
                     throw new Exception("فشل حفظ رأس الفاتورة في قاعدة البيانات");
                 }
                 $billing_id = $conn->insert_id;
+
+                $inv_no = 'INV-' . str_pad($billing_id, 6, '0', STR_PAD_LEFT);
+                $sector_id_val = isset($_POST['sector_id']) && $_POST['sector_id'] !== '' ? intval($_POST['sector_id']) : 'NULL';
+                $conn->query("INSERT INTO sales_invoices_mst (id, invoice_no, cust_id, cust_name, invoice_date, total_amount, discount_amount, net_amount, paid_amount, remaining_amount, invoice_type, payment_method, wallet_type, profit_total, box_id, sector_id, currency_code, exchange_rate, remark, d_s)
+                              VALUES ($billing_id, '$inv_no', " . ($customer_id ?: 'NULL') . ", '$customer_name', '$build_date', '$invoice_total_base', 0, '$invoice_total_base', '$total_paid_base', '$total_remaining_base', '$invoice_type', '$payment_method', '$wallet_type', '$grand_profit_base', $active_box_id, $sector_id_val, '$currency_code', '$exchange_rate', '$remark', 0)
+                              ON DUPLICATE KEY UPDATE cust_name = '$customer_name', total_amount = '$invoice_total_base', net_amount = '$invoice_total_base', paid_amount = '$total_paid_base', remaining_amount = '$total_remaining_base', sector_id = $sector_id_val");
             }
 
         for ($i = 0; $i < $count; $i++) {
@@ -239,6 +309,10 @@ if (isset($_POST['btn_save'])) {
                     throw new Exception("فشل إدراج الصنف: " . $product_name_db);
                 }
                 $sales_item_id = $conn->insert_id;
+
+                $conn->query("INSERT INTO sales_invoices_dtl (invoice_id, product_id, product_name, unit_name, quantity, unit_price, discount, total_price, d_s)
+                              VALUES ($billing_id, $p_id, '$product_name_db', '$unit_name_esc', $qty, $price_base, $disc_base, $line_total_base, 0)");
+
 
                 $base_qty = $qty * $conv_factor;
                 
@@ -345,7 +419,7 @@ if (isset($_POST['btn_save'])) {
         }
         */
 
-        echo "<script>window.location='view.php?id=$billing_id&autoprint=1&send_wa=1';</script>";
+        echo "<script>window.location='create.php?id=$billing_id&saved=1&autoprint=1&send_wa=1';</script>";
         exit;
     } catch (Exception $e) {
         $conn->rollback();
@@ -704,7 +778,7 @@ if ($res_curr) {
 <div class="aqnex-window-header no-print">
     <div>
         <i class="bi bi-window-stack text-primary ml-1"></i>
-        <span>أنظمة العملاء - نظام إدارة المبيعات - فاتورة المبيعات</span>
+        <span>إدارة المبيعات - فاتورة مبيعات</span>
     </div>
     <div>
         <span class="ml-3">المستخدم: <strong><?php echo htmlspecialchars($_SESSION['SESS_FIRST_NAME'] ?? 'مدير النظام'); ?></strong></span>
@@ -736,7 +810,7 @@ if ($res_curr) {
         </button>
 
         <!-- 🗑 حذف الفاتورة -->
-        <button type="button" class="tool-btn btn-delete" title="حذف وتصفية الفاتورة الحالية" onclick="if(confirm('هل أنت تأكد من رغبتك في حذف وتصفية الفاتورة؟')) resetSalesForm();">
+        <button type="button" class="tool-btn btn-delete" title="حذف الفاتورة الحالية نهائياً من قاعدة البيانات" onclick="confirmDeleteCurrentInvoice();">
             <i class="bi bi-trash-fill"></i>
         </button>
 
@@ -777,7 +851,14 @@ if ($res_curr) {
     <div class="alert alert-warning rounded-0 mb-3 text-right no-print" style="border: 1px solid #fbbf24; border-right: 4px solid #d97706 !important; background-color: #fffbeb; color: #92400e; padding: 10px 14px;">
         <i class="bi bi-pencil-square ml-1 font-weight-bold"></i>
         <strong>تأكيد التعديل:</strong> أنت تشاهد وتعدل الآن الفاتورة رقم <strong>#<?php echo $editing_invoice_id; ?></strong> (بتاريخ: <?php echo htmlspecialchars($editing_invoice['build_date'] ?? ''); ?> - العميل: <?php echo htmlspecialchars($editing_invoice['cust_name'] ?? ''); ?>). يمكنك تعديل أي حقل أو صنف ثم الضغط على <strong>حفظ (F10)</strong> لتحديث الفاتورة.
-    <a href="create.php" class="btn btn-xs btn-outline-danger bg-gradient-danger font-weight-bold mr-3">الغاء التعديل والدخول لفاتورة جديدة</a>
+    <a href="create.php" class="btn btn-danger rounded text-white rounded btn-sm" title="الغاء التعديل والدخول لفاتورة جديدة" style="color: #fca5a5; cursor: pointer;"> <i class="bi bi-x-circle"></i></a>
+    </div>
+<?php endif; ?>
+
+<?php if (!empty($returns_map)): ?>
+    <div class="alert alert-info rounded-0 mb-3 text-right no-print" style="border: 1px solid #93c5fd; border-right: 4px solid #2563eb !important; background-color: #eff6ff; color: #1e40af; padding: 10px 14px;">
+        <i class="bi bi-info-circle-fill ml-1 font-weight-bold"></i>
+        <strong>تنبيه بشأن المردودات:</strong> تحتوي هذه الفاتورة على مردودات مبيعات مسجلة سابقاً. تم توضيح الكميات المرجعة لكل صنف للحفاظ على سلامة الحسابات والمخزون.
     </div>
 <?php endif; ?>
 
@@ -825,12 +906,11 @@ if ($res_curr) {
 
         <!-- العمود الثاني -->
         <div class="col-md-4">
-            <div class="aqnex-form-group">
+            <div class="aqnex-form-group" id="salesBoxSection">
                 <label class="aqnex-label">رقم الصندوق:</label>
                 <?php if ($is_admin): ?>
                     <?php $default_box_id = $editing_invoice ? intval($editing_invoice['box_id']) : get_user_box_id($conn, $active_user_id); ?>
                     <select name="box_id" id="boxSelect" class="aqnex-select" required>
-                        <option value=""></option>
                         <?php
                         $res_b = $conn->query("SELECT box_id, name, mony FROM treasury WHERE is_active = 1 ORDER BY box_id ASC");
                         if ($res_b) {
@@ -964,25 +1044,29 @@ if ($res_curr) {
                         <?php if ($editing_invoice_id > 0 && !empty($editing_items)): ?>
                             <?php foreach ($editing_items as $ei): ?>
                             <?php
-                                // Fetch current stock for this product
+                                // Fetch current stock and buy price for this product
                                 $ei_stock = 0;
-                                $ei_product_id = intval($ei['p_id'] ?? 0);  // actual column: p_id
+                                $ei_buy = 0;
+                                $ei_product_id = intval($ei['id'] ?? ($ei['p_id'] ?? 0));
                                 if ($ei_product_id > 0) {
-                                    $stock_res = $conn->query("SELECT quantity FROM products WHERE id = $ei_product_id LIMIT 1");
+                                    $stock_res = $conn->query("SELECT quantity, buy_price FROM products WHERE id = $ei_product_id LIMIT 1");
                                     if ($stock_res && $stock_res->num_rows > 0) {
-                                        $ei_stock = floatval($stock_res->fetch_assoc()['quantity']);
+                                        $st_row = $stock_res->fetch_assoc();
+                                        $ei_stock = floatval($st_row['quantity']);
+                                        $ei_buy   = floatval($st_row['buy_price']);
                                     }
                                 }
                                 $ei_qty        = floatval($ei['quantity'] ?? 1);
                                 $ei_price      = floatval($ei['unit_price'] ?? 0);
-                                $ei_total      = floatval($ei['total'] ?? ($ei_qty * $ei_price));
-                                $ei_paid       = floatval($ei['d'] ?? 0);          // column: d = paid
-                                $ei_discount   = floatval($ei['dis'] ?? 0);        // column: dis = discount
-                                $ei_remaining  = floatval($ei['remaining'] ?? 0);
-                                $ei_buy        = 0;  // not stored in sales_items
+                                $ei_total      = floatval($ei['all_tot'] ?? ($ei_qty * $ei_price));
+                                $ei_paid       = floatval($ei['bush'] ?? 0);          // column: bush = paid
+                                $ei_discount   = floatval($ei['d'] ?? 0);             // column: d = discount
+                                $ei_remaining  = floatval($ei['dis'] ?? 0);           // column: dis = remaining
                                 $ei_unit_name  = htmlspecialchars($ei['unit_name'] ?? 'حبة');
                                 $ei_conv       = 1;
                                 $ei_pname      = htmlspecialchars($ei['name'] ?? '');  // column: name
+
+                                $ei_ret_qty = isset($returns_map[$ei_product_id]) ? floatval($returns_map[$ei_product_id]['qty']) : 0;
                             ?>
                             <tr class="item-row">
                                 <td>
@@ -1100,8 +1184,8 @@ if ($res_curr) {
             </div>
 
             <div class="mt-2 no-print">
-                <button type="button" id="addItemBtn" class="btn btn-sm btn-outline-primary font-weight-bold" style="font-size:0.78rem;">
-                    <i class="bi bi-plus-circle ml-1"></i> إضافة صنف آخر إلى الفاتورة (F4)
+                <button type="button" id="addItemBtn" class="btn btn-sm font-weight-bold tool-btn">
+                    <i class="bi bi-plus-circle ml-1 text-primary"  title="أضافة صنف جديد"></i>
                 </button>
             </div>
 
@@ -1110,7 +1194,7 @@ if ($res_curr) {
                 <div class="col-md-7">
                     <div class="aqnex-form-group">
                         <label class="aqnex-label">بيان الفاتورة:</label>
-                        <input type="text" name="remark" class="aqnex-input" placeholder="ملاحظات الفاتورة وبيان العملية..." value="<?php echo htmlspecialchars($editing_invoice['remark'] ?? ''); ?>">
+                        <textarea name="remark" class=" w-100"  placeholder="ملاحظات الفاتورة وبيان العملية..." cols="30" rows=""><?php echo htmlspecialchars($editing_invoice['remark'] ?? ''); ?></textarea>
                     </div>
                 </div>
 
@@ -1229,6 +1313,8 @@ if ($res_curr) {
 
 <script type="text/javascript">
 const availableProducts = <?php echo $products_json; ?>;
+const actualJournalEntries = <?php echo json_encode($actual_entries); ?>;
+window.actualJournalEntries = actualJournalEntries; // expose globally for journal modal
 const isSerialModuleEnabled = <?php echo is_module_enabled('serial_imei_tracking') ? 'true' : 'false'; ?>;
 const isExpiryModuleEnabled = <?php echo is_module_enabled('expiry_tracking') ? 'true' : 'false'; ?>;
 const taxPercent = <?php echo floatval($global_settings['tax_percent'] ?? 0); ?>;
@@ -1663,19 +1749,23 @@ document.addEventListener('DOMContentLoaded', function() {
         link.addEventListener('click', function(e) {
             if (salesFormDirty && !salesFormSubmitting) {
                 e.preventDefault();
-                pendingLeaveUrl = link.href;
-                $('#leavePageModal').modal('show');
+                const pendingUrl = link.href;
+                if (typeof AqnexConfirm !== 'undefined') {
+                    AqnexConfirm.show('تحذير: بيانات غير محفوظة! أنت على وشك مغادرة صفحة إنشاء الفاتورة. جميع البيانات المدخلة ستضيع ولن يتم حفظها. هل تريد المتابعة أم تأكيد الخروج؟', function(confirmed) {
+                        if (confirmed) {
+                            salesFormDirty = false;
+                            window.location.href = pendingUrl;
+                        }
+                    });
+                } else {
+                    if (confirm('تحذير: بيانات غير محفوظة! هل تريد المتابعة أم تأكيد الخروج؟')) {
+                        salesFormDirty = false;
+                        window.location.href = pendingUrl;
+                    }
+                }
             }
         });
     });
-
-    const confirmLeaveBtn = document.getElementById('confirmLeaveBtn');
-    if (confirmLeaveBtn) {
-        confirmLeaveBtn.addEventListener('click', function() {
-            salesFormDirty = false;
-            if (pendingLeaveUrl) window.location.href = pendingLeaveUrl;
-        });
-    }
 });
 
 window.addEventListener('beforeunload', function(e) {
@@ -1690,24 +1780,53 @@ function toggleSalesInvoiceType(val) {
     const paymentSection  = document.getElementById('salesPaymentMethodSection');
 
     if (val === 'credit') {
-        if (boxSection) boxSection.classList.add('d-none');
-        if (paymentSection) paymentSection.classList.add('d-none');
+        if (boxSection) {
+            boxSection.classList.add('d-none');
+            boxSection.style.cssText = 'display: none !important;';
+        }
+        if (paymentSection) {
+            paymentSection.classList.add('d-none');
+            paymentSection.style.cssText = 'display: none !important;';
+        }
         document.querySelectorAll('.paid-input').forEach(inp => {
             inp.value = '0';
             inp.setAttribute('readonly', 'readonly');
             inp.setAttribute('data-manually-edited', 'true');
         });
+
+        // تنبيه فوري لتحديد عميل آجل عند اختيار نوع الفاتورة آجل
+        const custSelect = document.getElementById('select2');
+        const custVal = custSelect ? custSelect.value.trim() : '';
+        if (custVal === 'عميل نقدي' || custVal === '') {
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(122, AQNEX_MESSAGES[122] || 'تنبيه: الفاتورة الآجلة تتطلب تحديد عميل آجل مسجل وليس عميل نقدي!', custSelect);
+            } else {
+                alert('تنبيه: الفاتورة الآجلة تتطلب تحديد عميل آجل مسجل وليس عميل نقدي!');
+            }
+        }
     } else {
-        if (boxSection) boxSection.classList.remove('d-none');
-        if (paymentSection) paymentSection.classList.remove('d-none');
+        if (boxSection) {
+            boxSection.classList.remove('d-none');
+            boxSection.style.cssText = '';
+        }
+        if (paymentSection) {
+            paymentSection.classList.remove('d-none');
+            paymentSection.style.cssText = '';
+        }
         document.querySelectorAll('.paid-input').forEach(inp => {
             inp.removeAttribute('readonly');
             inp.removeAttribute('data-manually-edited');
         });
         if (val === 'cash') {
-            if (boxSection) boxSection.classList.remove('d-none');
+            if (boxSection) {
+                boxSection.classList.remove('d-none');
+                boxSection.style.cssText = '';
+            }
         } else {
-            if (boxSection) boxSection.classList.add('d-none');
+            if (boxSection) {
+                boxSection.classList.add('d-none');
+                boxSection.style.cssText = 'display: none !important;';
+            }
         }
     }
 
@@ -1717,6 +1836,7 @@ function toggleSalesInvoiceType(val) {
     updateGrandTotals();
     checkRealTimeWarnings();
 }
+window.toggleSalesInvoiceType = toggleSalesInvoiceType;
 
 function toggleSalesWalletSection(val) {
     const walletSec    = document.getElementById('salesWalletTypeSection');
@@ -1867,6 +1987,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const grandProfEl = document.getElementById("grandProfitDisplay");
         if (grandProfEl) grandProfEl.value = totalProfit.toFixed(2);
 
+        updateAccountingGuide();
         checkRealTimeWarnings();
     }
 
@@ -1880,14 +2001,11 @@ document.addEventListener("DOMContentLoaded", function() {
         let totalCost = 0;
 
         document.querySelectorAll(".item-row").forEach(function(row) {
-            const productId = row.querySelector(".select-product").value;
-            if (!productId) return;
-
-            const qty = parseInt(row.querySelector(".quantity-input").value) || 0;
-            const paid = (invType === 'credit') ? 0 : (parseFloat(row.querySelector(".paid-input").value) || 0);
-            const remaining = parseFloat(row.querySelector(".remaining-input").value) || 0;
-            const discount = parseFloat(row.querySelector(".discount-input").value) || 0;
-            const buyPrice = parseFloat(row.querySelector(".buy-price").value) || 0;
+            const qty = parseInt(row.querySelector(".quantity-input")?.value) || 0;
+            const paid = (invType === 'credit') ? 0 : (parseFloat(row.querySelector(".paid-input")?.value) || 0);
+            const remaining = parseFloat(row.querySelector(".remaining-input")?.value) || 0;
+            const discount = parseFloat(row.querySelector(".discount-input")?.value) || 0;
+            const buyPrice = parseFloat(row.querySelector(".buy-price")?.value) || 0;
 
             totalPaid += paid;
             totalRemaining += remaining;
@@ -1895,14 +2013,25 @@ document.addEventListener("DOMContentLoaded", function() {
             totalCost += (qty * buyPrice);
         });
 
-        document.getElementById("acc_cash_received").value = totalPaid.toFixed(2);
-        document.getElementById("acc_cash_received_credit").value = totalPaid.toFixed(2);
-        document.getElementById("acc_credit_sales").value = totalRemaining.toFixed(2);
-        document.getElementById("acc_credit_sales_credit").value = totalRemaining.toFixed(2);
-        document.getElementById("acc_discount").value = totalDiscount.toFixed(2);
-        document.getElementById("acc_discount_credit").value = totalDiscount.toFixed(2);
-        document.getElementById("acc_cogs").value = totalCost.toFixed(2);
-        document.getElementById("acc_cogs_credit").value = totalCost.toFixed(2);
+        const elCash = document.getElementById("acc_cash_received");
+        if (elCash) elCash.value = totalPaid.toFixed(2);
+        const elCashCred = document.getElementById("acc_cash_received_credit");
+        if (elCashCred) elCashCred.value = totalPaid.toFixed(2);
+
+        const elCredSales = document.getElementById("acc_credit_sales");
+        if (elCredSales) elCredSales.value = totalRemaining.toFixed(2);
+        const elCredSalesCred = document.getElementById("acc_credit_sales_credit");
+        if (elCredSalesCred) elCredSalesCred.value = totalRemaining.toFixed(2);
+
+        const elDisc = document.getElementById("acc_discount");
+        if (elDisc) elDisc.value = totalDiscount.toFixed(2);
+        const elDiscCred = document.getElementById("acc_discount_credit");
+        if (elDiscCred) elDiscCred.value = totalDiscount.toFixed(2);
+
+        const elCogs = document.getElementById("acc_cogs");
+        if (elCogs) elCogs.value = totalCost.toFixed(2);
+        const elCogsCred = document.getElementById("acc_cogs_credit");
+        if (elCogsCred) elCogsCred.value = totalCost.toFixed(2);
     }
 
     function checkRealTimeWarnings() {
@@ -1989,7 +2118,11 @@ document.addEventListener("DOMContentLoaded", function() {
                 updateGrandTotals();
                 updateAccountingGuide();
             } else {
-                alert("يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+                if (typeof AqnexAlert !== 'undefined') {
+                    AqnexAlert.show(102, AQNEX_MESSAGES[102] || "يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+                } else {
+                    alert("يجب أن تحتوي الفاتورة على صنف واحد على الأقل!");
+                }
             }
         }
     });
@@ -2052,13 +2185,148 @@ document.addEventListener("DOMContentLoaded", function() {
                 const stockVal = parseFloat(row.querySelector(".stock-qty").value) || 0;
 
                 if (qty > stockVal) {
-                    alert("تنبيه: الكمية المدخلة أكبر من المتوفر في المخزن!");
+                    e.target.value = stockVal;
+                    if (typeof AqnexAlert !== 'undefined') {
+                        AqnexAlert.show(105, `تنبيه: الكمية المدخلة (${qty}) تتجاوز المتوفر في المخزن (${stockVal})!`, e.target);
+                    } else {
+                        alert("تنبيه: الكمية المدخلة أكبر من المتوفر في المخزن!");
+                        e.target.focus();
+                        e.target.select();
+                    }
                 }
             }
 
             updateRowCalculations(row);
         }
     });
+
+    function updateRowCalculations(row) {
+        if (!row) return;
+        const qtyInp = row.querySelector(".quantity-input");
+        const priceInp = row.querySelector(".price-input");
+        const totalInp = row.querySelector(".total-input");
+        const paidInp = row.querySelector(".paid-input");
+        const discountInp = row.querySelector(".discount-input");
+        const remInp = row.querySelector(".remaining-input");
+        const profitInp = row.querySelector(".profit-input");
+        const buyPriceInp = row.querySelector(".buy-price");
+
+        const qty = parseFloat(qtyInp ? qtyInp.value : 0) || 0;
+        const price = parseFloat(priceInp ? priceInp.value : 0) || 0;
+        const buyPrice = parseFloat(buyPriceInp ? buyPriceInp.value : 0) || 0;
+        const discount = parseFloat(discountInp ? discountInp.value : 0) || 0;
+
+        const total = (qty * price) - discount;
+        if (totalInp) totalInp.value = total > 0 ? total.toFixed(2) : "0.00";
+
+        const isPaidEdited = paidInp && paidInp.getAttribute("data-manually-edited") === "true";
+        let paid = 0;
+        if (isPaidEdited) {
+            paid = parseFloat(paidInp.value) || 0;
+        } else {
+            const invTypeSelect = document.querySelector("#invoiceTypeSelect");
+            const invType = invTypeSelect ? invTypeSelect.value : "cash";
+            if (invType === "cash") {
+                paid = total;
+            } else {
+                paid = 0;
+            }
+            if (paidInp) paidInp.value = paid > 0 ? paid.toFixed(2) : "0.00";
+        }
+
+        const remaining = Math.max(0, total - paid);
+        if (remInp) remInp.value = remaining.toFixed(2);
+
+        if (profitInp) {
+            const profit = (price - buyPrice) * qty;
+            profitInp.value = profit.toFixed(2);
+        }
+
+        updateGrandTotals();
+    }
+    window.updateRowCalculations = updateRowCalculations;
+
+    function updateGrandTotals() {
+        let subtotal = 0;
+        let totalDiscount = 0;
+        let totalPaid = 0;
+        let totalRemaining = 0;
+        let totalProfit = 0;
+
+        document.querySelectorAll(".item-row").forEach(function(row) {
+            const qty = parseFloat(row.querySelector(".quantity-input")?.value) || 0;
+            const price = parseFloat(row.querySelector(".price-input")?.value) || 0;
+            const total = parseFloat(row.querySelector(".total-input")?.value) || 0;
+            const paid = parseFloat(row.querySelector(".paid-input")?.value) || 0;
+            const discount = parseFloat(row.querySelector(".discount-input")?.value) || 0;
+            const remaining = parseFloat(row.querySelector(".remaining-input")?.value) || 0;
+            const profit = parseFloat(row.querySelector(".profit-input")?.value) || 0;
+
+            subtotal += (qty * price);
+            totalDiscount += discount;
+            totalPaid += paid;
+            totalRemaining += remaining;
+            totalProfit += profit;
+        });
+
+        const grandTotal = Math.max(0, subtotal - totalDiscount);
+
+        const subtotalEl = document.getElementById("summarySubtotal");
+        const discountEl = document.getElementById("summaryDiscount");
+        const grandTotalEl = document.getElementById("summaryGrandTotal");
+        const paidEl = document.getElementById("summaryPaid") || document.getElementById("totalPaidInput");
+        const remainingEl = document.getElementById("summaryRemaining");
+        const profitEl = document.getElementById("summaryProfit");
+
+        if (subtotalEl) subtotalEl.textContent = subtotal.toFixed(2);
+        if (discountEl) discountEl.textContent = totalDiscount.toFixed(2);
+        if (grandTotalEl) grandTotalEl.textContent = grandTotal.toFixed(2);
+        if (paidEl && paidEl.tagName === "INPUT") paidEl.value = totalPaid.toFixed(2);
+        else if (paidEl) paidEl.textContent = totalPaid.toFixed(2);
+        if (remainingEl) remainingEl.textContent = totalRemaining.toFixed(2);
+        if (profitEl) profitEl.textContent = totalProfit.toFixed(2);
+    }
+    window.updateGrandTotals = updateGrandTotals;
+
+    function confirmDeleteCurrentInvoice() {
+        let invId = <?php echo $editing_invoice_id ?: 0; ?>;
+        if (!invId || invId <= 0) {
+            const urlParams = new URLSearchParams(window.location.search);
+            invId = parseInt(urlParams.get('id') || urlParams.get('edit_id') || '0');
+        }
+        const hiddenEl = document.getElementById('editing_invoice_id_hidden') || document.getElementById('invoice_id');
+        if ((!invId || invId <= 0) && hiddenEl) {
+            invId = parseInt(hiddenEl.value || '0');
+        }
+
+        if (invId > 0) {
+            const msgTitle = 'تأكيد الحذف النهائي';
+            const msgBody = 'هل أنت متأكد من رغبتك في حذف فاتورة المبيعات رقم #' + invId + ' نهائياً؟\nسيتم إلغاء تأثير المخزون ورصيد العميل والصندوق والقيود المحاسبية. لا يمكن التراجع عن هذه العملية.';
+            if (typeof AqnexConfirm !== 'undefined') {
+                AqnexConfirm.show(msgTitle, msgBody, function(confirmed) {
+                    if (confirmed) {
+                        window.location.href = 'delete.php?id=' + invId;
+                    }
+                });
+            } else {
+                if (confirm(msgBody)) {
+                    window.location.href = 'delete.php?id=' + invId;
+                }
+            }
+        } else {
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(101, "برجاء اختيار أو فتح فاتورة مبيعات محفوظة أولاً من قائمة البحث لإمكانية حذفها.");
+            } else {
+                alert("برجاء اختيار أو فتح فاتورة مبيعات محفوظة أولاً من قائمة البحث لإمكانية حذفها.");
+            }
+        }
+    }
+    window.confirmDeleteCurrentInvoice = confirmDeleteCurrentInvoice;
+
+    function resetSalesForm() {
+        window.location.href = 'create.php';
+    }
+    window.resetSalesForm = resetSalesForm;
 
     itemsContainer.addEventListener("change", function(e) {
         if (e.target.matches(".serial-select")) {
@@ -2273,7 +2541,11 @@ document.addEventListener("DOMContentLoaded", function() {
         updateRowCalculations(row);
 
         if (stockQty <= 0) {
-            alert("تنبيه: هذا المنتج غير متوفر في المخزن حالياً!");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(105, "تنبيه: هذا المنتج غير متوفر في المخزن حالياً!");
+            } else {
+                alert("تنبيه: هذا المنتج غير متوفر في المخزن حالياً!");
+            }
         }
 
         // الانتقال التلقائي لحقل الكمية وتحديده بعد اختيار الصنف
@@ -2307,6 +2579,14 @@ document.addEventListener("DOMContentLoaded", function() {
 
             if (e.target.classList.contains("product-search-input")) {
                 e.preventDefault();
+                const dropdown = row.querySelector('.product-search-container .autocomplete-dropdown');
+                if (dropdown && !dropdown.classList.contains('d-none')) {
+                    const firstItem = dropdown.querySelector('.autocomplete-item');
+                    if (firstItem) {
+                        firstItem.click();
+                        return;
+                    }
+                }
                 const qtyInput = row.querySelector(".quantity-input");
                 if (qtyInput) {
                     qtyInput.focus();
@@ -2515,7 +2795,11 @@ document.addEventListener("DOMContentLoaded", function() {
             let newQty = currentQty + 1;
             let stock = parseInt(existingRow.querySelector(".stock-qty").value) || 0;
             if (newQty > stock) {
-                alert("تحذير: الكمية المطلوبة (" + newQty + ") تتجاوز المتوفر في المخزن (" + stock + ")!");
+                if (typeof AqnexAlert !== 'undefined') {
+                    AqnexAlert.show(105, `تحذير: الكمية المطلوبة (${newQty}) تتجاوز المتوفر في المخزن (${stock})!`, qtyInput);
+                } else {
+                    alert("تحذير: الكمية المطلوبة (" + newQty + ") تتجاوز المتوفر في المخزن (" + stock + ")!");
+                }
                 newQty = stock;
             }
             const serialSelect = existingRow.querySelector(".serial-select");
@@ -2525,7 +2809,11 @@ document.addEventListener("DOMContentLoaded", function() {
                     opt.selected = true;
                     serialSelect.dispatchEvent(new Event("change"));
                 } else {
-                    alert("رقم IMEI مضاف مسبقاً في هذه الفاتورة!");
+                    if (typeof AqnexAlert !== 'undefined') {
+                        AqnexAlert.show(104, "رقم IMEI مضاف مسبقاً في هذه الفاتورة!");
+                    } else {
+                        alert("رقم IMEI مضاف مسبقاً في هذه الفاتورة!");
+                    }
                 }
             } else {
                 qtyInput.value = newQty;
@@ -2543,6 +2831,74 @@ document.addEventListener("DOMContentLoaded", function() {
             }
             selectProductForRow(targetRow, product);
         }
+    }
+
+    const barcodeScanInput = document.getElementById("barcodeScanInput");
+    if (barcodeScanInput) {
+        barcodeScanInput.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                const q = this.value.trim();
+                if (!q) return;
+
+                fetch(`../api/search_products.php?q=${encodeURIComponent(q)}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && data.length > 0) {
+                            const match = data.find(p => p.barcode && p.barcode.trim() === q) || data[0];
+                            addScannedProduct(match);
+                            barcodeScanInput.value = "";
+                            barcodeScanInput.focus();
+                        } else {
+                            if (typeof AqnexAlert !== 'undefined') {
+                                AqnexAlert.show(105, 'عذراً، الصنف صاحب الباركود (' + q + ') غير موجود بالمخزون/الحسابات!', barcodeScanInput);
+                            } else {
+                                alert('عذراً، الصنف صاحب الباركود (' + q + ') غير موجود بالمخزون!');
+                            }
+                        }
+                    })
+                    .catch(err => {
+                        console.error("Barcode scan error:", err);
+                    });
+            }
+        });
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'F4') {
+            e.preventDefault();
+            window.openQuickProductModal();
+        }
+    });
+
+    const quickProductSearchBtn = document.getElementById('quickProductSearchBtn');
+    if (quickProductSearchBtn) {
+        quickProductSearchBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            window.openQuickProductModal();
+        });
+    }
+
+    const salesForm = document.querySelector('form');
+    if (salesForm) {
+        salesForm.addEventListener('submit', function(e) {
+            const invTypeSelect = document.getElementById('invoiceTypeSelect');
+            const custSelect = document.getElementById('select2');
+            const invType = invTypeSelect ? invTypeSelect.value : 'cash';
+            const custName = custSelect ? custSelect.value.trim() : '';
+
+            if (invType === 'credit') {
+                if (custName === 'عميل نقدي' || custName === '') {
+                    e.preventDefault();
+                    if (typeof AqnexAlert !== 'undefined') {
+                        AqnexAlert.show(122, 'لا يمكن حفظ فاتورة آجلة لـ (عميل نقدي)! يرجى تحديد عميل آجل مسجل أولاً.', custSelect);
+                    } else {
+                        alert('خطأ: لا يمكن حفظ فاتورة آجلة لـ (عميل نقدي)! يرجى تحديد عميل آجل أولاً.');
+                    }
+                    return false;
+                }
+            }
+        });
     }
     function selectAndRouteFocus(product) {
         let activeRow = window.activeSearchRow;
@@ -2702,7 +3058,11 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
         if (!hasProducts) {
-            alert("تحذير: يجب إضافة صنف واحد على الأقل إلى الفاتورة قبل الحفظ!");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(102, AQNEX_MESSAGES[102]);
+            } else {
+                alert("تحذير: يجب إضافة صنف واحد على الأقل إلى الفاتورة قبل الحفظ!");
+            }
             e.preventDefault();
             return false;
         }
@@ -2713,7 +3073,12 @@ document.addEventListener("DOMContentLoaded", function() {
             const qty = parseInt(row.querySelector(".quantity-input").value) || 0;
             const stock = parseInt(row.querySelector(".stock-qty").value) || 0;
             if (qty > stock) {
-                alert(`تحذير في الصنف "${name}": الكمية المطلوبة (${qty}) تتجاوز المتوفر في المخزن (${stock})!`);
+                if (typeof AqnexAlert !== 'undefined') {
+                    AqnexAlert.show(105, `تحذير في الصنف "${name}": الكمية المطلوبة (${qty}) تتجاوز المتوفر في المخزن (${stock})!`, row.querySelector(".quantity-input"));
+                } else {
+                    alert(`تحذير في الصنف "${name}": الكمية المطلوبة (${qty}) تتجاوز المتوفر في المخزن (${stock})!`);
+                }
+                row.querySelector(".quantity-input").value = stock;
                 isValid = false;
             }
             const serialSelect = row.querySelector(".serial-select");
@@ -2722,7 +3087,11 @@ document.addEventListener("DOMContentLoaded", function() {
             if (isSerialRequired) {
                 const selectedCount = Array.from(serialSelect.selectedOptions).length;
                 if (selectedCount !== qty) {
-                    alert(`خطأ في الصنف "${name}": يجب اختيار أرقام IMEI مساوية للكمية المطلوبة (${qty})! المختار حالياً: ${selectedCount}`);
+                    if (typeof AqnexAlert !== 'undefined') {
+                        AqnexAlert.show(104, `خطأ في الصنف "${name}": يجب اختيار أرقام IMEI مساوية للكمية المطلوبة (${qty})! المختار حالياً: ${selectedCount}`, serialSelect);
+                    } else {
+                        alert(`خطأ في الصنف "${name}": يجب اختيار أرقام IMEI مساوية للكمية المطلوبة (${qty})! المختار حالياً: ${selectedCount}`);
+                    }
                     isValid = false;
                 }
             }
@@ -2731,7 +3100,11 @@ document.addEventListener("DOMContentLoaded", function() {
         if (currentCustomerDetails.id > 0 && remainingTotal > 0) {
             const newBalance = currentCustomerDetails.balance + remainingTotal;
             if (newBalance > currentCustomerDetails.credit_limit) {
-                alert(`تحذير: لا يمكن إتمام العملية! مديونية العميل بعد هذه الفاتورة (${newBalance.toFixed(2)}) ستتجاوز الحد الائتماني المسموح به (${currentCustomerDetails.credit_limit.toFixed(2)})!`);
+                if (typeof AqnexAlert !== 'undefined') {
+                    AqnexAlert.show(104, `تحذير: لا يمكن إتمام العملية! مديونية العميل بعد هذه الفاتورة (${newBalance.toFixed(2)}) ستتجاوز الحد الائتماني المسموح به (${currentCustomerDetails.credit_limit.toFixed(2)})!`);
+                } else {
+                    alert(`تحذير: لا يمكن إتمام العملية! مديونية العميل بعد هذه الفاتورة (${newBalance.toFixed(2)}) ستتجاوز الحد الائتماني المسموح به (${currentCustomerDetails.credit_limit.toFixed(2)})!`);
+                }
                 isValid = false;
             }
         }
@@ -2746,7 +3119,11 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         
         if (hasWarnings) {
-            alert("يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            if (typeof AqnexAlert !== 'undefined') {
+                AqnexAlert.show(104, "يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            } else {
+                alert("يرجى تصحيح الأخطاء والتحذيرات (تجاوز حد الدين أو كمية المخزن) قبل حفظ الفاتورة.");
+            }
             isValid = false;
         }
 
@@ -2966,7 +3343,11 @@ document.addEventListener("DOMContentLoaded", function() {
             .then(response => response.json())
             .then(data => {
                 if (data.status === "success") {
-                    alert("تم حفظ العميل بنجاح واختياره تلقائياً!");
+                    if (typeof AqnexAlert !== 'undefined') {
+                        AqnexAlert.show(119, "تم حفظ العميل بنجاح واختياره تلقائياً!");
+                    } else {
+                        alert("تم حفظ العميل بنجاح واختياره تلقائياً!");
+                    }
                     const customerSelect = document.getElementById("select2");
                     if (customerSelect) {
                         if (typeof $ !== 'undefined' && $(customerSelect).data('select2')) {
@@ -3053,7 +3434,14 @@ document.addEventListener("DOMContentLoaded", function() {
                         </thead>
                         <tbody id="pastInvoicesTableBody">
                             <?php
-                            $res_past = $conn->query("SELECT id, build_date, cust_name, invoice_type, total FROM sales WHERE delete_status = 0 ORDER BY id DESC LIMIT 50");
+                            $res_past = $conn->query("
+                                SELECT id, invoice_date AS build_date, cust_name, invoice_type, net_amount AS total 
+                                FROM sales_invoices_mst WHERE d_s = 0 
+                                UNION ALL 
+                                SELECT id, build_date, cust_name, invoice_type, total 
+                                FROM sales WHERE delete_status = 0 AND id NOT IN (SELECT id FROM sales_invoices_mst WHERE d_s = 0)
+                                ORDER BY id DESC LIMIT 50
+                            ");
                             if ($res_past && $res_past->num_rows > 0):
                                 $first = true;
                                 while($inv = $res_past->fetch_assoc()):
@@ -3067,11 +3455,11 @@ document.addEventListener("DOMContentLoaded", function() {
                                 <td><span class="badge badge-info"><?php echo ($inv['invoice_type'] === 'cash' || empty($inv['invoice_type'])) ? 'نقد' : 'آجل'; ?></span></td>
                                 <td class="font-weight-bold text-primary"><?php echo number_format($inv['total'], 2); ?> ر.ي</td>
                                 <td>
-                                    <button type="button" class="btn btn-xs btn-primary py-0 px-2" onclick="selectPastInvoice(<?php echo $inv['id']; ?>)">
-                                        <i class="bi bi-pencil-square ml-1"></i> فتح / تعديل
+                                    <button type="button" class="tool-btn btn-xs btn-primary px-2" onclick="selectPastInvoice(<?php echo $inv['id']; ?>)" title="تنزيل / تعديل الفاتورة">
+                                        <i class="bi bi-arrow-down-square-fill"></i>
                                     </button>
-                                    <button type="button" class="btn btn-xs btn-outline-danger py-0 px-2 ml-1" onclick="deletePastInvoice(<?php echo $inv['id']; ?>, event)" title="حذف الفاتورة نهائياً">
-                                        <i class="bi bi-trash-fill"></i> حذف
+                                    <button type="button" class="tool-btn btn-xs btn-outline-danger px-2 ml-1" onclick="deletePastInvoice(<?php echo $inv['id']; ?>, event)" title="حذف الفاتورة نهائياً">
+                                        <i class="bi bi-trash-fill"></i>
                                     </button>
                                 </td>
                             </tr>
@@ -3152,8 +3540,16 @@ function openSearchInvoiceModal(mode) {
 
 function deletePastInvoice(id, e) {
     if (e) e.stopPropagation();
-    if (confirm(`تأكيد الحذف النهائي:\n\nهل أنت متأكد من رغبتك في حذف فاتورة المبيعات رقم #${id}؟\nسيتم إلغاء تأثير الكميات من المخزون وتأثير رصيد العميل والصندوق والقيود المحاسبية نهائياً، ولن يمكن التراجع عن هذا الإجراء.`)) {
-        window.location.href = 'delete.php?id=' + id;
+    if (typeof AqnexConfirm !== 'undefined') {
+        AqnexConfirm.show(`هل أنت متأكد من رغبتك في حذف فاتورة المبيعات رقم #${id} نهائياً؟ سيتم إلغاء تأثير المخزون ورصيد العميل والصندوق والقيود المحاسبية.`, function(confirmed) {
+            if (confirmed) {
+                window.location.href = 'delete.php?id=' + id;
+            }
+        });
+    } else {
+        if (confirm(`تأكيد الحذف النهائي:\n\nهل أنت متأكد من رغبتك في حذف فاتورة المبيعات رقم #${id}؟\nسيتم إلغاء تأثير الكميات من المخزون وتأثير رصيد العميل والصندوق والقيود المحاسبية نهائياً، ولن يمكن التراجع عن هذا الإجراء.`)) {
+            window.location.href = 'delete.php?id=' + id;
+        }
     }
 }
 
@@ -3224,16 +3620,67 @@ function selectPastInvoice(invoiceId) {
     window.location.href = 'create.php?id=' + invoiceId;
 }
 
-// فتح مودل القيود المحاسبية
+// دالة الحذف الذكي - تحذف الفاتورة نهائياً إذا كانت محفوظة، وتصفي النموذج إذا كان جديداً
+function confirmDeleteCurrentInvoice() {
+    const invId = <?php echo $editing_invoice_id ?: 0; ?>;
+    if (invId > 0) {
+        const msgTitle = 'تأكيد الحذف النهائي';
+        const msgBody = 'هل أنت متأكد من رغبتك في حذف فاتورة مبيعات رقم #' + invId + '؟\nسيتم حذف جميع البيانات، إلغاء القيود المحاسبية، وإعادة الكميات للمخزن. لا يمكن التراجع عن هذا الإجراء.';
+        if (typeof AqnexConfirm !== 'undefined') {
+            AqnexConfirm.show(msgTitle, msgBody, function() {
+                window.location.href = 'delete.php?id=' + invId;
+            });
+        } else {
+            if (confirm(msgBody)) {
+                window.location.href = 'delete.php?id=' + invId;
+            }
+        }
+    } else {
+        // نموذج جديد فارغ - تصفية فقط
+        if (typeof AqnexConfirm !== 'undefined') {
+            AqnexConfirm.show('تأكيد التصفية', 'هل تريد مسح البيانات المدخلة وبدء فاتورة جديدة؟', function() {
+                resetSalesForm();
+            });
+        } else {
+            if (confirm('تصفية البيانات؟')) resetSalesForm();
+        }
+    }
+}
+
+// فتح مودال القيود المحاسبية
 function openJournalModal() {
+    const tbody = document.getElementById('journalEntriesTableBody');
+    tbody.innerHTML = '';
+
+    if (window.actualJournalEntries && window.actualJournalEntries.length > 0) {
+        let rowsHtml = '';
+        let totalDebit = 0;
+        let totalCredit = 0;
+        window.actualJournalEntries.forEach(entry => {
+            const deb = parseFloat(entry.debit) || 0;
+            const cred = parseFloat(entry.credit) || 0;
+            totalDebit += deb;
+            totalCredit += cred;
+            rowsHtml += `<tr>
+                <td><code>${entry.account_code || '110000'}</code></td>
+                <td class="font-weight-bold text-right">${entry.account_name}</td>
+                <td class="text-success font-weight-bold">${deb.toFixed(2)}</td>
+                <td class="text-danger font-weight-bold">${cred.toFixed(2)}</td>
+                <td class="text-right">${entry.narration || ''}</td>
+            </tr>`;
+        });
+        tbody.innerHTML = rowsHtml;
+        document.getElementById('journalTotalDebit').innerText = totalDebit.toFixed(2);
+        document.getElementById('journalTotalCredit').innerText = totalCredit.toFixed(2);
+        $('#viewJournalModal').modal('show');
+        return;
+    }
+
     const netTotal = parseFloat(document.getElementById('summaryNetTotal').innerText) || 0;
     const taxTotal = parseFloat(document.getElementById('summaryTax').innerText) || 0;
     const subTotal = parseFloat(document.getElementById('summarySubtotal').innerText) || 0;
     const paidAmount = parseFloat(document.getElementById('grandPaidDisplay').value) || 0;
     const invoiceType = document.getElementById('invoiceTypeSelect').value;
-
-    const tbody = document.getElementById('journalEntriesTableBody');
-    tbody.innerHTML = '';
 
     if (netTotal <= 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="text-muted py-3">قم بإضافة أصناف أولاً لعرض القيود المحاسبية المتوقعة.</td></tr>';

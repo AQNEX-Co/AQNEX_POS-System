@@ -29,7 +29,6 @@ if (isset($_POST['btn_save_unit'])) {
             $stmt->close();
         } else {
             // إضافة وحدة جديدة
-            // التحقق من عدم التكرار
             $chk = $conn->query("SELECT id FROM `units` WHERE `name` = '$unit_name' AND `d_s` = '0' LIMIT 1");
             if ($chk && $chk->num_rows > 0) {
                 $error = 'اسم الوحدة مضاف مسبقاً.';
@@ -79,112 +78,131 @@ if (isset($_GET['edit_unit']) && is_numeric($_GET['edit_unit'])) {
 }
 ?>
 
-<title>تهيئة وإعداد الوحدات العامة - تكنولوجيا فون</title>
+<title>تهيئة وحدات القياس - AQNEX POS</title>
+<link rel="stylesheet" href="<?php echo $prefix; ?>assets/css/settings.css">
 
-<?php
-$active_tab = 'units';
-require_once 'settings_nav.php';
-?>
-
-<div class="row no-print mb-4">
-    <div class="col-md-6 text-right">
-        <h3 class="text-secondary font-weight-bold">
-            <i class="fa fa-tags ml-2 text-primary"></i> تهيئة وحدات قياس الأصناف
-        </h3>
-        <p class="text-muted small mb-0">قم بإضافة وتعديل أسماء الوحدات العامة للنظام (مثل: حبة، كرتون، شوال، درزن) ليتم استخدامها لاحقاً داخل صفحة تفاصيل الأصناف.</p>
-    </div>
-    <div class="col-md-6 text-left">
-        <a href="../products/index.php" class="btn-flat btn-flat-secondary btn-sm text-decoration-none">
-            <i class="fa fa-cubes ml-1"></i> إدارة البضائع والأصناف
-        </a>
-    </div>
-</div>
-
-<?php if (!empty($success)): ?>
-    <div class="alert alert-success rounded-0 mb-4 text-right"><?php echo htmlspecialchars($success); ?></div>
-<?php endif; ?>
-<?php if (!empty($error)): ?>
-    <div class="alert alert-danger rounded-0 mb-4 text-right"><?php echo htmlspecialchars($error); ?></div>
-<?php endif; ?>
-
-<div class="row text-right" dir="rtl">
-    <!-- الجانب الأيمن: عرض الوحدات المضافة -->
-    <div class="col-lg-8 mb-4">
-        <div class="card-flat">
-            <div class="card-header bg-light">
-                <h5 class="mb-0 text-dark font-weight-bold"><i class="fa fa-list ml-2 text-primary"></i> قائمة الوحدات العامة المسجلة بالنظام</h5>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table-flat mb-0">
-                        <thead>
-                            <tr>
-                                <th style="width: 15%;" class="text-center">الرقم</th>
-                                <th>اسم وحدة القياس</th>
-                                <th class="no-print text-center" style="width: 25%;">إجراءات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (empty($units_list)): ?>
-                                <tr>
-                                    <td colspan="3" class="text-center text-muted p-4">لا توجد وحدات قياس مهيأة بالنظام حالياً. قم بإضافة أول وحدة من الجانب الأيسر.</td>
-                                </tr>
-                            <?php else: ?>
-                                <?php foreach ($units_list as $u): ?>
-                                    <tr>
-                                        <td class="text-center text-secondary font-weight-bold">#<?php echo $u['id']; ?></td>
-                                        <td class="font-weight-bold text-primary" style="font-size: 1.1rem;"><?php echo htmlspecialchars($u['name']); ?></td>
-                                        <td class="no-print text-center">
-                                            <a href="units.php?edit_unit=<?php echo $u['id']; ?>" class="btn-flat btn-flat-primary btn-sm py-1 px-3 ml-2">
-                                                <i class="fa fa-edit ml-1"></i> تعديل
-                                            </a>
-                                            <a href="units.php?del_unit=<?php echo $u['id']; ?>" onclick="return confirm('هل أنت متأكد من حذف هذه الوحدة؟')" class="btn-flat btn-flat-danger btn-sm py-1 px-3">
-                                                <i class="fa fa-trash ml-1"></i> حذف
-                                            </a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+<div class="settings-shell">
+    <div class="row mb-3 no-print align-items-center">
+        <div class="col-md-7">
+            <span class="eyebrow">إعدادات النظام وإدارة الموارد</span>
+            <h3 class="mb-1">
+                <span class="icon-chip"><i class="bi bi-tags"></i></span>
+                تهيئة وإدارة وحدات القياس
+            </h3>
+            <p class="text-muted small mb-0">إضافة وتعديل وحدات القياس المعتمدة (مثل: حبة، كرتون، درزن، كيلو) واستخدامها في إدارة المخزون.</p>
+        </div>
+        <div class="col-md-5 text-left">
+            <a href="../products/index.php" class="btn-formal-secondary text-decoration-none">
+                <i class="bi bi-boxes ml-1"></i> إدارة البضائع والأصناف
+            </a>
+            <a href="../home.php" class="btn-formal-secondary text-decoration-none mr-1">
+                <i class="bi bi-arrow-right-short ml-1"></i> الرئيسية
+            </a>
         </div>
     </div>
 
-    <!-- الجانب الأيسر: إضافة/تعديل الوحدة -->
-    <div class="col-lg-4 mb-4">
-        <div class="card-flat border border-primary">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0 font-weight-bold">
-                    <i class="fa <?php echo $edit_unit ? 'fa-edit' : 'fa-plus'; ?> ml-2"></i>
-                    <?php echo $edit_unit ? 'تعديل اسم الوحدة' : 'إضافة وحدة قياس جديدة'; ?>
-                </h5>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="units.php">
-                    <?php if ($edit_unit): ?>
-                        <input type="hidden" name="unit_id" value="<?php echo $edit_unit['id']; ?>">
-                    <?php endif; ?>
+    <div class="row justify-content-center no-print">
+        <div class="col-lg-12">
+            
+            <?php if (!empty($success)): ?>
+                <div class="alert-formal is-success mb-4"><i class="bi bi-check-circle ml-1"></i> <?php echo htmlspecialchars($success); ?></div>
+            <?php endif; ?>
+            <?php if (!empty($error)): ?>
+                <div class="alert-formal is-error mb-4"><i class="bi bi-exclamation-triangle ml-1"></i> <?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
 
-                    <div class="form-group mb-4">
-                        <label class="font-weight-bold text-secondary mb-1">اسم وحدة القياس *</label>
-                        <input type="text" name="unit_name" class="form-control rounded-0 font-weight-bold text-right" 
-                               value="<?php echo $edit_unit ? htmlspecialchars($edit_unit['name']) : ''; ?>" 
-                               placeholder="مثال: كرتون، حبة، درزن، شوال..." required>
+            <!-- Shared Sub-Navigation Menu -->
+            <?php 
+            $active_tab = 'units'; 
+            require_once 'settings_nav.php'; 
+            ?>
+
+            <div class="tab-content tab-content-custom mb-5">
+                <div class="tab-pane-inner">
+                    <h5 class="section-heading">الوحدات العامة المعتمدة في الأصناف</h5>
+                    
+                    <div class="row">
+                        <!-- Left Panel: Table of Units -->
+                        <div class="col-lg-8 mb-4">
+                            <div class="formal-card">
+                                <div class="formal-card-head">
+                                    <i class="bi bi-list-stars ml-1"></i> قائمة الوحدات المسجلة بالنظام
+                                </div>
+                                <div class="formal-card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table-formal">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 15%;" class="text-center">كود</th>
+                                                    <th>اسم وحدة القياس</th>
+                                                    <th class="text-center" style="width: 25%;">إجراءات</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php if (empty($units_list)): ?>
+                                                    <tr>
+                                                        <td colspan="3" class="text-center text-muted p-4">لا توجد وحدات قياس مهيأة بالنظام حالياً. قم بإضافة وحدة من النموذج الجانبي.</td>
+                                                    </tr>
+                                                <?php else: ?>
+                                                    <?php foreach ($units_list as $u): ?>
+                                                        <tr>
+                                                            <td class="text-center font-weight-bold text-muted">#<?php echo $u['id']; ?></td>
+                                                            <td class="font-weight-bold text-dark"><?php echo htmlspecialchars($u['name']); ?></td>
+                                                            <td class="text-center">
+                                                                <a href="units.php?edit_unit=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-primary py-1 px-2 font-weight-bold" style="font-size:0.75rem;">
+                                                                    <i class="bi bi-pencil ml-1"></i> تعديل
+                                                                </a>
+                                                                <a href="units.php?del_unit=<?php echo $u['id']; ?>" onclick="return confirm('هل أنت متأكد من حذف هذه الوحدة؟')" class="btn btn-sm btn-outline-danger py-1 px-2 font-weight-bold mr-1" style="font-size:0.75rem;">
+                                                                    <i class="bi bi-trash ml-1"></i> حذف
+                                                                </a>
+                                                            </td>
+                                                        </tr>
+                                                    <?php endforeach; ?>
+                                                <?php endif; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Add/Edit Unit Form -->
+                        <div class="col-lg-4 mb-4">
+                            <div class="formal-card">
+                                <div class="formal-card-head is-accent">
+                                    <i class="bi <?php echo $edit_unit ? 'bi-pencil-square' : 'bi-plus-circle'; ?> ml-1"></i>
+                                    <?php echo $edit_unit ? 'تعديل وحدة قياس' : 'إضافة وحدة قياس جديدة'; ?>
+                                </div>
+                                <div class="formal-card-body">
+                                    <form method="POST" action="units.php">
+                                        <?php if ($edit_unit): ?>
+                                            <input type="hidden" name="unit_id" value="<?php echo $edit_unit['id']; ?>">
+                                        <?php endif; ?>
+
+                                        <div class="form-group mb-3">
+                                            <label class="field-label">اسم وحدة القياس *</label>
+                                            <input type="text" name="unit_name" class="form-control rounded-0 font-weight-bold" 
+                                                   value="<?php echo $edit_unit ? htmlspecialchars($edit_unit['name']) : ''; ?>" 
+                                                   placeholder="مثال: كرتون، حبة، درزن، شوال..." required>
+                                            <span class="field-hint">تستخدم وحدات القياس لتحديد طريقة تعبئة وبيج الأصناف.</span>
+                                        </div>
+
+                                        <button type="submit" name="btn_save_unit" class="btn-formal-primary btn-block justify-content-center">
+                                            <i class="bi <?php echo $edit_unit ? 'bi-check2-circle' : 'bi-plus-lg'; ?> ml-1"></i>
+                                            <?php echo $edit_unit ? 'حفظ التعديلات' : 'إضافة الوحدة العامة'; ?>
+                                        </button>
+
+                                        <?php if ($edit_unit): ?>
+                                            <a href="units.php" class="btn-formal-secondary btn-block text-center mt-2 justify-content-center">
+                                                إلغاء التعديل
+                                            </a>
+                                        <?php endif; ?>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-
-                    <button type="submit" name="btn_save_unit" class="btn-flat btn-flat-primary btn-block py-2 font-weight-bold">
-                        <i class="fa <?php echo $edit_unit ? 'fa-save' : 'fa-plus'; ?> ml-1"></i>
-                        <?php echo $edit_unit ? 'حفظ التعديلات' : 'إضافة الوحدة العامة'; ?>
-                    </button>
-
-                    <?php if ($edit_unit): ?>
-                        <a href="units.php" class="btn-flat btn-flat-secondary btn-block text-center py-2 mt-2 font-weight-bold text-decoration-none">
-                            إلغاء التعديل
-                        </a>
-                    <?php endif; ?>
-                </form>
+                </div>
             </div>
         </div>
     </div>
